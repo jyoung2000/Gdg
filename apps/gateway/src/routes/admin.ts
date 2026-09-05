@@ -1,0 +1,488 @@
+import type { FastifyInstance } from 'fastify';
+import {
+  MeridianError,
+  isFree,
+  newId,
+  type AIRequest,
+  type InferencePool,
+  type PoolMember,
+  type Reservation,
+  type RoutingMode,
+  type TrustLevel,
+} from '@meridian/shared';
+import { BENCHMARK_SUITE, bestForLabel, recommendationScore, runBenchmark, stars, summarise } from '@meridian/model-sdk';
+import type { App } from '../services/app.js';
+import { intParam } from './shared.js';
+
+/**
+ * Provider, model, pool, credential and usage administration.
+ *
+ * Everything here is operator-facing. The one invariant that runs through all
+ * of it: a credential's plaintext never appears in a response, only its hint.
+ */
+export async function registerAdminRoutes(server: FastifyInstance, app: App): Promise<void> {
+  /* ---------------- Providers ---------------- */
+
+  server.get('/api/providers', async () => ({
+    providers: app.providers.list().map((d) => {
+      const health = app.health.get(d.id);
+      const models = app.models.all().filter((m) => m.providerId === d.id);
+      const free = models.filter((m) => isFree(m.pricing)).length;
+      return {
+        ...d,
+        supportState: app.providers.supportState(d.id),
+        health,
+        cooldownSec: app.health.cooldownRemaining(d.id),
+        credentials: app.store.listCredentials().filter((c) => c.providerId === d.id).length,
+        models: models.length,
+        freeModels: free,
+        paidModels: models.length - free,
+        verifiedCapabilities: app.providers.verifiedCapabilities(d.id),
+      };
+    }),
+  }));
+
+  server.patch<{ Params: { id: string }; Body: { trust?: TrustLevel; baseUrl?: string; enabled?: boolean; dataUse?: unknown } }>(
+    '/api/providers/:id',
+    async (req) => {
+      const descriptor = app.providers.descriptor(req.params.id);
+      if (!descriptor) throw new MeridianError('invalid_request', `No provider "${req.params.id}"`);
+      const body = req.body ?? {};
+
+      app.store.saveProviderOverride(req.params.id, {
+        trust: body.trust ?? null,
+        baseUrl: body.baseUrl ?? null,
+        enabled: body.enabled,
+        dataUse: body.dataUse,
+      });
+      // The registry holds the effective descriptor, so an override has to be
+      // applied there too or it would not take effect until a restart.
+      app.providers.registerProvider({
+        ...descriptor,
+        trust: body.trust ?? descriptor.trust,
+        baseUrl: body.baseUrl ?? descriptor.baseUrl,
+        dataUse: (body.dataUse as typeof descriptor.dataUse) ?? descriptor.dataUse,
+      });
+      app.store.audit({ actor: req.auth.userId ?? 'anonymous', action: 'provider.update', target: req.params.id, details: { ...body }, ip: req.ip });
+      return { ok: true, provider: app.providers.descriptor(req.params.id) };
+    },
+  );
+
+  /** Verify a provider by making a real call, then record what it can do. */
+  server.post<{ Params: { id: string } }>('/api/providers/:id/verify', async (req) => {
+    const adapter = app.providers.get(req.params.id);
+    const descriptor = app.providers.descriptor(req.params.id);
+    if (!adapter || !descriptor) throw new MeridianError('invalid_request', `No adapter for "${req.params.id}"`);
+
+    const resolution = app.credentials.resolve({ providerId: req.params.id }, descriptor.auth !== 'none');
+    if (!resolution.credential && descriptor.auth !== 'none') {
+      return { ok: false, supportState: app.providers.supportState(req.params.id), detail: resolution.reason };
+    }
+    if (!adapter.healthCheck) {
+      return { ok: false, supportState: app.providers.supportState(req.params.id), detail: 'This adapter has no health check.' };
+    }
+
+    const result = await adapter.healthCheck({
+      secret: resolution.credential?.secret ?? null,
+      logger: app.logger,
+      requestId: req.requestId,
+      timeoutMs: 20_000,
+    });
+    app.health.recordProbe(req.params.id, result.ok, result.latencyMs, result.detail);
+    if (result.ok) {
+      app.providers.setVerified(req.params.id, adapter.capabilities());
+      app.store.saveProviderOverride(req.params.id, { verifiedAt: Date.now() });
+    }
+    return { ok: result.ok, latencyMs: result.latencyMs, detail: result.detail, supportState: app.providers.supportState(req.params.id) };
+  });
+
+  server.post<{ Params: { id: string } }>('/api/providers/:id/reset-health', async (req) => ({
+    health: app.health.reset(req.params.id),
+  }));
+
+  server.post('/api/providers/discover', async () => {
+    const result = await app.discovery.runOnce();
+    app.refreshCredentialState();
+    return { ...result, models: app.models.size() };
+  });
+
+  /* ---------------- Credentials ---------------- */
+
+  server.get('/api/credentials', async () => ({
+    credentials: app.store.listCredentials(),
+    pools: app.store.listCredentialPools(),
+  }));
+
+  server.post<{
+    Body: { providerId?: string; secret?: string; label?: string; scope?: string; workspaceId?: string; poolId?: string; priority?: number; maxConcurrency?: number };
+  }>('/api/credentials', async (req) => {
+    const body = req.body ?? {};
+    if (!body.providerId) throw new MeridianError('invalid_request', '"providerId" is required');
+    if (!app.providers.descriptor(body.providerId)) throw new MeridianError('invalid_request', `No provider "${body.providerId}"`);
+    const descriptor = app.providers.descriptor(body.providerId)!;
+    if (descriptor.auth !== 'none' && !body.secret) throw new MeridianError('invalid_request', `${descriptor.name} requires a secret`);
+
+    const record = app.store.addCredential({
+      providerId: body.providerId,
+      secret: body.secret ?? null,
+      // A credential entered through the UI is the user's own by default.
+      scope: (body.scope as 'user' | 'workspace' | 'admin' | 'system') ?? 'user',
+      source: 'user-entered',
+      label: body.label ?? `${descriptor.name} key`,
+      userId: req.auth.userId,
+      workspaceId: body.workspaceId ?? null,
+      poolId: body.poolId ?? null,
+      priority: body.priority,
+      maxConcurrency: body.maxConcurrency ?? null,
+    });
+    app.refreshCredentialState();
+    app.store.audit({
+      actor: req.auth.userId ?? 'anonymous',
+      action: 'credential.create',
+      target: record.id,
+      // The secret is deliberately absent: an audit log that records secrets is
+      // a second place they can leak from.
+      details: { providerId: body.providerId, scope: record.scope, label: record.label },
+      ip: req.ip,
+    });
+    return { credential: record };
+  });
+
+  server.patch<{ Params: { id: string }; Body: { secret?: string; enabled?: boolean } }>('/api/credentials/:id', async (req) => {
+    const body = req.body ?? {};
+    if (body.secret) app.store.updateCredentialSecret(req.params.id, body.secret);
+    if (body.enabled !== undefined) app.store.setCredentialEnabled(req.params.id, body.enabled);
+    app.refreshCredentialState();
+    app.store.audit({ actor: req.auth.userId ?? 'anonymous', action: 'credential.update', target: req.params.id, details: { rotated: Boolean(body.secret), enabled: body.enabled }, ip: req.ip });
+    return { ok: true };
+  });
+
+  server.delete<{ Params: { id: string } }>('/api/credentials/:id', async (req) => {
+    const removed = app.store.deleteCredential(req.params.id);
+    app.refreshCredentialState();
+    app.store.audit({ actor: req.auth.userId ?? 'anonymous', action: 'credential.delete', target: req.params.id, details: {}, ip: req.ip });
+    return { removed };
+  });
+
+  server.post<{ Body: { providerId?: string; name?: string; strategy?: 'priority' | 'round-robin' | 'least-used' | 'health' } }>(
+    '/api/credentials/pools',
+    async (req) => {
+      const body = req.body ?? {};
+      if (!body.providerId || !body.name) throw new MeridianError('invalid_request', '"providerId" and "name" are required');
+      return { pool: app.store.addCredentialPool(body.providerId, body.name, body.strategy ?? 'priority') };
+    },
+  );
+
+  /* ---------------- Models ---------------- */
+
+  server.get<{ Querystring: { modality?: string; search?: string; free?: string; provider?: string; limit?: string } }>('/api/models', async (req) => {
+    const q = req.query ?? {};
+    const views = app.models.views({
+      modality: q.modality as never,
+      search: q.search,
+      freeOnly: q.free === 'true',
+      providerIds: q.provider ? [q.provider] : undefined,
+    });
+
+    return {
+      models: views.slice(0, intParam(q.limit, 500, 2000)).map((v) => ({
+        ...v.model,
+        free: isFree(v.model.pricing),
+        scores: v.scores,
+        performance: v.performance,
+        status: v.status,
+        supportState: app.providers.supportState(v.model.providerId),
+        recommendation: {
+          coding: stars(v.scores?.coding ?? null),
+          reasoning: stars(v.scores?.reasoning ?? null),
+          general: stars(v.scores?.general ?? null),
+          bestFor: bestForLabel(v.scores),
+          score: recommendationScore(v.scores, v.performance, 'chat'),
+        },
+      })),
+      total: views.length,
+    };
+  });
+
+  // A model id contains both ':' and '/', so it travels as a query parameter:
+  // a path segment would have to be double-encoded to survive routing.
+  server.get<{ Querystring: { id?: string } }>('/api/models/detail', async (req) => {
+    const id = req.query?.id ?? '';
+    const view = app.models.view(id);
+    if (!view) throw new MeridianError('model_unavailable', `No model "${id}"`);
+    return {
+      ...view,
+      free: isFree(view.model.pricing),
+      benchmarks: app.store.listBenchmarks(view.model.id, 50),
+      provider: app.providers.descriptor(view.model.providerId),
+    };
+  });
+
+  /** Run the benchmark suite against a model and fold the result into its scores. */
+  server.post<{ Body: { modelId?: string } }>('/api/models/benchmark', async (req) => {
+    const modelId = req.body?.modelId ?? '';
+    const model = app.models.get(modelId);
+    if (!model) throw new MeridianError('model_unavailable', `No model "${modelId}"`);
+
+    const results = await runBenchmark(model, async (completion) => {
+      const res = await app.executor.chat(
+        {
+          modality: 'text',
+          taskType: 'chat',
+          model: model.id,
+          provider: model.providerId,
+          userId: req.auth.userId,
+          allowPaid: !isFree(model.pricing),
+        },
+        completion,
+        { requestId: req.requestId, retryBudget: 1 },
+      );
+      return res.value;
+    });
+
+    app.store.addBenchmarkResults(results.map((r) => ({ ...r, dimension: r.dimension })));
+    const summary = summarise(results);
+    if (summary) {
+      const scores = {
+        modelId: model.id,
+        coding: summary.coding,
+        reasoning: summary.reasoning,
+        general: summary.general,
+        toolUse: summary.toolUse,
+        vision: app.models.getScores(model.id)?.vision ?? null,
+        stability: summary.uptime,
+        samples: (app.models.getScores(model.id)?.samples ?? 0) + summary.cases,
+        updatedAt: Date.now(),
+      };
+      app.models.setScores(scores);
+      app.store.setModelScores(scores);
+
+      const perf = {
+        modelId: model.id,
+        ttftMs: summary.ttftMs,
+        latencyMs: summary.latencyMs,
+        p95LatencyMs: summary.p95LatencyMs,
+        jitterMs: summary.jitterMs,
+        tokensPerSecond: summary.tokensPerSecond,
+        uptime: summary.uptime,
+        samples: (app.models.getPerformance(model.id)?.samples ?? 0) + summary.cases,
+        updatedAt: Date.now(),
+      };
+      app.models.setPerformance(perf);
+      app.store.setModelPerformance(perf);
+    }
+    return { results, summary, cases: BENCHMARK_SUITE.length };
+  });
+
+  /**
+   * Run the same prompt against several models.
+   *
+   * Models are run concurrently and each failure is captured as a result rather
+   * than aborting the comparison — a model being unavailable is exactly the
+   * kind of thing a comparison is for.
+   */
+  server.post<{ Body: { models?: string[]; prompt?: string; taskType?: AIRequest['taskType']; maxTokens?: number } }>(
+    '/api/models/compare',
+    async (req) => {
+      const body = req.body ?? {};
+      if (!body.models?.length || !body.prompt) throw new MeridianError('invalid_request', '"models" and "prompt" are required');
+      if (body.models.length > 6) throw new MeridianError('invalid_request', 'Compare at most six models at a time');
+
+      const started = Date.now();
+      const results = await Promise.all(
+        body.models.map(async (modelId) => {
+          const model = app.models.get(modelId);
+          if (!model) return { modelId, error: 'Model not found', output: null, latencyMs: 0, cost: 0, usage: null, provider: null };
+          try {
+            const res = await app.executor.chat(
+              {
+                modality: 'text',
+                taskType: body.taskType ?? 'chat',
+                model: model.id,
+                provider: model.providerId,
+                userId: req.auth.userId,
+                allowPaid: !isFree(model.pricing),
+              },
+              { messages: [{ role: 'user', content: body.prompt! }], maxTokens: body.maxTokens ?? 1024, temperature: 0.2 },
+              { requestId: req.requestId, retryBudget: 1 },
+            );
+            return {
+              modelId,
+              provider: res.providerId,
+              output: res.value.content,
+              latencyMs: res.value.latencyMs,
+              cost: res.value.usage.cost,
+              usage: res.value.usage,
+              toolCalls: res.value.toolCalls.length,
+              error: null,
+            };
+          } catch (e) {
+            return { modelId, provider: model.providerId, output: null, latencyMs: 0, cost: 0, usage: null, error: e instanceof Error ? e.message : String(e) };
+          }
+        }),
+      );
+      return { results, totalMs: Date.now() - started };
+    },
+  );
+
+  /* ---------------- Routing ---------------- */
+
+  /** Dry-run the router: the full ranking, with nothing executed. */
+  server.post<{ Body: Partial<AIRequest> }>('/api/routing/preview', async (req) => {
+    const body = req.body ?? {};
+    const request: AIRequest = {
+      modality: body.modality ?? 'text',
+      taskType: body.taskType ?? 'chat',
+      prompt: body.prompt,
+      messages: body.messages,
+      model: body.model ?? null,
+      provider: body.provider ?? null,
+      pool: body.pool ?? null,
+      mode: body.mode,
+      privacyMode: body.privacyMode,
+      freeOnly: body.freeOnly,
+      localOnly: body.localOnly,
+      allowPaid: body.allowPaid,
+      budget: body.budget ?? null,
+      contextLength: body.contextLength ?? null,
+      toolsRequired: body.toolsRequired,
+      reasoningRequired: body.reasoningRequired,
+      visionRequired: body.visionRequired,
+      sensitive: body.sensitive,
+      requiredCapabilities: body.requiredCapabilities,
+      userId: req.auth.userId,
+      workspaceId: body.workspaceId ?? null,
+    };
+
+    const preview = app.router.preview(request);
+    let decision = null;
+    try {
+      decision = app.router.route(request);
+    } catch (e) {
+      // A request with no viable candidate is a legitimate outcome to display,
+      // not a server error: the rejection list is the answer.
+      decision = null;
+      if (!(e instanceof MeridianError)) throw e;
+    }
+    return {
+      decision,
+      candidates: preview.candidates.slice(0, 25).map((c) => ({ ...c, model: app.models.get(c.modelId) })),
+      rejected: preview.rejected.slice(0, 40),
+    };
+  });
+
+  /* ---------------- Pools ---------------- */
+
+  server.get('/api/pools', async () => ({
+    pools: app.pools.list().map((p) => ({
+      ...p,
+      usage: app.pools.usageOf(p.id),
+      concurrencyLimit: app.pools.concurrencyLimit(p.id),
+      budgetLimit: app.pools.budgetLimit(p.id),
+      activeReservation: app.pools.activeReservation(p.id),
+      fallbackChain: app.pools.fallbackChain(p.id),
+    })),
+    reservations: app.pools.listReservations(),
+  }));
+
+  server.post<{ Body: Partial<InferencePool> }>('/api/pools', async (req) => {
+    const body = req.body ?? {};
+    if (!body.name) throw new MeridianError('invalid_request', '"name" is required');
+    const pool: InferencePool = {
+      id: body.id ?? newId('pool'),
+      name: body.name,
+      description: body.description ?? null,
+      strategy: (body.strategy as RoutingMode) ?? 'BALANCED',
+      members: body.members ?? [],
+      fallbackPoolId: body.fallbackPoolId ?? null,
+      maxConcurrency: body.maxConcurrency ?? null,
+      dailyBudget: body.dailyBudget ?? null,
+      builtin: false,
+      enabled: body.enabled ?? true,
+      createdAt: Date.now(),
+    };
+    app.pools.upsert(pool);
+    app.store.savePool(pool);
+    return { pool };
+  });
+
+  server.patch<{ Params: { id: string }; Body: Partial<InferencePool> & { members?: PoolMember[] } }>('/api/pools/:id', async (req) => {
+    const existing = app.pools.get(req.params.id);
+    if (!existing) throw new MeridianError('invalid_request', `No pool "${req.params.id}"`);
+    const next: InferencePool = {
+      ...existing,
+      ...req.body,
+      id: existing.id,
+      // A built-in pool stays built-in; the flag governs deletability.
+      builtin: existing.builtin,
+      createdAt: existing.createdAt,
+    };
+    app.pools.upsert(next);
+    app.store.savePool(next);
+    return { pool: next };
+  });
+
+  server.delete<{ Params: { id: string } }>('/api/pools/:id', async (req) => {
+    const removed = app.pools.remove(req.params.id) && app.store.deletePool(req.params.id);
+    if (!removed) throw new MeridianError('invalid_request', 'Built-in pools cannot be deleted. Disable it instead.');
+    return { removed };
+  });
+
+  /* ---------------- Reservations ---------------- */
+
+  server.post<{ Body: Partial<Reservation> & { hours?: number } }>('/api/reservations', async (req) => {
+    const body = req.body ?? {};
+    if (!body.poolId || !app.pools.get(body.poolId)) throw new MeridianError('invalid_request', 'A valid "poolId" is required');
+    const startAt = body.startAt ?? Date.now();
+    const endAt = body.endAt ?? startAt + (body.hours ?? 2) * 3_600_000;
+    if (endAt <= startAt) throw new MeridianError('invalid_request', 'The reservation must end after it starts');
+
+    const reservation: Reservation = {
+      id: newId('resv'),
+      poolId: body.poolId,
+      label: body.label ?? `${(endAt - startAt) / 3_600_000}h reservation`,
+      startAt,
+      endAt,
+      maxConcurrency: body.maxConcurrency ?? 4,
+      budget: body.budget ?? null,
+      fallbackPoolId: body.fallbackPoolId ?? app.pools.get(body.poolId)?.fallbackPoolId ?? null,
+      models: body.models ?? [],
+      status: startAt <= Date.now() ? 'active' : 'scheduled',
+      used: 0,
+      spend: 0,
+      createdAt: Date.now(),
+    };
+    app.pools.addReservation(reservation);
+    app.store.saveReservation(reservation);
+    return { reservation };
+  });
+
+  server.delete<{ Params: { id: string } }>('/api/reservations/:id', async (req) => {
+    app.pools.cancelReservation(req.params.id);
+    const removed = app.store.deleteReservation(req.params.id);
+    return { removed };
+  });
+
+  /* ---------------- Usage ---------------- */
+
+  server.get<{ Querystring: { days?: string; limit?: string } }>('/api/usage', async (req) => {
+    const days = intParam(req.query?.days, 30, 365);
+    const since = Date.now() - days * 86_400_000;
+    return {
+      since,
+      days,
+      summary: app.store.usageSummary(since),
+      recent: app.store.listUsage({ since, limit: intParam(req.query?.limit, 100, 1000) }),
+    };
+  });
+
+  server.get('/api/health', async () => ({
+    providers: app.providers.list().map((d) => ({
+      providerId: d.id,
+      name: d.name,
+      supportState: app.providers.supportState(d.id),
+      health: app.health.get(d.id),
+      cooldownSec: app.health.cooldownRemaining(d.id),
+    })),
+  }));
+}

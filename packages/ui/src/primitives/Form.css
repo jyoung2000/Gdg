@@ -1,0 +1,746 @@
+/* ------------------------------------------------------------------ */
+/* Shared field parts                                                  */
+/* ------------------------------------------------------------------ */
+
+.mrd-field-control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.mrd-field-control--full {
+  width: 100%;
+}
+
+.mrd-field-note {
+  /* Matches the small-control glyph scale in Button.css. */
+  --mrd-note-glyph: 13px;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  font-size: var(--text-secondary-size);
+  line-height: var(--text-secondary-line);
+  color: var(--color-text-secondary);
+}
+.mrd-field-note--error {
+  color: var(--color-error);
+}
+.mrd-field-note__glyph {
+  display: flex;
+  flex: 0 0 auto;
+  /* Sits on the first line of the message, not the middle of the block. */
+  margin-top: calc((var(--text-secondary-line) - var(--mrd-note-glyph)) / 2);
+}
+.mrd-field-note__glyph svg {
+  width: var(--mrd-note-glyph);
+  height: var(--mrd-note-glyph);
+}
+
+.mrd-required-mark {
+  margin-left: calc(var(--space-1) / 2);
+  color: var(--color-error);
+}
+
+/* ------------------------------------------------------------------ */
+/* Input                                                               */
+/* ------------------------------------------------------------------ */
+
+.mrd-input {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-inset-hairline);
+  color: var(--color-text-primary);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.mrd-input--sm {
+  height: var(--control-height-sm);
+  padding: 0 var(--space-2);
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-secondary-size);
+}
+.mrd-input--lg {
+  height: var(--control-height-lg);
+}
+
+/* Hover is excluded while focused: the :not() guards push these selectors above
+   the focus rules below, and a hovered field would otherwise lose its ring. */
+.mrd-input:hover:not([data-disabled]):not(:focus-within) {
+  box-shadow: inset 0 0 0 1px var(--color-border-strong);
+}
+
+/*
+ * Focus-within, not focus-visible: the ring on a text field is what says where
+ * typing will land, and that answer matters to pointer users too.
+ */
+.mrd-input:focus-within {
+  box-shadow: inset 0 0 0 1px var(--color-accent), var(--shadow-focus);
+}
+
+.mrd-input[data-invalid] {
+  box-shadow: inset 0 0 0 1px var(--color-error);
+}
+.mrd-input[data-invalid]:focus-within {
+  box-shadow: inset 0 0 0 1px var(--color-error), var(--shadow-focus);
+}
+
+.mrd-input[data-disabled] {
+  background: var(--color-fill-quiet);
+  color: var(--color-text-tertiary);
+}
+
+.mrd-input__control {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  background: none;
+  border: none;
+  outline: none;
+}
+.mrd-input__control::placeholder {
+  color: var(--color-text-tertiary);
+}
+.mrd-input__control:disabled {
+  cursor: not-allowed;
+}
+/* WebKit adds its own clear button to type=search; SearchField provides one
+   that is reachable by keyboard and named, so the built-in is removed. */
+.mrd-input__control::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.mrd-input__icon,
+.mrd-input__adornment {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text-tertiary);
+}
+.mrd-input__icon svg {
+  width: 15px;
+  height: 15px;
+}
+.mrd-input--sm .mrd-input__icon svg {
+  width: 13px;
+  height: 13px;
+}
+.mrd-input__adornment {
+  font-size: var(--text-secondary-size);
+  /* Pulls a trailing button back towards the edge it belongs to. */
+  margin-right: calc(var(--space-1) * -1);
+}
+.mrd-input:focus-within .mrd-input__icon {
+  color: var(--color-text-secondary);
+}
+
+.mrd-search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--space-5);
+  height: var(--space-5);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+.mrd-search-clear svg {
+  width: 13px;
+  height: 13px;
+}
+.mrd-search-clear:hover:not(:disabled) {
+  background: var(--color-fill-hover);
+  color: var(--color-text-primary);
+}
+.mrd-input--sm .mrd-search-clear {
+  width: var(--space-4);
+  height: var(--space-4);
+}
+
+/* ------------------------------------------------------------------ */
+/* TextArea                                                            */
+/* ------------------------------------------------------------------ */
+
+.mrd-textarea {
+  display: block;
+  width: 100%;
+  min-height: calc(var(--control-height-lg) * 2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+  border: none;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-inset-hairline);
+  line-height: var(--text-body-line);
+  resize: vertical;
+  transition: box-shadow var(--duration-fast) var(--ease-out);
+}
+.mrd-textarea--fixed {
+  resize: none;
+}
+.mrd-textarea::placeholder {
+  color: var(--color-text-tertiary);
+}
+.mrd-textarea:hover:not(:disabled):not(:focus) {
+  box-shadow: inset 0 0 0 1px var(--color-border-strong);
+}
+.mrd-textarea:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--color-accent), var(--shadow-focus);
+}
+.mrd-textarea[data-invalid] {
+  box-shadow: inset 0 0 0 1px var(--color-error);
+}
+.mrd-textarea[data-invalid]:focus {
+  box-shadow: inset 0 0 0 1px var(--color-error), var(--shadow-focus);
+}
+.mrd-textarea:disabled {
+  background: var(--color-fill-quiet);
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+}
+
+/* ------------------------------------------------------------------ */
+/* Select                                                              */
+/* ------------------------------------------------------------------ */
+
+.mrd-select {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.mrd-select__control {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  height: var(--control-height);
+  padding: 0 calc(var(--space-4) + var(--space-3)) 0 var(--space-3);
+  background: var(--color-surface);
+  border: none;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-inset-hairline);
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+/* Windows and Linux render the popup with the page's own colours. */
+.mrd-select__control option {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+/*
+ * The chevron is a pseudo-element rather than an icon: it belongs to the
+ * control's frame, and drawing it here keeps the native select underneath
+ * completely intact.
+ */
+.mrd-select::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: var(--space-3);
+  /* Glyph geometry: a small square wearing two edges becomes a chevron once
+     it is turned 45 degrees. */
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--color-text-tertiary);
+  border-bottom: 1.5px solid var(--color-text-tertiary);
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
+
+.mrd-select--sm .mrd-select__control {
+  height: var(--control-height-sm);
+  padding: 0 calc(var(--space-4) + var(--space-2)) 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-secondary-size);
+}
+.mrd-select--sm::after {
+  right: var(--space-2);
+}
+.mrd-select--lg .mrd-select__control {
+  height: var(--control-height-lg);
+}
+
+.mrd-select__control:hover:not(:disabled):not(:focus-visible) {
+  box-shadow: inset 0 0 0 1px var(--color-border-strong);
+}
+.mrd-select__control:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--color-accent), var(--shadow-focus);
+}
+.mrd-select[data-invalid] .mrd-select__control {
+  box-shadow: inset 0 0 0 1px var(--color-error);
+}
+.mrd-select[data-invalid] .mrd-select__control:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--color-error), var(--shadow-focus);
+}
+.mrd-select__control:disabled {
+  background: var(--color-fill-quiet);
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+}
+.mrd-select[data-disabled]::after {
+  opacity: 0.42;
+}
+
+/* ------------------------------------------------------------------ */
+/* Checkbox and Radio                                                  */
+/* ------------------------------------------------------------------ */
+
+.mrd-choice {
+  /* Anchors the visually-hidden native input, which is absolutely positioned. */
+  position: relative;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+  cursor: pointer;
+}
+.mrd-choice[data-disabled] {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.mrd-choice__indicator {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--space-4);
+  height: var(--space-4);
+  /* Centred on the first line of the label rather than on the whole block. */
+  margin-top: calc((var(--text-body-line) - var(--space-4)) / 2);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-inset-hairline);
+  color: var(--color-text-on-accent);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+.mrd-choice__indicator--box {
+  border-radius: var(--radius-sm);
+}
+.mrd-choice__indicator--dot {
+  border-radius: 50%;
+}
+
+.mrd-choice:hover .mrd-choice__input:not(:disabled):not(:checked):not(:indeterminate):not(:focus-visible) + .mrd-choice__indicator {
+  box-shadow: inset 0 0 0 1px var(--color-border-strong);
+}
+
+.mrd-choice__input:checked + .mrd-choice__indicator,
+.mrd-choice__input:indeterminate + .mrd-choice__indicator {
+  background: var(--color-accent);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+/* Placed after the checked rules so the ring survives on a checked control. */
+.mrd-choice__input:focus-visible + .mrd-choice__indicator {
+  box-shadow: inset 0 0 0 1px var(--color-accent), var(--shadow-focus);
+}
+
+.mrd-choice__check,
+.mrd-choice__mixed {
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.mrd-choice__input:checked + .mrd-choice__indicator .mrd-choice__check {
+  opacity: 1;
+}
+/* Mixed outranks checked: a partially selected parent is not a tick. */
+.mrd-choice__input:indeterminate + .mrd-choice__indicator .mrd-choice__check {
+  opacity: 0;
+}
+.mrd-choice__input:indeterminate + .mrd-choice__indicator .mrd-choice__mixed {
+  opacity: 1;
+}
+
+.mrd-choice__dot {
+  width: calc(var(--space-2) - var(--space-1) / 2);
+  height: calc(var(--space-2) - var(--space-1) / 2);
+  border-radius: 50%;
+  background: var(--color-text-on-accent);
+  transform: scale(0);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.mrd-choice__input:checked + .mrd-choice__indicator .mrd-choice__dot {
+  transform: scale(1);
+}
+
+.mrd-choice__text {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+  min-width: 0;
+}
+.mrd-choice__label {
+  line-height: var(--text-body-line);
+}
+.mrd-choice__description {
+  font-size: var(--text-secondary-size);
+  line-height: var(--text-secondary-line);
+  color: var(--color-text-secondary);
+}
+
+/* ------------------------------------------------------------------ */
+/* Switch                                                              */
+/* ------------------------------------------------------------------ */
+
+.mrd-switch {
+  --mrd-switch-height: var(--space-4);
+  --mrd-switch-width: calc(var(--space-6) + var(--space-1));
+  --mrd-switch-inset: calc(var(--space-1) / 2);
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  width: var(--mrd-switch-width);
+  height: var(--mrd-switch-height);
+  padding: var(--mrd-switch-inset);
+  /* A stadium derived from the track height — the pill token belongs to chips. */
+  border-radius: calc(var(--mrd-switch-height) / 2);
+  background: var(--color-fill-active);
+  box-shadow: var(--shadow-inset-hairline);
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+.mrd-switch[aria-checked='true'] {
+  background: var(--color-accent);
+  box-shadow: none;
+}
+.mrd-switch:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+.mrd-switch:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--color-accent), var(--shadow-focus);
+}
+
+/*
+ * The knob's position, not the track's colour, is what reports the state — the
+ * switch stays readable with no colour perception at all.
+ */
+.mrd-switch__knob {
+  width: calc(var(--mrd-switch-height) - var(--mrd-switch-inset) * 2);
+  height: calc(var(--mrd-switch-height) - var(--mrd-switch-inset) * 2);
+  border-radius: 50%;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-1);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.mrd-switch[aria-checked='true'] .mrd-switch__knob {
+  transform: translateX(calc(var(--mrd-switch-width) - var(--mrd-switch-height)));
+}
+
+.mrd-switch-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.mrd-switch-field[data-disabled] {
+  color: var(--color-text-tertiary);
+}
+.mrd-switch-field__label {
+  line-height: var(--text-body-line);
+}
+
+/* ------------------------------------------------------------------ */
+/* Slider                                                              */
+/* ------------------------------------------------------------------ */
+
+.mrd-slider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-width: 0;
+}
+
+.mrd-slider__input {
+  --mrd-slider-progress: 0%;
+  --mrd-slider-track: var(--space-1);
+  /* Thumb geometry, kept on the 16px control-glyph scale. */
+  --mrd-slider-thumb: calc(var(--space-4) - var(--space-1) / 2);
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Taller than the track so the pointer target is not a hairline. */
+  height: var(--space-5);
+  background: none;
+  cursor: pointer;
+}
+.mrd-slider__input:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+/* The outline is dropped only because the thumb below takes the ring. */
+.mrd-slider__input:focus-visible {
+  outline: none;
+}
+
+.mrd-slider__input::-webkit-slider-runnable-track {
+  height: var(--mrd-slider-track);
+  border-radius: calc(var(--mrd-slider-track) / 2);
+  background: linear-gradient(
+    to right,
+    var(--color-accent) 0 var(--mrd-slider-progress),
+    var(--color-fill-active) var(--mrd-slider-progress) 100%
+  );
+}
+.mrd-slider__input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: var(--mrd-slider-thumb);
+  height: var(--mrd-slider-thumb);
+  /* WebKit does not centre the thumb on the track; every other engine does. */
+  margin-top: calc((var(--mrd-slider-track) - var(--mrd-slider-thumb)) / 2);
+  border-radius: 50%;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-2), inset 0 0 0 1px var(--color-border);
+}
+.mrd-slider__input:focus-visible::-webkit-slider-thumb {
+  box-shadow: var(--shadow-focus), inset 0 0 0 1px var(--color-accent);
+}
+
+.mrd-slider__input::-moz-range-track {
+  height: var(--mrd-slider-track);
+  border-radius: calc(var(--mrd-slider-track) / 2);
+  background: var(--color-fill-active);
+}
+.mrd-slider__input::-moz-range-progress {
+  height: var(--mrd-slider-track);
+  border-radius: calc(var(--mrd-slider-track) / 2);
+  background: var(--color-accent);
+}
+.mrd-slider__input::-moz-range-thumb {
+  width: var(--mrd-slider-thumb);
+  height: var(--mrd-slider-thumb);
+  border: none;
+  border-radius: 50%;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-2), inset 0 0 0 1px var(--color-border);
+}
+.mrd-slider__input:focus-visible::-moz-range-thumb {
+  box-shadow: var(--shadow-focus), inset 0 0 0 1px var(--color-accent);
+}
+
+.mrd-slider__value {
+  flex: 0 0 auto;
+  font-size: var(--text-secondary-size);
+  color: var(--color-text-secondary);
+}
+
+/* ------------------------------------------------------------------ */
+/* Field                                                               */
+/* ------------------------------------------------------------------ */
+
+.mrd-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.mrd-field__label {
+  font-weight: 500;
+  line-height: var(--text-body-line);
+}
+
+.mrd-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.mrd-radio-group__label {
+  font-weight: 500;
+  line-height: var(--text-body-line);
+}
+.mrd-radio-group__options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.mrd-radio-group__options--horizontal {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+/* ------------------------------------------------------------------ */
+/* FormRow and DisclosureRow                                           */
+/* ------------------------------------------------------------------ */
+
+.mrd-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+}
+.mrd-row-text__label {
+  line-height: var(--text-body-line);
+  color: var(--color-text-primary);
+}
+.mrd-row-text__description {
+  font-size: var(--text-secondary-size);
+  line-height: var(--text-secondary-line);
+  color: var(--color-text-secondary);
+}
+
+.mrd-form-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: calc(var(--control-height-lg) + var(--space-2));
+  padding: var(--space-2) var(--space-4);
+}
+/* For a row whose description runs long enough that a centred control drifts
+   away from the label it belongs to. */
+.mrd-form-row--start {
+  align-items: flex-start;
+}
+.mrd-form-row__control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* Rows separate from each other only, so a group never opens or closes on a
+   stray hairline. */
+:is(.mrd-form-row, .mrd-disclosure-row) + :is(.mrd-form-row, .mrd-disclosure-row) {
+  border-top: 1px solid var(--color-separator);
+}
+
+.mrd-disclosure-row__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  min-height: calc(var(--control-height-lg) + var(--space-2));
+  padding: var(--space-2) var(--space-4);
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+.mrd-disclosure-row__header:hover {
+  background: var(--color-fill-quiet);
+}
+.mrd-disclosure-row__header:active {
+  background: var(--color-fill-hover);
+}
+/* The 2px focus outline of base.css, drawn inside the row: a grouped card
+   clips its overflow, and an outset ring on a full-width row is cut off. */
+.mrd-disclosure-row__header:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+  border-radius: 0;
+}
+
+.mrd-disclosure-row__value {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-secondary-size);
+  color: var(--color-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mrd-disclosure-row__chevron {
+  display: flex;
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.mrd-disclosure-row__chevron svg {
+  width: 15px;
+  height: 15px;
+}
+.mrd-disclosure-row[data-open] .mrd-disclosure-row__chevron {
+  transform: rotate(90deg);
+}
+
+.mrd-disclosure-row__panel {
+  padding: 0 var(--space-4) var(--space-3);
+  animation: mrd-disclosure-in var(--duration-base) var(--ease-out);
+}
+/* An author rule would otherwise beat the user-agent's [hidden] display:none. */
+.mrd-disclosure-row__panel[hidden] {
+  display: none;
+}
+
+@keyframes mrd-disclosure-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--space-1) / -2));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Fieldset                                                            */
+/* ------------------------------------------------------------------ */
+
+.mrd-fieldset {
+  display: block;
+  /* A fieldset sizes to min-content by default and refuses to shrink. */
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+.mrd-fieldset__title {
+  display: block;
+  width: 100%;
+  padding: 0 var(--space-2) var(--space-2);
+  font-size: var(--text-secondary-size);
+  line-height: var(--text-secondary-line);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+.mrd-fieldset__group {
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-inset-hairline), var(--shadow-1);
+  /* Keeps a row's hover fill inside the card's corners. */
+  overflow: hidden;
+}
+.mrd-fieldset__footnote {
+  padding: var(--space-2) var(--space-2) 0;
+  font-size: var(--text-secondary-size);
+  line-height: var(--text-secondary-line);
+  color: var(--color-text-tertiary);
+}
+.mrd-fieldset:disabled .mrd-fieldset__group {
+  opacity: 0.42;
+}

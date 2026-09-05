@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+.vite/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+data/
+workspaces/
+coverage/
+*.tsbuildinfo
+.pnpm-store/
+apps/web/dist/

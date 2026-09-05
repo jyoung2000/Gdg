@@ -1,0 +1,337 @@
+/*
+ * Base layer: reset, document defaults, focus, scrollbars and the small set of
+ * typography utilities. Nothing here is component-specific.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+  letter-spacing: var(--text-body-tracking);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-synthesis-weight: none;
+  /* A workstation shell owns its own scrolling; the document never scrolls. */
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+h1, h2, h3, h4, h5, h6, p, figure, blockquote, dl, dd {
+  margin: 0;
+}
+
+ul, ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  margin: 0;
+}
+
+button {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+img,
+svg,
+video,
+canvas {
+  display: block;
+  max-width: 100%;
+}
+
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--font-mono);
+  font-size: var(--text-code-size);
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--color-separator);
+  margin: 0;
+}
+
+/*
+ * Focus. Visible only for keyboard users, but always visible for them — an
+ * interface that hides focus is unusable without a mouse. The ring is drawn
+ * with box-shadow so it follows border-radius and never shifts layout.
+ */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  border-radius: var(--radius-sm);
+}
+
+/* Elements that draw their own ring opt out of the global outline. */
+.mrd-focus-ring:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus), 0 0 0 1px var(--color-accent);
+}
+
+::selection {
+  background: var(--color-accent-subtle-hover);
+  color: var(--color-text-primary);
+}
+
+/*
+ * Scrollbars. Thin and neutral, sitting on the surface rather than floating
+ * above it. Firefox gets the standard properties; WebKit gets the pseudo
+ * elements, which allow the track to disappear entirely.
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-border-strong);
+  border-radius: var(--radius-pill);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-text-tertiary);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ------------------------------------------------------------------ */
+/* Typography utilities                                                */
+/* ------------------------------------------------------------------ */
+
+.mrd-display {
+  font-size: var(--text-display-size);
+  line-height: var(--text-display-line);
+  font-weight: var(--text-display-weight);
+  letter-spacing: var(--text-display-tracking);
+}
+
+.mrd-title {
+  font-size: var(--text-title-size);
+  line-height: var(--text-title-line);
+  font-weight: var(--text-title-weight);
+  letter-spacing: var(--text-title-tracking);
+}
+
+.mrd-section-title {
+  font-size: var(--text-section-size);
+  line-height: var(--text-section-line);
+  font-weight: var(--text-section-weight);
+  letter-spacing: var(--text-section-tracking);
+}
+
+/* Panel headers: small, tracked-out, uppercase. The one place uppercase is
+   used, because it reads as a label rather than as content. */
+.mrd-panel-title {
+  font-size: var(--text-panel-size);
+  line-height: var(--text-panel-line);
+  font-weight: var(--text-panel-weight);
+  letter-spacing: var(--text-panel-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.mrd-body {
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+}
+
+.mrd-body-lg {
+  font-size: var(--text-body-lg-size);
+  line-height: var(--text-body-lg-line);
+}
+
+.mrd-secondary {
+  font-size: var(--text-secondary-size);
+  line-height: var(--text-secondary-line);
+  color: var(--color-text-secondary);
+}
+
+.mrd-caption {
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+  color: var(--color-text-tertiary);
+}
+
+.mrd-code {
+  font-family: var(--font-mono);
+  font-size: var(--text-code-size);
+  line-height: var(--text-code-line);
+}
+
+/* Tabular figures keep columns of numbers from shifting as values change —
+   essential for latency, cost and token counters that update live. */
+.mrd-numeric {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+.mrd-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.mrd-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Visible to screen readers, invisible on screen. */
+.mrd-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A skip link that becomes visible when focused. */
+.mrd-skip-link {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: var(--z-toast);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-3);
+  transform: translateY(-200%);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.mrd-skip-link:focus {
+  transform: translateY(0);
+}
+
+/* ------------------------------------------------------------------ */
+/* Shared surface + scroll helpers                                     */
+/* ------------------------------------------------------------------ */
+
+.mrd-surface {
+  background: var(--color-surface);
+  border: 1px solid var(--color-separator);
+  border-radius: var(--radius-xl);
+}
+
+.mrd-scroll {
+  overflow: auto;
+  /* Keeps a nested scroll region from scrolling its parent at the extremes. */
+  overscroll-behavior: contain;
+}
+
+.mrd-scroll-x {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+}
+
+/* Wide content — tables, diagrams, code — scrolls inside its own box so the
+   shell never scrolls horizontally. */
+.mrd-overflow-guard {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.mrd-hstack {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.mrd-vstack {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.mrd-spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Drag handles between resizable panes. The hit area is wider than the visible
+   line so the target is reachable without precision aiming. */
+.mrd-resizer {
+  position: relative;
+  flex: 0 0 1px;
+  background: var(--color-separator);
+  cursor: col-resize;
+  touch-action: none;
+}
+.mrd-resizer[data-orientation='horizontal'] {
+  cursor: row-resize;
+}
+.mrd-resizer::after {
+  content: '';
+  position: absolute;
+  inset: 0 -4px;
+  z-index: 1;
+}
+.mrd-resizer[data-orientation='horizontal']::after {
+  inset: -4px 0;
+}
+.mrd-resizer:hover,
+.mrd-resizer[data-dragging='true'] {
+  background: var(--color-accent);
+  transition: background var(--duration-fast) var(--ease-out);
+}

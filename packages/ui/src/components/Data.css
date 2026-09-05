@@ -1,0 +1,566 @@
+/* ------------------------------------------------------------------ */
+
+.mrd-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Wrapper for a row whose click target is a real button, so the button can
+   stretch to the full width of the listitem. */
+.mrd-list__item {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.mrd-list__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--row-height);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  text-align: start;
+  /* A list row is not a link. macOS keeps the arrow cursor over list content
+     and reserves the hand for things that navigate away. */
+  cursor: default;
+  user-select: none;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.mrd-list--sm .mrd-list__row {
+  height: var(--control-height-sm);
+  padding: 0 var(--space-1);
+}
+.mrd-list--lg .mrd-list__row {
+  height: var(--control-height-lg);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+}
+
+/* Hover belongs to rows that do something; a static row must not pretend. */
+.mrd-list__row[data-mrd-row]:hover {
+  background: var(--color-fill-hover);
+}
+.mrd-list__row[data-mrd-row]:active {
+  background: var(--color-fill-active);
+}
+
+.mrd-list__row[data-selected] {
+  background: var(--color-accent-subtle);
+}
+.mrd-list__row[data-selected]:hover {
+  background: var(--color-accent-subtle-hover);
+}
+.mrd-list__row[data-selected] .mrd-list__icon {
+  color: var(--color-accent);
+}
+
+.mrd-list__row[data-disabled] {
+  opacity: 0.42;
+}
+
+.mrd-list__icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+}
+.mrd-list__icon svg {
+  width: 15px;
+  height: 15px;
+}
+.mrd-list--sm .mrd-list__icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.mrd-list__text {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mrd-list__primary {
+  flex: 0 1 auto;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+}
+.mrd-list--sm .mrd-list__primary {
+  font-size: var(--text-secondary-size);
+  line-height: var(--text-secondary-line);
+}
+
+/* Secondary text shares the line rather than adding a second one: the row
+   height is the list's rhythm, and two-line rows break the scan. */
+.mrd-list__secondary {
+  flex: 1 1 auto;
+  font-size: var(--text-secondary-size);
+  line-height: var(--text-secondary-line);
+  color: var(--color-text-tertiary);
+}
+
+.mrd-list__trailing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: var(--text-secondary-size);
+  line-height: var(--text-secondary-line);
+  color: var(--color-text-secondary);
+}
+.mrd-list__row[data-selected] .mrd-list__trailing {
+  color: var(--color-text-primary);
+}
+
+/* ------------------------------------------------------------------ */
+
+.mrd-table {
+  position: relative;
+  max-width: 100%;
+  /* The table owns its overflow so a wide result set scrolls in its own box
+     instead of dragging the shell sideways. This element is also the
+     scrollport the sticky header sticks to, so the header only stays put when
+     the consumer bounds this height. */
+  max-height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.mrd-table__grid {
+  width: 100%;
+  /* Separate, not collapse: a collapsed border belongs to the cells it was
+     merged into and scrolls away from under a sticky header. */
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+}
+
+.mrd-table__th {
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  text-align: start;
+  vertical-align: middle;
+  white-space: nowrap;
+  font-size: var(--text-panel-size);
+  line-height: var(--text-panel-line);
+  font-weight: var(--text-panel-weight);
+  letter-spacing: var(--text-panel-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  background: var(--color-surface);
+  /* An inset shadow rather than a border, so the hairline travels with the
+     header when it sticks and never doubles up with the first row's own. */
+  box-shadow: inset 0 -1px 0 var(--color-separator);
+}
+
+.mrd-table--sticky .mrd-table__th {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+}
+
+/* An inline span never ellipsizes; the header label needs a block box. */
+.mrd-table__th .mrd-truncate {
+  display: block;
+}
+
+.mrd-table__sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: default;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+.mrd-table__sort:hover {
+  color: var(--color-text-secondary);
+}
+.mrd-table__cell--end .mrd-table__sort {
+  justify-content: flex-end;
+}
+
+/* The direction is announced from aria-sort on the cell; the glyph is the
+   sighted half of the same information. */
+.mrd-table__sort-glyph {
+  display: inline-flex;
+  flex: 0 0 auto;
+  opacity: 0;
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+.mrd-table__sort-glyph svg {
+  width: 11px;
+  height: 11px;
+}
+.mrd-table__sort:hover .mrd-table__sort-glyph,
+.mrd-table__sort:focus-visible .mrd-table__sort-glyph {
+  opacity: 0.55;
+}
+.mrd-table__th[aria-sort='ascending'],
+.mrd-table__th[aria-sort='descending'] {
+  color: var(--color-text-secondary);
+}
+.mrd-table__th[aria-sort='ascending'] .mrd-table__sort-glyph,
+.mrd-table__th[aria-sort='descending'] .mrd-table__sort-glyph {
+  opacity: 1;
+  color: var(--color-accent);
+}
+.mrd-table__th[aria-sort='descending'] .mrd-table__sort-glyph {
+  transform: rotate(180deg);
+}
+
+.mrd-table__td {
+  height: var(--control-height-lg);
+  padding: 0 var(--space-3);
+  vertical-align: middle;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+/* Hairline separators between rows, never banding: stripes compete with the
+   selection fill and turn a dense table into texture. */
+.mrd-table__body > tr + tr > .mrd-table__td {
+  border-top: 1px solid var(--color-separator);
+}
+
+.mrd-table__cell--end {
+  text-align: end;
+}
+
+.mrd-table__row[data-mrd-row] {
+  cursor: default;
+}
+.mrd-table__row[data-mrd-row]:hover > .mrd-table__td {
+  background: var(--color-fill-quiet);
+}
+.mrd-table__row[data-selected] > .mrd-table__td {
+  background: var(--color-accent-subtle);
+}
+.mrd-table__row[data-selected]:hover > .mrd-table__td {
+  background: var(--color-accent-subtle-hover);
+}
+
+/* The row sits flush inside the scrollport, so an outset ring would be clipped
+   at the first and last rows. */
+.mrd-table__row:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 0;
+}
+
+.mrd-table__empty {
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+  color: var(--color-text-tertiary);
+  font-size: var(--text-secondary-size);
+  line-height: var(--text-secondary-line);
+}
+
+.mrd-table__skeleton {
+  display: block;
+  width: 60%;
+  height: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-fill-quiet);
+  animation: mrd-data-breathe calc(var(--duration-slow) * 6) var(--ease-in-out) infinite;
+}
+/* Uneven bar widths read as rows of data rather than as a grid of blocks. */
+.mrd-table__row--skeleton > .mrd-table__td:first-child .mrd-table__skeleton {
+  width: 80%;
+}
+.mrd-table__row--skeleton > .mrd-table__td:nth-child(even) .mrd-table__skeleton {
+  width: 42%;
+}
+
+@keyframes mrd-data-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+
+.mrd-timeline {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.mrd-timeline__step {
+  position: relative;
+  min-width: 0;
+}
+
+/*
+ * The connector. It starts below the indicator and overshoots the step's own
+ * box by half the gap between the indicator and the row edge, so it meets the
+ * next indicator instead of breaking at the row boundary.
+ */
+.mrd-timeline__rail {
+  position: absolute;
+  top: calc(var(--space-2) + var(--text-body-line) / 2 + var(--space-4) / 2 + var(--space-1));
+  bottom: calc(var(--space-4) / 2 + var(--space-1) - var(--space-2) - var(--text-body-line) / 2);
+  left: calc(var(--space-2) + var(--space-4) / 2);
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--color-separator);
+  transition: background-color var(--duration-base) var(--ease-out);
+}
+.mrd-timeline__step:last-child .mrd-timeline__rail {
+  display: none;
+}
+
+/* Filled only once the step is behind us, which is what makes the rail read as
+   progress rather than as a decorative spine. */
+.mrd-timeline__step[data-status='completed'] > .mrd-timeline__rail,
+.mrd-timeline__step[data-status='skipped'] > .mrd-timeline__rail {
+  background: var(--color-accent);
+}
+
+/* Top-aligned rather than centred: the indicator, the duration and the chevron
+   all line up with the first line of the label, so a step that grows a second
+   line or opens its details keeps every marker where it was. */
+.mrd-timeline__header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-height-lg);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  text-align: start;
+  color: var(--color-text-primary);
+  cursor: default;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+button.mrd-timeline__header:hover {
+  background: var(--color-fill-quiet);
+}
+button.mrd-timeline__header:active {
+  background: var(--color-fill-hover);
+}
+
+.mrd-timeline__indicator {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--space-4);
+  height: var(--space-4);
+  margin-top: calc((var(--text-body-line) - var(--space-4)) / 2);
+  border-radius: 50%;
+  background: var(--color-surface);
+  color: var(--color-text-tertiary);
+  /* Pending is a hollow ring: the state with no glyph is the state with
+     nothing in it yet. */
+  box-shadow: inset 0 0 0 1px var(--color-border-strong);
+}
+.mrd-timeline__indicator svg {
+  width: var(--space-3);
+  height: var(--space-3);
+}
+
+.mrd-timeline__indicator[data-status='running'] {
+  background: var(--color-accent-subtle);
+  box-shadow: inset 0 0 0 1px var(--color-accent-border);
+}
+.mrd-timeline__indicator[data-status='completed'] {
+  background: var(--color-success-subtle);
+  color: var(--color-success);
+  box-shadow: none;
+}
+.mrd-timeline__indicator[data-status='failed'] {
+  background: var(--color-error-subtle);
+  color: var(--color-error);
+  box-shadow: none;
+}
+.mrd-timeline__indicator[data-status='skipped'] {
+  background: var(--color-fill-quiet);
+  color: var(--color-text-tertiary);
+  box-shadow: none;
+}
+
+.mrd-timeline__dot {
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: 50%;
+  background: var(--color-accent);
+  animation: mrd-data-breathe calc(var(--duration-slow) * 6) var(--ease-in-out) infinite;
+}
+
+.mrd-timeline__text {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mrd-timeline__label {
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+}
+.mrd-timeline__step[data-status='pending'] .mrd-timeline__label,
+.mrd-timeline__step[data-status='skipped'] .mrd-timeline__label {
+  color: var(--color-text-secondary);
+}
+.mrd-timeline__step[data-status='failed'] .mrd-timeline__label {
+  color: var(--color-error);
+}
+
+.mrd-timeline__meta {
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+  color: var(--color-text-tertiary);
+}
+
+.mrd-timeline__duration {
+  flex: 0 0 auto;
+  font-size: var(--text-secondary-size);
+  /* Carries the label's line box so it sits on the label's baseline row. */
+  line-height: var(--text-body-line);
+  color: var(--color-text-tertiary);
+}
+
+.mrd-timeline__chevron {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: var(--text-body-line);
+  color: var(--color-text-tertiary);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.mrd-timeline__chevron svg {
+  width: 13px;
+  height: 13px;
+}
+.mrd-timeline__step[data-open] .mrd-timeline__chevron {
+  transform: rotate(90deg);
+}
+
+.mrd-timeline__details {
+  /* Indented to the label column, so the details read as belonging to the step
+     rather than to the rail. */
+  padding: 0 var(--space-2) var(--space-3) calc(var(--space-2) + var(--space-4) + var(--space-2));
+  font-size: var(--text-secondary-size);
+  line-height: var(--text-secondary-line);
+  color: var(--color-text-secondary);
+}
+
+/* ------------------------------------------------------------------ */
+
+.mrd-kv {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.mrd-kv__pair {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-3);
+  min-height: var(--row-height);
+  padding: var(--space-1) 0;
+}
+
+.mrd-kv__label {
+  font-size: var(--text-secondary-size);
+  line-height: var(--text-secondary-line);
+  color: var(--color-text-secondary);
+}
+
+.mrd-kv__value {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+  color: var(--color-text-primary);
+}
+
+/* Values end-aligned by default: a column of ids, costs and timestamps is
+   compared on its last character. */
+.mrd-kv--end .mrd-kv__value {
+  justify-content: flex-end;
+  text-align: end;
+}
+
+.mrd-kv--stacked .mrd-kv__pair {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  align-items: start;
+}
+.mrd-kv--stacked .mrd-kv__value {
+  justify-content: flex-start;
+  text-align: start;
+}
+
+.mrd-kv__text {
+  min-width: 0;
+}
+
+/* Twenty rows with twenty visible copy buttons is a wall of chrome, so the
+   affordance waits for intent — including keyboard intent. */
+.mrd-kv__copy {
+  display: inline-flex;
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.mrd-kv__pair:hover .mrd-kv__copy,
+.mrd-kv__copy:focus-within,
+.mrd-kv__copy[data-copied] {
+  opacity: 1;
+}
+/* Nothing hovers on a touch screen, so there the button is simply present. */
+@media (hover: none) {
+  .mrd-kv__copy {
+    opacity: 1;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+
+/*
+ * The breathing loop carries no information a still frame does not: the
+ * skeleton is already a placeholder and the running step is already a filled
+ * dot among rings. At 1ms it would only strobe, so it stops instead.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .mrd-table__skeleton,
+  .mrd-timeline__dot {
+    animation: none;
+  }
+}
+
+:root[data-reduce-motion='true'] .mrd-table__skeleton,
+:root[data-reduce-motion='true'] .mrd-timeline__dot {
+  animation: none;
+}

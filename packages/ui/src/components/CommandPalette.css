@@ -1,0 +1,276 @@
+/*
+ * Command palette.
+ *
+ * A single translucent surface floating over a scrim, held near the top of the
+ * viewport rather than in the middle of it: the panel's height changes with
+ * every keystroke, and a vertically centred one would slide the results out
+ * from under the eye each time a match appeared or disappeared.
+ */
+
+.mrd-command-palette__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-palette);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: var(--space-9) var(--space-6) var(--space-6);
+  background: var(--color-scrim);
+  /* Nothing behind the scrim scrolls when the wheel runs off the end of the
+     results list. */
+  overscroll-behavior: contain;
+  animation: mrd-command-palette-scrim-in var(--duration-fast) var(--ease-out);
+}
+
+.mrd-command-palette {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: var(--breakpoint-sm);
+  /* The scrim's padding is the palette's margin from the viewport edge, so the
+     panel measures against the space that padding leaves. */
+  max-height: 100%;
+  /* The list scrolls under the rounded corners rather than through them. */
+  overflow: hidden;
+  background: var(--color-overlay);
+  -webkit-backdrop-filter: var(--blur-overlay);
+  backdrop-filter: var(--blur-overlay);
+  border-radius: var(--radius-3xl);
+  box-shadow: inset 0 0 0 1px var(--color-border), var(--shadow-4);
+  color: var(--color-text-primary);
+  animation: mrd-command-palette-in var(--duration-base) var(--ease-out);
+}
+
+/* ------------------------------------------------------------------ */
+/* Search                                                              */
+/* ------------------------------------------------------------------ */
+
+.mrd-command-palette__search {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--space-10);
+  padding: 0 var(--space-5);
+  border-bottom: 1px solid var(--color-separator);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+/* The row carries focus, not the field: the palette is modal and this input is
+   its only tab stop, so a ring drawn around a borderless full-width field would
+   read as a box that should not be there. */
+.mrd-command-palette__search:has(.mrd-command-palette__input:focus-visible) {
+  border-bottom-color: var(--color-accent-border);
+}
+
+.mrd-command-palette__search-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+}
+.mrd-command-palette__search-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.mrd-command-palette__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  background: none;
+  border: none;
+  /* See the focused row above; the caret is this field's own focus indicator. */
+  outline: none;
+  color: var(--color-text-primary);
+  font-size: var(--text-title-size);
+  line-height: var(--text-title-line);
+  letter-spacing: var(--text-title-tracking);
+  font-weight: 400;
+}
+
+.mrd-command-palette__input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+/* ------------------------------------------------------------------ */
+/* Results                                                             */
+/* ------------------------------------------------------------------ */
+
+.mrd-command-palette__results {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-2);
+}
+
+.mrd-command-palette__group + .mrd-command-palette__group {
+  margin-top: var(--space-3);
+}
+
+.mrd-command-palette__group-title {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+}
+
+.mrd-command-palette__option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--control-height-lg);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-lg);
+  /* A palette row is not a link, and macOS keeps the arrow cursor over list
+     content. */
+  cursor: default;
+  user-select: none;
+  transition:
+    background-color var(--duration-instant) var(--ease-out),
+    color var(--duration-instant) var(--ease-out);
+}
+
+/*
+ * One highlight, wherever it came from. Hover moves the selection rather than
+ * painting a second state, so the row the pointer is on and the row Enter will
+ * run are never two different rows.
+ */
+.mrd-command-palette__option[aria-selected='true'] {
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+}
+
+.mrd-command-palette__option[aria-disabled='true'] {
+  opacity: 0.42;
+}
+
+/* A fixed leading column so labels line up down the list whether or not an
+   individual command carries an icon. */
+.mrd-command-palette__icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-4);
+  color: var(--color-text-tertiary);
+}
+.mrd-command-palette__icon svg {
+  width: 16px;
+  height: 16px;
+}
+.mrd-command-palette__option[aria-selected='true'] .mrd-command-palette__icon {
+  color: inherit;
+}
+
+.mrd-command-palette__text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.mrd-command-palette__label {
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+}
+
+.mrd-command-palette__description {
+  color: var(--color-text-secondary);
+  font-size: var(--text-secondary-size);
+  line-height: var(--text-secondary-line);
+}
+.mrd-command-palette__option[aria-selected='true'] .mrd-command-palette__description {
+  color: inherit;
+  opacity: 0.78;
+}
+
+/* <mark> paints a yellow ground by default, which belongs to a document, not to
+   a control. */
+.mrd-command-palette__mark {
+  background: none;
+  color: var(--color-accent);
+  font-weight: 600;
+}
+/* On the selected row the accent is the ground, so the matched run keeps an
+   underline rather than relying on a colour that is no longer available. */
+.mrd-command-palette__option[aria-selected='true'] .mrd-command-palette__mark {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.mrd-command-palette__shortcut {
+  flex: 0 0 auto;
+}
+/* Keycaps are drawn on their own raised surface, which vanishes against the
+   accent fill; there they become an outline in the row's own colour. */
+.mrd-command-palette__option[aria-selected='true'] .mrd-kbd__cap {
+  background: transparent;
+  color: inherit;
+  box-shadow: inset 0 0 0 1px currentColor;
+  opacity: 0.78;
+}
+
+/* ------------------------------------------------------------------ */
+/* Empty state                                                         */
+/* ------------------------------------------------------------------ */
+
+.mrd-command-palette__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-8) var(--space-6);
+  text-align: center;
+}
+
+.mrd-command-palette__empty-title {
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
+.mrd-command-palette__empty-query {
+  max-width: 100%;
+}
+
+/* ------------------------------------------------------------------ */
+/* Footer                                                              */
+/* ------------------------------------------------------------------ */
+
+.mrd-command-palette__footer {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-2) var(--space-5);
+  border-top: 1px solid var(--color-separator);
+  color: var(--color-text-tertiary);
+}
+
+.mrd-command-palette__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+}
+
+/* ------------------------------------------------------------------ */
+
+@keyframes mrd-command-palette-scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* A short fall into place, not an entrance. */
+@keyframes mrd-command-palette-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--space-1) * -1));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

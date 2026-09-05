@@ -1,0 +1,101 @@
+.mrd-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-surface);
+}
+.mrd-editor .cm-editor {
+  height: 100%;
+}
+
+.mrd-diff {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.mrd-diff__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-separator);
+  background: var(--color-surface);
+  flex: 0 0 auto;
+}
+
+.mrd-diff__path {
+  color: var(--color-text-secondary);
+  min-width: 0;
+}
+
+.mrd-diff__counts {
+  display: flex;
+  gap: var(--space-2);
+  font-size: var(--text-caption-size);
+  flex: 0 0 auto;
+}
+.mrd-diff__add { color: var(--color-diff-add-text); }
+.mrd-diff__del { color: var(--color-diff-del-text); }
+
+.mrd-diff__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.mrd-diff__body .cm-mergeView,
+.mrd-diff__body .cm-editor {
+  height: 100%;
+}
+
+/* CodeMirror's merge extension emits its own class names; these bind them to
+   the diff tokens so both themes stay consistent. */
+.mrd-diff__body .cm-changedLine,
+.mrd-diff__body .cm-insertedLine {
+  background: var(--color-diff-add-bg);
+}
+.mrd-diff__body .cm-deletedChunk,
+.mrd-diff__body .cm-deletedLine {
+  background: var(--color-diff-del-bg);
+}
+.mrd-diff__body .cm-changedText {
+  background: var(--color-diff-add-bg);
+}
+.mrd-diff__body .cm-collapsedLines {
+  background: var(--color-fill-quiet);
+  color: var(--color-text-tertiary);
+}
+.mrd-diff__body .cm-merge-gap {
+  background: var(--color-diff-gutter);
+}
+
+.mrd-codeblock {
+  margin: var(--space-2) 0;
+  border: 1px solid var(--color-separator);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--color-surface-sunken);
+}
+
+.mrd-codeblock__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--color-separator);
+  background: var(--color-surface);
+}
+.mrd-codeblock__header .mrd-caption {
+  flex: 1 1 auto;
+}
+
+/* Wide code scrolls inside the block, never the page. */
+.mrd-codeblock__body {
+  margin: 0;
+  padding: var(--space-3);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}

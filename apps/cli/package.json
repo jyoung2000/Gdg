@@ -1,0 +1,8 @@
+{
+  "name": "@meridian/cli",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "bin": { "uag": "./dist/uag.js" },
+  "dependencies": { "@meridian/shared": "workspace:*" }
+}

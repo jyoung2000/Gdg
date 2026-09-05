@@ -1,0 +1,236 @@
+.mrd-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--text-body-size);
+  font-weight: 500;
+  letter-spacing: -0.003em;
+  white-space: nowrap;
+  user-select: none;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out),
+    transform var(--duration-instant) var(--ease-out);
+}
+
+/* A 1px press travel. Enough to feel like the control moved under the finger,
+   small enough that a row of buttons does not appear to jitter. */
+.mrd-button:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+
+.mrd-button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.mrd-button--sm {
+  height: var(--control-height-sm);
+  padding: 0 var(--space-2);
+  font-size: var(--text-secondary-size);
+  border-radius: var(--radius-sm);
+}
+.mrd-button--lg {
+  height: var(--control-height-lg);
+  padding: 0 var(--space-4);
+}
+.mrd-button--full {
+  width: 100%;
+}
+
+/* Primary: the accent, with a hairline of its own darker shade so the edge
+   stays crisp against a light surface. */
+.mrd-button--primary {
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06), var(--shadow-1);
+}
+.mrd-button--primary:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+.mrd-button--primary:active:not(:disabled) {
+  background: var(--color-accent-active);
+}
+
+.mrd-button--secondary {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  box-shadow: inset 0 0 0 1px var(--color-border), var(--shadow-1);
+}
+.mrd-button--secondary:hover:not(:disabled) {
+  background: var(--color-fill-quiet);
+}
+.mrd-button--secondary:active:not(:disabled) {
+  background: var(--color-fill-hover);
+}
+
+.mrd-button--tertiary {
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+.mrd-button--tertiary:hover:not(:disabled) {
+  background: var(--color-fill-hover);
+  color: var(--color-text-primary);
+}
+.mrd-button--tertiary:active:not(:disabled) {
+  background: var(--color-fill-active);
+}
+
+/* Destructive reads as destructive at rest, not only on hover — a button that
+   only reveals its danger once the pointer is on it has already failed. */
+.mrd-button--destructive {
+  background: var(--color-error-subtle);
+  color: var(--color-error);
+  box-shadow: inset 0 0 0 1px var(--color-error-subtle);
+}
+.mrd-button--destructive:hover:not(:disabled) {
+  background: var(--color-error);
+  color: #fff;
+}
+
+.mrd-button__icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+}
+.mrd-button__icon svg {
+  width: 15px;
+  height: 15px;
+}
+.mrd-button--sm .mrd-button__icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.mrd-button__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mrd-button__spinner {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  opacity: 0.7;
+  animation: mrd-spin 620ms linear infinite;
+}
+
+@keyframes mrd-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mrd-button__spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+
+.mrd-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-height);
+  height: var(--control-height);
+  flex: 0 0 auto;
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+.mrd-icon-button svg {
+  width: 16px;
+  height: 16px;
+}
+.mrd-icon-button--sm {
+  width: var(--control-height-sm);
+  height: var(--control-height-sm);
+  border-radius: var(--radius-sm);
+}
+.mrd-icon-button--sm svg {
+  width: 13px;
+  height: 13px;
+}
+.mrd-icon-button--lg {
+  width: var(--control-height-lg);
+  height: var(--control-height-lg);
+}
+.mrd-icon-button--lg svg {
+  width: 18px;
+  height: 18px;
+}
+
+.mrd-icon-button:hover:not(:disabled) {
+  background: var(--color-fill-hover);
+  color: var(--color-text-primary);
+}
+.mrd-icon-button:active:not(:disabled) {
+  background: var(--color-fill-active);
+}
+.mrd-icon-button[data-pressed] {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+.mrd-icon-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.mrd-icon-button--secondary {
+  background: var(--color-surface);
+  box-shadow: inset 0 0 0 1px var(--color-border);
+}
+.mrd-icon-button--primary {
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+}
+.mrd-icon-button--primary:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+  color: var(--color-text-on-accent);
+}
+.mrd-icon-button--destructive:hover:not(:disabled) {
+  background: var(--color-error-subtle);
+  color: var(--color-error);
+}
+
+/* ------------------------------------------------------------------ */
+
+.mrd-button-group {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Joined: the group reads as one control, so only the outer corners round. */
+.mrd-button-group:not(.mrd-button-group--spaced) > .mrd-button {
+  border-radius: 0;
+  margin-left: -1px;
+}
+.mrd-button-group:not(.mrd-button-group--spaced) > .mrd-button:first-child {
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+  margin-left: 0;
+}
+.mrd-button-group:not(.mrd-button-group--spaced) > .mrd-button:last-child {
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+.mrd-button-group:not(.mrd-button-group--spaced) > .mrd-button:only-child {
+  border-radius: var(--radius-md);
+}
+.mrd-button-group:not(.mrd-button-group--spaced) > .mrd-button:hover {
+  z-index: 1;
+}
+
+.mrd-button-group--spaced {
+  gap: var(--space-2);
+}

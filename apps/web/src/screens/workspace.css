@@ -1,0 +1,183 @@
+.ws {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.ws__files {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border-right: 1px solid var(--color-separator);
+  background: var(--color-surface);
+}
+
+.ws__files-header {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-separator);
+  flex: 0 0 auto;
+}
+
+.ws__files-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-1) 0;
+}
+
+.ws__node {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--row-height);
+  padding: 0 var(--space-2);
+  font-size: var(--text-secondary-size);
+  color: var(--color-text-secondary);
+  text-align: left;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.ws__node:hover {
+  background: var(--color-fill-hover);
+  color: var(--color-text-primary);
+}
+.ws__node--active {
+  background: var(--color-fill-selected);
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+.ws__node svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+}
+
+/* A file with pending changes carries a dot, so the tree shows what an agent
+   touched without opening the diff view. */
+.ws__change {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--color-text-tertiary);
+}
+.ws__change--added { background: var(--color-success); }
+.ws__change--modified { background: var(--color-warning); }
+.ws__change--deleted { background: var(--color-error); }
+
+.ws__search-group + .ws__search-group {
+  margin-top: var(--space-2);
+}
+.ws__search-hit {
+  padding: 0 var(--space-2) 0 var(--space-6);
+  color: var(--color-text-tertiary);
+  line-height: var(--text-caption-line);
+}
+
+.ws__centre {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.ws__tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  min-height: var(--control-height-lg);
+  border-bottom: 1px solid var(--color-separator);
+  background: var(--color-surface);
+  flex: 0 0 auto;
+}
+
+.ws__tabstrip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.ws__tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 200px;
+  height: var(--control-height);
+  padding: 0 var(--space-1) 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-secondary-size);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ws__tab:hover {
+  background: var(--color-fill-hover);
+}
+.ws__tab--active {
+  background: var(--color-fill-selected);
+  color: var(--color-text-primary);
+}
+
+.ws__dirty {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  flex: 0 0 auto;
+}
+
+.ws__editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.ws__diff {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.ws__diff-list {
+  flex: 0 0 260px;
+  border-right: 1px solid var(--color-separator);
+  min-height: 0;
+}
+
+.ws__diff-view {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ws__diff-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-separator);
+  flex: 0 0 auto;
+}
+
+@media (max-width: 900px) {
+  .ws__diff {
+    flex-direction: column;
+  }
+  .ws__diff-list {
+    flex: 0 0 140px;
+    border-right: none;
+    border-bottom: 1px solid var(--color-separator);
+  }
+}

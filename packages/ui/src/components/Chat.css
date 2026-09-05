@@ -1,0 +1,332 @@
+/* ------------------------------------------------------------------ */
+/* Messages                                                            */
+/* ------------------------------------------------------------------ */
+
+.mrd-msglist {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.mrd-msglist__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-4) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.mrd-msglist__jump {
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-3);
+  transform: translateX(-50%);
+  box-shadow: var(--shadow-2);
+}
+
+.mrd-msg {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.mrd-msg__content {
+  min-width: 0;
+  font-size: var(--text-body-lg-size);
+  line-height: var(--text-body-lg-line);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* A user message is a short, quoted thing, so it gets a bubble on the trailing
+   edge. Assistant output is long and often contains code, so it runs full
+   width where the extra columns actually help. */
+.mrd-msg--user {
+  align-items: flex-end;
+}
+.mrd-msg--user .mrd-msg__content {
+  max-width: 80%;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-fill-selected);
+  border-radius: var(--radius-xl);
+  border-bottom-right-radius: var(--radius-sm);
+}
+
+.mrd-msg--system .mrd-msg__content,
+.mrd-msg--tool .mrd-msg__content {
+  font-size: var(--text-secondary-size);
+  line-height: var(--text-secondary-line);
+  color: var(--color-text-secondary);
+}
+
+.mrd-msg__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.mrd-streaming__caret {
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--color-accent);
+  border-radius: 1px;
+  animation: mrd-caret 1.05s steps(2, start) infinite;
+}
+
+@keyframes mrd-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mrd-streaming__caret {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+:root[data-reduce-motion='true'] .mrd-streaming__caret {
+  animation: none;
+  opacity: 0.6;
+}
+
+/* ------------------------------------------------------------------ */
+/* Composer                                                            */
+/* ------------------------------------------------------------------ */
+
+.mrd-composer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-1);
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.mrd-composer:focus-within {
+  border-color: var(--color-accent-border);
+  box-shadow: var(--shadow-focus);
+}
+
+.mrd-composer--dragging {
+  border-color: var(--color-accent);
+  border-style: dashed;
+}
+
+.mrd-composer--disabled {
+  opacity: 0.6;
+}
+
+.mrd-composer__input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  resize: none;
+  padding: var(--space-2);
+  font-size: var(--text-body-lg-size);
+  line-height: var(--text-body-lg-line);
+  color: var(--color-text-primary);
+  outline: none;
+  overscroll-behavior: contain;
+}
+.mrd-composer__input::placeholder {
+  color: var(--color-text-tertiary);
+}
+.mrd-composer__input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.mrd-composer__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.mrd-composer__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.mrd-composer__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 220px;
+  padding-left: var(--space-2);
+  background: var(--color-fill-quiet);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-caption-size);
+  color: var(--color-text-secondary);
+}
+
+.mrd-composer__drop {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--color-accent-subtle);
+  border-radius: var(--radius-2xl);
+  font-size: var(--text-secondary-size);
+  color: var(--color-accent);
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Tool calls                                                          */
+/* ------------------------------------------------------------------ */
+
+.mrd-toolcall {
+  border: 1px solid var(--color-separator);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+.mrd-toolcall--error {
+  border-color: var(--color-error-subtle);
+}
+
+.mrd-toolcall__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  text-align: left;
+  min-width: 0;
+}
+.mrd-toolcall__header:hover {
+  background: var(--color-fill-hover);
+}
+.mrd-toolcall__header svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+}
+
+.mrd-toolcall__name {
+  color: var(--color-text-primary);
+  flex: 0 0 auto;
+}
+
+.mrd-toolcall__preview {
+  min-width: 0;
+}
+
+.mrd-toolcall__body {
+  border-top: 1px solid var(--color-separator);
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.mrd-toolcall__pre {
+  margin: 0;
+  padding: var(--space-2);
+  background: var(--color-surface-sunken);
+  border-radius: var(--radius-md);
+  max-height: 260px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------ */
+/* Fallback notice                                                     */
+/* ------------------------------------------------------------------ */
+
+/* Informational, not alarming: a recovered failure is normal operation. */
+.mrd-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-info-subtle);
+  border: 1px solid var(--color-accent-border);
+  border-radius: var(--radius-lg);
+}
+
+.mrd-fallback__head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.mrd-fallback__head svg {
+  flex: 0 0 auto;
+  color: var(--color-accent);
+  margin-top: 2px;
+}
+
+.mrd-fallback__message {
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+}
+
+.mrd-fallback__ok {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.mrd-fallback__ok svg {
+  width: 13px;
+  height: 13px;
+  color: var(--color-success);
+}
+
+.mrd-fallback__toggle {
+  font-size: var(--text-caption-size);
+  color: var(--color-accent);
+  border-radius: var(--radius-sm);
+}
+.mrd-fallback__toggle:hover {
+  text-decoration: underline;
+}
+
+.mrd-fallback__detail {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-separator);
+}
+.mrd-fallback__detail dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------ */
+/* Terminal                                                            */
+/* ------------------------------------------------------------------ */
+
+.mrd-terminal {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-2);
+  background: var(--color-surface-sunken);
+}
+.mrd-terminal .xterm {
+  height: 100%;
+}
+.mrd-terminal .xterm-viewport {
+  overscroll-behavior: contain;
+  background-color: transparent !important;
+}

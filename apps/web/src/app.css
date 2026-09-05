@@ -1,0 +1,668 @@
+/*
+ * Application-level layout only. Anything reusable belongs in @meridian/ui;
+ * this file is the shell's own composition and nothing else.
+ */
+
+.app {
+  display: grid;
+  grid-template-rows: var(--toolbar-height) minmax(0, 1fr) var(--statusbar-height);
+  height: 100%;
+  background: var(--color-bg);
+}
+
+.app__body {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+}
+
+.app__main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The centre column and the inspector sit side by side above the drawer. */
+.app__stage {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.app__content {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app__drawer {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--color-separator);
+  background: var(--color-surface);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.app__boot {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: var(--space-8);
+  text-align: center;
+}
+
+.app__boot-inner {
+  max-width: 44ch;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+/* The identity mark: a meridian line crossing a circle. */
+.app__mark {
+  width: 34px;
+  height: 34px;
+  color: var(--color-accent);
+}
+
+.app__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-right: var(--space-2);
+  flex: 0 0 auto;
+}
+
+.app__brand-name {
+  font-weight: 600;
+  letter-spacing: -0.012em;
+}
+
+.app__brand-mark {
+  width: 18px;
+  height: 18px;
+  color: var(--color-accent);
+  flex: 0 0 auto;
+}
+
+.app__toolbar-context {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.app__screen {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.app__screen-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6) var(--space-3);
+  flex: 0 0 auto;
+}
+
+.app__screen-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0 var(--space-6) var(--space-6);
+}
+
+.app__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-4);
+}
+
+.app__toasts {
+  position: fixed;
+  right: var(--space-4);
+  bottom: calc(var(--statusbar-height) + var(--space-4));
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: min(420px, calc(100vw - var(--space-8)));
+}
+
+/* ------------------------------------------------------------------ */
+/* Toasts                                                              */
+/* ------------------------------------------------------------------ */
+
+.app-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-overlay);
+  backdrop-filter: var(--blur-overlay);
+  -webkit-backdrop-filter: var(--blur-overlay);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-3);
+  animation: app-toast-in var(--duration-base) var(--ease-out);
+}
+
+@keyframes app-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* A left edge carries the level, so the surface itself stays calm. */
+.app-toast::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 3px;
+  align-self: stretch;
+  border-radius: var(--radius-pill);
+  background: var(--color-text-tertiary);
+}
+.app-toast--success::before { background: var(--color-success); }
+.app-toast--warn::before { background: var(--color-warning); }
+.app-toast--error::before { background: var(--color-error); }
+.app-toast--info::before { background: var(--color-accent); }
+
+.app-toast__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.app-toast__message {
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+}
+
+.app-toast__detail {
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------ */
+/* Inspector (the AI assistant panel)                                  */
+/* ------------------------------------------------------------------ */
+
+.app__inspector {
+  flex: 0 0 var(--inspector-width);
+  width: var(--inspector-width);
+  min-width: 0;
+  border-left: 1px solid var(--color-separator);
+  background: var(--color-surface);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.inspector__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  border-bottom: 1px solid var(--color-separator);
+  flex: 0 0 auto;
+}
+
+.inspector__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.inspector__footer {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--color-separator);
+  padding: var(--space-3);
+}
+
+.inspector__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* ------------------------------------------------------------------ */
+/* Drawer                                                              */
+/* ------------------------------------------------------------------ */
+
+.drawer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.drawer__tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--color-separator);
+  flex: 0 0 auto;
+  min-height: var(--control-height-lg);
+}
+
+.drawer__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.drawer__terminal {
+  height: 100%;
+  min-height: 0;
+  background: var(--color-surface-sunken);
+}
+
+.drawer__console {
+  font-family: var(--font-mono);
+  font-size: var(--text-code-size);
+  line-height: var(--text-code-line);
+  padding: var(--space-3);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.drawer__prompt {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-separator);
+  flex: 0 0 auto;
+}
+
+.drawer__tab {
+  padding: 0 var(--space-3);
+  height: var(--control-height);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-secondary-size);
+  color: var(--color-text-secondary);
+  transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.drawer__tab:hover {
+  background: var(--color-fill-hover);
+  color: var(--color-text-primary);
+}
+.drawer__tab--active {
+  background: var(--color-fill-selected);
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+
+.app__nav-toggle {
+  display: none;
+}
+@media (max-width: 900px) {
+  .app__nav-toggle {
+    display: inline-flex;
+  }
+}
+
+.app__screen-body--flush {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.app__screen-body > section + section {
+  margin-top: var(--space-6);
+}
+
+.app__screen-body > section > .mrd-panel-title {
+  margin-bottom: var(--space-3);
+}
+
+.compare {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--space-3);
+}
+
+.compare__output {
+  max-height: 300px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--color-surface-sunken);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+  margin: 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Generations                                                         */
+/* ------------------------------------------------------------------ */
+
+.gen {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.gen__params {
+  flex: 0 0 300px;
+  min-height: 0;
+  padding: var(--space-4);
+  border-right: 1px solid var(--color-separator);
+  background: var(--color-surface);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.gen__canvas {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-4);
+}
+
+@media (max-width: 900px) {
+  .gen {
+    flex-direction: column;
+  }
+  .gen__params {
+    flex: 0 0 auto;
+    border-right: none;
+    border-bottom: 1px solid var(--color-separator);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Chat                                                                */
+/* ------------------------------------------------------------------ */
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* The conversation is easier to read at a bounded measure, so the column is
+     centred rather than stretched across a wide display. */
+  max-width: 860px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 var(--space-4);
+}
+
+.chat__composer {
+  flex: 0 0 auto;
+  padding: var(--space-3) 0 var(--space-4);
+}
+
+.chat__why {
+  font-size: var(--text-caption-size);
+  color: var(--color-accent);
+  border-radius: var(--radius-sm);
+}
+.chat__why:hover {
+  text-decoration: underline;
+}
+
+/* ------------------------------------------------------------------ */
+/* Settings                                                            */
+/* ------------------------------------------------------------------ */
+
+.settings {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.settings__nav {
+  flex: 0 0 232px;
+  min-height: 0;
+  padding: var(--space-3) var(--space-2);
+  border-right: 1px solid var(--color-separator);
+  background: var(--color-surface);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.settings__navitem {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  text-align: left;
+  color: var(--color-text-secondary);
+  transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.settings__navitem:hover {
+  background: var(--color-fill-hover);
+  color: var(--color-text-primary);
+}
+.settings__navitem--active {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+.settings__navitem--active .settings__navdesc {
+  color: var(--color-accent);
+  opacity: 0.75;
+}
+
+.settings__navlabel {
+  font-size: var(--text-body-size);
+  font-weight: 500;
+}
+
+.settings__navdesc {
+  line-height: var(--text-caption-line);
+}
+
+.settings__detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.settings__header {
+  padding: var(--space-6) var(--space-6) var(--space-4);
+}
+
+.settings__body {
+  /* Settings read better at a bounded measure than stretched across a display. */
+  max-width: 720px;
+  padding: 0 var(--space-6) var(--space-9);
+}
+
+.settings__key {
+  display: block;
+  padding: var(--space-3);
+  background: var(--color-surface-sunken);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--text-code-size);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+@media (max-width: 900px) {
+  .settings {
+    flex-direction: column;
+  }
+  .settings__nav {
+    flex: 0 0 auto;
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--color-separator);
+  }
+  .settings__navitem {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  .settings__navdesc {
+    display: none;
+  }
+  .settings__header,
+  .settings__body {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Toolbar under pressure                                              */
+/*                                                                     */
+/* Narrow viewports re-compose rather than shrink: the assistant and    */
+/* terminal are drawers there, so their toggles have nothing to toggle  */
+/* and are removed instead of squeezed. The workspace name goes next,   */
+/* then the Search label, leaving the palette reachable as an icon.     */
+/* ------------------------------------------------------------------ */
+
+@media (max-width: 900px) {
+  .app__panel-toggles {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .app__toolbar-context {
+    display: none;
+  }
+  .app__search .mrd-button__label {
+    display: none;
+  }
+  .app__search {
+    padding: 0 var(--space-2);
+  }
+  .app__brand-name {
+    display: none;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Responsive                                                          */
+/*                                                                     */
+/* Last in the file on purpose: these override the base layout, and at  */
+/* equal specificity the later rule wins.                              */
+/* ------------------------------------------------------------------ */
+
+.app__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dropdown);
+  background: var(--color-scrim);
+  animation: app-fade var(--duration-fast) var(--ease-out);
+}
+
+@keyframes app-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The assistant as an overlay: a 340px column on a 390px viewport leaves the
+   workspace with nothing, so below the breakpoint it slides over instead. */
+.app__inspector-overlay {
+  position: fixed;
+  top: var(--toolbar-height);
+  bottom: var(--statusbar-height);
+  right: 0;
+  width: min(var(--inspector-width), 100vw);
+  z-index: var(--z-popover);
+  box-shadow: var(--shadow-4);
+  display: flex;
+  animation: app-slide-in var(--duration-base) var(--ease-out);
+}
+.app__inspector-overlay .app__inspector {
+  width: 100%;
+  flex: 1 1 auto;
+}
+
+@keyframes app-slide-in {
+  from {
+    transform: translateX(12px);
+    opacity: 0;
+  }
+}
+
+@media (max-width: 900px) {
+  .app__sidebar {
+    position: fixed;
+    inset: var(--toolbar-height) auto var(--statusbar-height) 0;
+    z-index: var(--z-popover);
+    box-shadow: var(--shadow-3);
+    transform: translateX(-100%);
+    transition: transform var(--duration-base) var(--ease-out);
+  }
+  .app__sidebar--open {
+    transform: translateX(0);
+  }
+  .app__screen-header,
+  .app__screen-body {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+  }
+  .app__panel-toggles {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .app__grid {
+    grid-template-columns: 1fr;
+  }
+  /* The title and its actions stop competing for one line and stack instead. */
+  .app__screen-header {
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+  /* A status bar that wraps to two lines is taller than the strip it lives in. */
+  .app__statusline {
+    display: none;
+  }
+  .app__toasts {
+    left: var(--space-3);
+    right: var(--space-3);
+    max-width: none;
+  }
+  .app__toolbar-context {
+    display: none;
+  }
+  .app__search .mrd-button__label {
+    display: none;
+  }
+  .app__search {
+    padding: 0 var(--space-2);
+  }
+  .app__brand-name {
+    display: none;
+  }
+  .app__inspector-overlay {
+    width: 100vw;
+  }
+}

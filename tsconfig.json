@@ -1,0 +1,50 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": false,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": false,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": false,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@meridian/shared": ["packages/shared/src/index.ts"],
+      "@meridian/shared/*": ["packages/shared/src/*"],
+      "@meridian/provider-sdk": ["packages/provider-sdk/src/index.ts"],
+      "@meridian/provider-sdk/*": ["packages/provider-sdk/src/*"],
+      "@meridian/model-sdk": ["packages/model-sdk/src/index.ts"],
+      "@meridian/model-sdk/*": ["packages/model-sdk/src/*"],
+      "@meridian/routing-sdk": ["packages/routing-sdk/src/index.ts"],
+      "@meridian/routing-sdk/*": ["packages/routing-sdk/src/*"],
+      "@meridian/agent-sdk": ["packages/agent-sdk/src/index.ts"],
+      "@meridian/agent-sdk/*": ["packages/agent-sdk/src/*"],
+      "@meridian/media-sdk": ["packages/media-sdk/src/index.ts"],
+      "@meridian/media-sdk/*": ["packages/media-sdk/src/*"],
+      "@meridian/ui": ["packages/ui/src/index.ts"],
+      "@meridian/ui/*": ["packages/ui/src/*"]
+    }
+  },
+  "include": [
+    "apps/**/*.ts",
+    "apps/**/*.tsx",
+    "packages/**/*.ts",
+    "packages/**/*.tsx",
+    "tests/**/*.ts",
+    "scripts/**/*.ts"
+  ],
+  "exclude": ["**/node_modules/**", "**/dist/**", "**/build/**"]
+}

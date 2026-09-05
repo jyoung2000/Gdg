@@ -1,0 +1,12 @@
+node_modules
+**/node_modules
+dist
+**/dist
+.git
+data
+workspaces
+*.log
+.env
+.env.*
+!.env.example
+coverage

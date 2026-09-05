@@ -1,0 +1,835 @@
+/* ------------------------------------------------------------------ */
+/* Segmented control                                                   */
+/* ------------------------------------------------------------------ */
+
+.mrd-segmented {
+  display: inline-flex;
+  max-width: 100%;
+}
+
+.mrd-segmented--full {
+  display: flex;
+}
+
+.mrd-segmented__track {
+  /* The offset parent for the indicator, which is measured in this box. */
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--control-height);
+  padding: var(--space-1);
+  gap: 0;
+  background: var(--color-fill-quiet);
+  border-radius: var(--radius-md);
+  box-shadow: inset 0 0 0 1px var(--color-separator);
+}
+
+.mrd-segmented--md .mrd-segmented__track {
+  height: var(--control-height-lg);
+}
+
+.mrd-segmented__indicator {
+  position: absolute;
+  top: var(--space-1);
+  bottom: var(--space-1);
+  left: 0;
+  width: var(--mrd-seg-w);
+  transform: translateX(var(--mrd-seg-x));
+  background: var(--color-surface-raised);
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px var(--color-border), var(--shadow-1);
+  pointer-events: none;
+}
+
+/* Travel is enabled a frame after mount so the pill does not slide in from the
+   left edge the first time the control paints. */
+.mrd-segmented__indicator[data-animate] {
+  transition:
+    transform var(--duration-base) var(--ease-out),
+    width var(--duration-base) var(--ease-out);
+}
+
+.mrd-segmented__option {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: var(--text-body-size);
+  font-weight: 500;
+  letter-spacing: -0.003em;
+  white-space: nowrap;
+  user-select: none;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.mrd-segmented--sm .mrd-segmented__option {
+  padding: 0 var(--space-2);
+  font-size: var(--text-secondary-size);
+}
+
+.mrd-segmented__option:hover:not(:disabled) {
+  color: var(--color-text-primary);
+}
+
+.mrd-segmented__option[data-selected] {
+  color: var(--color-text-primary);
+}
+
+.mrd-segmented__option:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+/* The macOS hairline between unselected pairs. It retracts next to the pill so
+   the raised segment keeps a clean edge. */
+.mrd-segmented__option + .mrd-segmented__option::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 1px;
+  height: 54%;
+  transform: translateY(-50%);
+  background: var(--color-separator);
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.mrd-segmented__option[data-selected]::before,
+.mrd-segmented__option[data-selected] + .mrd-segmented__option::before {
+  opacity: 0;
+}
+
+.mrd-segmented__icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.mrd-segmented__icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.mrd-segmented--sm .mrd-segmented__icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.mrd-segmented__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ------------------------------------------------------------------ */
+/* Tabs                                                                */
+/* ------------------------------------------------------------------ */
+
+.mrd-tabs {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.mrd-tabs[data-orientation='vertical'] {
+  flex-direction: row;
+}
+
+.mrd-tablist {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.mrd-tabs[data-orientation='vertical'] > .mrd-tablist {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* Underline: content tabs. The list carries the rule the indicator sits on. */
+.mrd-tablist--underline {
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--color-separator);
+}
+
+.mrd-tabs[data-orientation='vertical'] > .mrd-tablist--underline {
+  border-bottom: none;
+  border-right: 1px solid var(--color-separator);
+}
+
+.mrd-tablist--pill {
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.mrd-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--control-height-lg);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-size: var(--text-body-size);
+  font-weight: 500;
+  letter-spacing: -0.003em;
+  white-space: nowrap;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+
+.mrd-tab:hover:not(:disabled) {
+  color: var(--color-text-primary);
+}
+
+.mrd-tab:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.mrd-tab--underline[aria-selected='true'] {
+  color: var(--color-text-primary);
+}
+
+/* Sits on the list's rule rather than above it, so the two read as one line. */
+.mrd-tab--underline::after {
+  content: '';
+  position: absolute;
+  left: var(--space-2);
+  right: var(--space-2);
+  bottom: -1px;
+  height: 2px;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: var(--color-accent);
+  opacity: 0;
+  transform: scaleX(0.5);
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.mrd-tab--underline[aria-selected='true']::after {
+  opacity: 1;
+  transform: none;
+}
+
+.mrd-tabs[data-orientation='vertical'] .mrd-tab--underline {
+  justify-content: flex-start;
+}
+
+.mrd-tabs[data-orientation='vertical'] .mrd-tab--underline::after {
+  left: auto;
+  right: -1px;
+  top: var(--space-1);
+  bottom: var(--space-1);
+  width: 2px;
+  height: auto;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  transform: scaleY(0.5);
+}
+
+.mrd-tabs[data-orientation='vertical'] .mrd-tab--underline[aria-selected='true']::after {
+  transform: none;
+}
+
+/* Pill: filter tabs, one of the few places a pill radius is correct. */
+.mrd-tab--pill {
+  height: var(--control-height);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-secondary-size);
+}
+
+.mrd-tab--pill:hover:not(:disabled) {
+  background: var(--color-fill-hover);
+}
+
+.mrd-tab--pill[aria-selected='true'] {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+.mrd-tab__icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.mrd-tab__icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.mrd-tab__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mrd-tab__count {
+  color: var(--color-text-tertiary);
+  font-size: var(--text-caption-size);
+}
+
+.mrd-tab[aria-selected='true'] .mrd-tab__count {
+  color: inherit;
+}
+
+.mrd-tabpanel {
+  min-height: 0;
+  min-width: 0;
+  /* The panel is focusable, but it is a region, not a control — no ring. */
+  outline: none;
+}
+
+.mrd-tabpanel[hidden] {
+  display: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Kbd                                                                 */
+/* ------------------------------------------------------------------ */
+
+.mrd-kbd {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  /* Shortcut glyphs (⌘ ⇧ ⌥) are system-font shapes; the mono face inherited
+     from the base layer renders them inconsistently. */
+  font-family: var(--font-sans);
+  font-size: var(--text-secondary-size);
+}
+
+.mrd-kbd--sm {
+  font-size: var(--text-caption-size);
+}
+
+.mrd-kbd__cap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.6em;
+  height: 1.6em;
+  padding: 0 0.35em;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-raised);
+  color: var(--color-text-secondary);
+  box-shadow: inset 0 0 0 1px var(--color-border), var(--shadow-1);
+  font-weight: 500;
+  line-height: 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Badge                                                               */
+/* ------------------------------------------------------------------ */
+
+.mrd-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  height: var(--space-5);
+  min-width: var(--space-5);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-caption-size);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.mrd-badge--sm {
+  height: var(--space-4);
+  min-width: var(--space-4);
+  padding: 0 var(--space-1);
+}
+
+.mrd-badge--neutral {
+  background: var(--color-fill-quiet);
+  color: var(--color-text-secondary);
+}
+
+.mrd-badge--accent {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+.mrd-badge--success {
+  background: var(--color-success-subtle);
+  color: var(--color-success);
+}
+
+.mrd-badge--warning {
+  background: var(--color-warning-subtle);
+  color: var(--color-warning);
+}
+
+.mrd-badge--error {
+  background: var(--color-error-subtle);
+  color: var(--color-error);
+}
+
+/* ------------------------------------------------------------------ */
+/* Status chip                                                         */
+/* ------------------------------------------------------------------ */
+
+.mrd-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-height-sm);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-caption-size);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.mrd-status-chip--sm {
+  height: var(--space-4);
+  padding: 0 var(--space-1);
+}
+
+/* Glyph-only: a square target so a column of chips stays aligned. */
+.mrd-status-chip--bare {
+  width: var(--control-height-sm);
+  padding: 0;
+  justify-content: center;
+}
+
+.mrd-status-chip--sm.mrd-status-chip--bare {
+  width: var(--space-4);
+}
+
+/* Sized in em so the glyph tracks the chip's text rather than needing its own
+   size modifier. */
+.mrd-status-chip__glyph {
+  width: 0.95em;
+  height: 0.95em;
+  flex: 0 0 auto;
+}
+
+.mrd-status-chip__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mrd-status-chip[data-status='ready'],
+.mrd-status-chip[data-status='healthy'] {
+  background: var(--color-success-subtle);
+  color: var(--color-success);
+}
+
+.mrd-status-chip[data-status='busy'] {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+.mrd-status-chip[data-status='rate_limited'],
+.mrd-status-chip[data-status='degraded'] {
+  background: var(--color-warning-subtle);
+  color: var(--color-warning);
+}
+
+.mrd-status-chip[data-status='error'] {
+  background: var(--color-error-subtle);
+  color: var(--color-error);
+}
+
+.mrd-status-chip[data-status='offline'],
+.mrd-status-chip[data-status='unknown'] {
+  background: var(--color-fill-quiet);
+  color: var(--color-text-tertiary);
+}
+
+/* Work in progress reads as a slow breath, not a blink: it has to be legible
+   as motion in peripheral vision without pulling the eye off the content. */
+@keyframes mrd-status-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.mrd-status-chip[data-status='busy'] .mrd-status-chip__glyph {
+  animation: mrd-status-pulse 1800ms var(--ease-in-out) infinite;
+}
+
+/* The half-dot already distinguishes busy; without motion the chip loses
+   nothing, so the pulse stops rather than slowing. */
+@media (prefers-reduced-motion: reduce) {
+  .mrd-status-chip[data-status='busy'] .mrd-status-chip__glyph {
+    animation: none;
+  }
+}
+
+:root[data-reduce-motion='true'] .mrd-status-chip[data-status='busy'] .mrd-status-chip__glyph {
+  animation: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Progress                                                            */
+/* ------------------------------------------------------------------ */
+
+.mrd-progress {
+  position: relative;
+  width: 100%;
+  height: var(--space-2);
+  overflow: hidden;
+  background: var(--color-fill-quiet);
+  border-radius: var(--radius-sm);
+}
+
+.mrd-progress--sm {
+  height: var(--space-1);
+}
+
+.mrd-progress__fill {
+  display: block;
+  width: var(--mrd-fill, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-accent);
+  transition: width var(--duration-base) var(--ease-out);
+}
+
+.mrd-progress[data-tone='success'] .mrd-progress__fill {
+  background: var(--color-success);
+}
+
+.mrd-progress[data-tone='warning'] .mrd-progress__fill {
+  background: var(--color-warning);
+}
+
+.mrd-progress[data-tone='error'] .mrd-progress__fill {
+  background: var(--color-error);
+}
+
+/* A sweep, because the only thing an indeterminate bar can honestly say is
+   "still working". Percentages are of the segment's own width. */
+@keyframes mrd-progress-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(400%);
+  }
+}
+
+.mrd-progress[data-indeterminate] .mrd-progress__fill {
+  width: 25%;
+  transition: none;
+  animation: mrd-progress-sweep 1500ms var(--ease-in-out) infinite;
+}
+
+/* Slowed rather than stopped: a still bar would claim the work had stalled.
+   Matches the spinner's behaviour in Button.css. */
+@media (prefers-reduced-motion: reduce) {
+  .mrd-progress[data-indeterminate] .mrd-progress__fill {
+    animation-duration: 4s;
+    animation-timing-function: var(--ease-linear);
+  }
+}
+
+:root[data-reduce-motion='true'] .mrd-progress[data-indeterminate] .mrd-progress__fill {
+  animation-duration: 4s;
+  animation-timing-function: var(--ease-linear);
+}
+
+/* ------------------------------------------------------------------ */
+/* Meter                                                               */
+/* ------------------------------------------------------------------ */
+
+.mrd-meter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.mrd-meter__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.mrd-meter__name {
+  font-size: var(--text-secondary-size);
+  line-height: var(--text-secondary-line);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mrd-meter__value {
+  flex: 0 0 auto;
+  font-size: var(--text-secondary-size);
+  line-height: var(--text-secondary-line);
+  color: var(--color-text-primary);
+}
+
+.mrd-meter__track {
+  position: relative;
+  width: 100%;
+  height: var(--space-2);
+  background: var(--color-fill-quiet);
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px var(--color-separator);
+}
+
+.mrd-meter--sm .mrd-meter__track {
+  height: var(--space-1);
+}
+
+.mrd-meter__fill {
+  display: block;
+  width: var(--mrd-fill, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-accent);
+  transition:
+    width var(--duration-base) var(--ease-out),
+    background-color var(--duration-base) var(--ease-out);
+}
+
+.mrd-meter__track[data-tone='success'] .mrd-meter__fill {
+  background: var(--color-success);
+}
+
+.mrd-meter__track[data-tone='warning'] .mrd-meter__fill {
+  background: var(--color-warning);
+}
+
+.mrd-meter__track[data-tone='error'] .mrd-meter__fill {
+  background: var(--color-error);
+}
+
+/* The budget line. Drawn over the fill so it stays visible once passed —
+   knowing by how much you are over is the point of the mark. */
+.mrd-meter__threshold {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--color-text-primary);
+  opacity: 0.45;
+}
+
+/* ------------------------------------------------------------------ */
+/* Avatar                                                              */
+/* ------------------------------------------------------------------ */
+
+.mrd-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--control-height-lg);
+  height: var(--control-height-lg);
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  box-shadow: inset 0 0 0 1px var(--color-separator);
+  font-size: var(--text-secondary-size);
+  font-weight: 600;
+  line-height: 1;
+  user-select: none;
+}
+
+.mrd-avatar--xs {
+  width: var(--control-height-sm);
+  height: var(--control-height-sm);
+  font-size: var(--text-caption-size);
+}
+
+.mrd-avatar--sm {
+  width: var(--control-height);
+  height: var(--control-height);
+  font-size: var(--text-caption-size);
+}
+
+.mrd-avatar--lg {
+  width: var(--space-8);
+  height: var(--space-8);
+  font-size: var(--text-body-lg-size);
+}
+
+.mrd-avatar__image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.mrd-avatar__icon {
+  display: inline-flex;
+}
+
+.mrd-avatar__icon svg {
+  width: 60%;
+  height: 60%;
+}
+
+.mrd-avatar__initials {
+  /* Optical centring: capitals sit high, and the group's tracking is tight. */
+  letter-spacing: 0.01em;
+}
+
+.mrd-avatar--neutral {
+  background: var(--color-fill-selected);
+  color: var(--color-text-secondary);
+}
+
+.mrd-avatar--accent {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+.mrd-avatar--success {
+  background: var(--color-success-subtle);
+  color: var(--color-success);
+}
+
+.mrd-avatar--warning {
+  background: var(--color-warning-subtle);
+  color: var(--color-warning);
+}
+
+.mrd-avatar--error {
+  background: var(--color-error-subtle);
+  color: var(--color-error);
+}
+
+/* ------------------------------------------------------------------ */
+/* Skeleton                                                            */
+/* ------------------------------------------------------------------ */
+
+.mrd-skeleton {
+  display: block;
+  background-color: var(--color-fill-quiet);
+  background-image: linear-gradient(
+    90deg,
+    var(--color-fill-quiet) 0%,
+    var(--color-fill-hover) 50%,
+    var(--color-fill-quiet) 100%
+  );
+  background-size: 200% 100%;
+  animation: mrd-skeleton-shimmer 1400ms var(--ease-linear) infinite;
+}
+
+@keyframes mrd-skeleton-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.mrd-skeleton--text,
+.mrd-skeleton--line {
+  height: var(--space-3);
+  border-radius: var(--radius-sm);
+}
+
+.mrd-skeleton--line {
+  height: var(--space-2);
+}
+
+.mrd-skeleton--block {
+  height: var(--space-8);
+  border-radius: var(--radius-lg);
+}
+
+.mrd-skeleton--circle {
+  width: var(--control-height-lg);
+  height: var(--control-height-lg);
+  border-radius: var(--radius-pill);
+}
+
+.mrd-skeleton-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* A paragraph does not end flush; the short last line is what makes the block
+   read as text rather than as a table. */
+.mrd-skeleton-group > .mrd-skeleton[data-last] {
+  width: 62%;
+}
+
+/* A travelling highlight has no meaning at 1ms and is exactly the kind of
+   ambient motion reduced-motion asks for less of, so it becomes a flat tint. */
+@media (prefers-reduced-motion: reduce) {
+  .mrd-skeleton {
+    background-image: none;
+    animation: none;
+  }
+}
+
+:root[data-reduce-motion='true'] .mrd-skeleton {
+  background-image: none;
+  animation: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Stars                                                               */
+/* ------------------------------------------------------------------ */
+
+.mrd-stars {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-body-size);
+}
+
+.mrd-stars--sm {
+  font-size: var(--text-caption-size);
+}
+
+.mrd-stars--lg {
+  font-size: var(--text-body-lg-size);
+}
+
+.mrd-stars__rail {
+  position: relative;
+  display: inline-flex;
+}
+
+.mrd-stars__row {
+  display: inline-flex;
+  gap: 0.12em;
+  color: var(--color-border-strong);
+}
+
+/* The filled row is clipped to the rating, which puts the half-star edge on
+   the exact geometric centre of the glyph. */
+.mrd-stars__row--filled {
+  position: absolute;
+  inset: 0;
+  width: var(--mrd-fill, 0%);
+  overflow: hidden;
+  color: var(--color-warning);
+}
+
+.mrd-stars__star {
+  width: 1.05em;
+  height: 1.05em;
+  flex: 0 0 auto;
+}
+
+.mrd-stars__value {
+  color: var(--color-text-secondary);
+  font-size: var(--text-secondary-size);
+}

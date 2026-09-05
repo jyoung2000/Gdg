@@ -1,0 +1,684 @@
+/* ------------------------------------------------------------------ */
+/* Panel                                                               */
+/* ------------------------------------------------------------------ */
+
+.mrd-panel {
+  display: flex;
+  flex-direction: column;
+  /* A flex item defaults to min-content in its main axis, which stops a long
+     line inside the body from ever scrolling. Both axes have to be released. */
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-panel);
+  border: 1px solid var(--color-separator);
+  border-radius: var(--radius-xl);
+  /* Clips the body's scroll to the rounded corners. */
+  overflow: hidden;
+}
+
+.mrd-panel--elevation-0 {
+  box-shadow: var(--shadow-0);
+}
+.mrd-panel--elevation-1 {
+  box-shadow: var(--shadow-1);
+}
+.mrd-panel--elevation-2 {
+  box-shadow: var(--shadow-2);
+}
+.mrd-panel--elevation-3 {
+  box-shadow: var(--shadow-3);
+}
+.mrd-panel--elevation-4 {
+  box-shadow: var(--shadow-4);
+}
+
+.mrd-panel__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  min-height: var(--toolbar-height);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--color-separator);
+  background: var(--color-panel);
+}
+
+.mrd-panel-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: var(--toolbar-height);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-separator);
+}
+
+.mrd-panel-header__text {
+  /* Takes the free space and gives the truncation something to work against,
+     so the actions are never pushed out of the panel by a long title. */
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mrd-panel-header__title {
+  color: var(--color-text-primary);
+}
+
+.mrd-panel-header--label .mrd-panel-header__title {
+  color: var(--color-text-tertiary);
+}
+
+.mrd-panel-header__subtitle {
+  color: var(--color-text-secondary);
+}
+
+.mrd-panel-header__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+}
+
+.mrd-panel-body {
+  /* A flex column, so an EmptyState child can take the whole region and centre
+     itself in it rather than sitting at the top of an empty panel. */
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.mrd-panel-body--scroll {
+  overflow: auto;
+  /* Keeps the panel from scrolling the shell behind it at the extremes. */
+  overscroll-behavior: contain;
+}
+
+.mrd-panel-body--padded {
+  padding: var(--space-4);
+}
+
+/* ------------------------------------------------------------------ */
+/* Card                                                                */
+/* ------------------------------------------------------------------ */
+
+.mrd-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-primary);
+  text-align: left;
+}
+
+.mrd-card--elevation-0 {
+  box-shadow: var(--shadow-inset-hairline);
+}
+.mrd-card--elevation-1 {
+  box-shadow: var(--shadow-inset-hairline), var(--shadow-1);
+}
+.mrd-card--elevation-2 {
+  box-shadow: var(--shadow-inset-hairline), var(--shadow-2);
+}
+.mrd-card--elevation-3 {
+  box-shadow: var(--shadow-inset-hairline), var(--shadow-3);
+}
+.mrd-card--elevation-4 {
+  box-shadow: var(--shadow-inset-hairline), var(--shadow-4);
+}
+
+.mrd-card--padded {
+  padding: var(--space-4);
+}
+
+.mrd-card--interactive {
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+/* A 1px lift, matched to the button's 1px press: enough to read as raised,
+   small enough that a grid of cards does not ripple under the pointer. */
+.mrd-card--interactive:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-inset-hairline), var(--shadow-2);
+}
+
+.mrd-card--interactive:active {
+  transform: translateY(0);
+  box-shadow: var(--shadow-inset-hairline), var(--shadow-1);
+}
+
+.mrd-card[data-selected='true'] {
+  background: var(--color-accent-subtle);
+  box-shadow: inset 0 0 0 1px var(--color-accent-border), var(--shadow-1);
+}
+
+/* ------------------------------------------------------------------ */
+/* Toolbar                                                             */
+/* ------------------------------------------------------------------ */
+
+.mrd-toolbar {
+  position: relative;
+  z-index: var(--z-toolbar);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  height: var(--toolbar-height);
+  min-width: 0;
+  padding: 0 var(--space-3);
+  background: var(--color-toolbar);
+  -webkit-backdrop-filter: var(--blur-chrome);
+  backdrop-filter: var(--blur-chrome);
+  border-bottom: 1px solid var(--color-separator);
+}
+
+/* The toolbar never scrolls and never grows the window: every child has to be
+   allowed to shrink, or one long label pushes the rest off the edge. */
+.mrd-toolbar > * {
+  min-width: 0;
+}
+
+.mrd-toolbar__group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.mrd-toolbar__group--grow {
+  flex: 1 1 auto;
+}
+
+.mrd-toolbar__group[data-align='center'] {
+  justify-content: center;
+}
+.mrd-toolbar__group[data-align='end'] {
+  justify-content: flex-end;
+}
+
+.mrd-toolbar__separator {
+  flex: 0 0 1px;
+  width: 1px;
+  height: var(--space-4);
+  margin: 0 var(--space-1);
+  background: var(--color-separator);
+}
+
+/* ------------------------------------------------------------------ */
+/* Sidebar                                                             */
+/* ------------------------------------------------------------------ */
+
+.mrd-sidebar {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  width: var(--sidebar-width);
+  min-height: 0;
+  background: var(--color-sidebar);
+  -webkit-backdrop-filter: var(--blur-chrome);
+  backdrop-filter: var(--blur-chrome);
+  border-right: 1px solid var(--color-separator);
+  /* Labels are removed from the flow as it collapses; clipping keeps them from
+     spilling over the content while the width animates. */
+  overflow: hidden;
+  transition: width var(--duration-base) var(--ease-out);
+}
+
+.mrd-sidebar[data-collapsed='true'] {
+  width: var(--sidebar-width-collapsed);
+}
+
+.mrd-sidebar__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  min-height: var(--toolbar-height);
+  min-width: 0;
+  padding: 0 var(--space-3);
+}
+
+.mrd-sidebar[data-collapsed='true'] .mrd-sidebar__header {
+  justify-content: center;
+  padding: 0 var(--space-2);
+}
+
+.mrd-sidebar__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-2);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
+.mrd-sidebar__footer {
+  flex: 0 0 auto;
+  padding: var(--space-2);
+  border-top: 1px solid var(--color-separator);
+}
+
+/* Translucency without blur is illegible over scrolling content, so a browser
+   that cannot blur gets an opaque chrome instead. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .mrd-toolbar,
+  .mrd-sidebar {
+    background: var(--color-surface);
+  }
+}
+
+.mrd-sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* Collapsed, the section titles are gone, so the grouping they carried has to
+   come from somewhere: a hairline between adjacent sections. */
+.mrd-sidebar[data-collapsed='true'] .mrd-sidebar-section + .mrd-sidebar-section {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-separator);
+}
+
+.mrd-sidebar-section__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+/* Collapsed, the header carries both classes; the clipped box has to win or the
+   section title reserves space it no longer occupies. */
+.mrd-sidebar-section__header.mrd-sr-only {
+  padding: 0;
+  margin: -1px;
+}
+
+.mrd-sidebar-section__title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mrd-sidebar-section__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+}
+
+.mrd-sidebar-section__items {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.mrd-sidebar-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  height: var(--control-height-lg);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  text-align: left;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.mrd-sidebar-item:hover {
+  background: var(--color-fill-hover);
+  color: var(--color-text-primary);
+}
+
+.mrd-sidebar-item:active {
+  background: var(--color-fill-active);
+}
+
+/* Selection is carried by aria-current, so the styling hangs off it rather than
+   off a class: the two can never drift apart. */
+.mrd-sidebar-item[aria-current='page'] {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  font-weight: 500;
+}
+
+.mrd-sidebar-item[aria-current='page']:hover {
+  background: var(--color-accent-subtle-hover);
+  color: var(--color-accent);
+}
+
+.mrd-sidebar-item:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.mrd-sidebar-item__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.mrd-sidebar-item__icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mrd-sidebar-item__label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mrd-sidebar-item__badge {
+  flex: 0 0 auto;
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+  color: var(--color-text-tertiary);
+}
+
+.mrd-sidebar-item[aria-current='page'] .mrd-sidebar-item__badge {
+  color: var(--color-accent);
+}
+
+.mrd-sidebar-item__trailing {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+/* Only meaningful once the badge itself is hidden. */
+.mrd-sidebar-item__dot {
+  display: none;
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  width: var(--space-1);
+  height: var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+}
+
+.mrd-sidebar[data-collapsed='true'] .mrd-sidebar-item {
+  justify-content: center;
+  padding: 0;
+}
+
+.mrd-sidebar[data-collapsed='true'] .mrd-sidebar-item__label,
+.mrd-sidebar[data-collapsed='true'] .mrd-sidebar-item__badge,
+.mrd-sidebar[data-collapsed='true'] .mrd-sidebar-item__trailing {
+  display: none;
+}
+
+.mrd-sidebar[data-collapsed='true'] .mrd-sidebar-item__dot {
+  display: block;
+}
+
+/* ------------------------------------------------------------------ */
+/* SplitPane                                                           */
+/* ------------------------------------------------------------------ */
+
+.mrd-splitpane {
+  display: flex;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.mrd-splitpane[data-direction='vertical'] {
+  flex-direction: column;
+}
+
+.mrd-splitpane__pane {
+  display: flex;
+  flex-direction: column;
+  /* flex-grow is set per pane from the fractions; the basis stays at zero so
+     the growth factors alone decide the split. */
+  flex-basis: 0;
+  flex-shrink: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* While a handle is held, the whole pane group takes the resize cursor and
+   stops selecting text — the pointer regularly leaves the 1px handle. */
+.mrd-splitpane[data-resizing='true'] {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.mrd-splitpane[data-direction='vertical'][data-resizing='true'] {
+  cursor: row-resize;
+}
+
+/* A 1px line cannot carry a 2px outline legibly, so keyboard focus lights the
+   whole handle and puts the ring outside it. */
+.mrd-splitpane > .mrd-resizer:focus-visible {
+  outline: none;
+  background: var(--color-accent);
+  box-shadow: var(--shadow-focus);
+}
+
+/* ------------------------------------------------------------------ */
+/* StatusBar                                                           */
+/* ------------------------------------------------------------------ */
+
+.mrd-statusbar {
+  /* A grid rather than a flex row, so the centre slot is centred on the bar and
+     not on whatever is left over after the other two. */
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 0 0 auto;
+  height: var(--statusbar-height);
+  padding: 0 var(--space-3);
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-separator);
+  color: var(--color-text-secondary);
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+}
+
+.mrd-statusbar__left,
+.mrd-statusbar__center,
+.mrd-statusbar__right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.mrd-statusbar__left {
+  justify-self: start;
+}
+.mrd-statusbar__center {
+  justify-self: center;
+}
+.mrd-statusbar__right {
+  justify-self: end;
+}
+
+/* ------------------------------------------------------------------ */
+/* EmptyState                                                          */
+/* ------------------------------------------------------------------ */
+
+.mrd-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 auto;
+  /* Centres in a block parent too, where flex-grow does nothing. */
+  margin: auto;
+  gap: var(--space-2);
+  padding: var(--space-9) var(--space-6);
+  text-align: center;
+}
+
+.mrd-empty-state__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-9);
+  height: var(--space-9);
+  margin-bottom: var(--space-2);
+  border-radius: var(--radius-2xl);
+  background: var(--color-surface-sunken);
+  box-shadow: var(--shadow-inset-hairline);
+  color: var(--color-text-tertiary);
+}
+
+.mrd-empty-state__icon svg {
+  width: var(--space-5);
+  height: var(--space-5);
+}
+
+.mrd-empty-state__title {
+  color: var(--color-text-primary);
+}
+
+.mrd-empty-state__description {
+  /* A measure, not a box: past roughly this many characters a centred sentence
+     stops being readable at a glance. */
+  max-width: 42ch;
+  color: var(--color-text-secondary);
+  text-wrap: pretty;
+}
+
+.mrd-empty-state__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.mrd-empty-state--sm {
+  gap: var(--space-1);
+  padding: var(--space-6) var(--space-4);
+}
+
+.mrd-empty-state--sm .mrd-empty-state__icon {
+  width: var(--space-7);
+  height: var(--space-7);
+  margin-bottom: var(--space-1);
+  border-radius: var(--radius-lg);
+}
+
+.mrd-empty-state--sm .mrd-empty-state__icon svg {
+  width: var(--space-4);
+  height: var(--space-4);
+}
+
+.mrd-empty-state--sm .mrd-empty-state__title {
+  font-size: var(--text-body-lg-size);
+  line-height: var(--text-body-lg-line);
+}
+
+.mrd-empty-state--sm .mrd-empty-state__actions {
+  margin-top: var(--space-2);
+}
+
+/* ------------------------------------------------------------------ */
+/* Inspector                                                           */
+/* ------------------------------------------------------------------ */
+
+.mrd-inspector {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  width: var(--inspector-width);
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-surface);
+  border-left: 1px solid var(--color-separator);
+}
+
+.mrd-inspector > .mrd-panel-body {
+  gap: var(--space-5);
+}
+
+/* ------------------------------------------------------------------ */
+/* Stack                                                               */
+/* ------------------------------------------------------------------ */
+
+.mrd-stack {
+  display: flex;
+  min-width: 0;
+  gap: var(--mrd-stack-gap, 0);
+}
+
+.mrd-stack--inline {
+  display: inline-flex;
+}
+
+.mrd-stack--row {
+  flex-direction: row;
+  align-items: center;
+}
+
+.mrd-stack--column {
+  flex-direction: column;
+  min-height: 0;
+}
+
+.mrd-stack[data-wrap='true'] {
+  flex-wrap: wrap;
+}
+
+.mrd-stack[data-align='start'] {
+  align-items: flex-start;
+}
+.mrd-stack[data-align='center'] {
+  align-items: center;
+}
+.mrd-stack[data-align='end'] {
+  align-items: flex-end;
+}
+.mrd-stack[data-align='stretch'] {
+  align-items: stretch;
+}
+.mrd-stack[data-align='baseline'] {
+  align-items: baseline;
+}
+
+.mrd-stack[data-justify='start'] {
+  justify-content: flex-start;
+}
+.mrd-stack[data-justify='center'] {
+  justify-content: center;
+}
+.mrd-stack[data-justify='end'] {
+  justify-content: flex-end;
+}
+.mrd-stack[data-justify='between'] {
+  justify-content: space-between;
+}
+.mrd-stack[data-justify='around'] {
+  justify-content: space-around;
+}
+.mrd-stack[data-justify='evenly'] {
+  justify-content: space-evenly;
+}

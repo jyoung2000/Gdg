@@ -1,0 +1,114 @@
+# Meridian — Universal AI Gateway
+#
+# One service, one port, two volumes. The gateway serves the web client, the
+# OpenAI-compatible API, the Anthropic-compatible API, the admin API and the
+# event stream on :4639. Splitting this into microservices would add operational
+# surface without buying anything for a single-node self-hosted product.
+#
+#   docker compose up -d   →   http://localhost:4639
+
+services:
+  meridian:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: meridian:latest
+    container_name: meridian
+    restart: unless-stopped
+    ports:
+      - "${MERIDIAN_PORT:-4639}:4639"
+    environment:
+      PORT: "4639"
+      MERIDIAN_DATA_DIR: /data
+      MERIDIAN_WORKSPACE_ROOT: /workspaces
+      MERIDIAN_WEB_ROOT: /app/dist/web
+      MERIDIAN_LOG_FORMAT: "${MERIDIAN_LOG_FORMAT:-json}"
+      MERIDIAN_LOG_LEVEL: "${MERIDIAN_LOG_LEVEL:-info}"
+
+      # Encrypts every stored credential. Without it a key is generated into the
+      # database, which protects a leaked backup but not read access to the
+      # live file. Set it in .env before putting anything real in.
+      MERIDIAN_MASTER_KEY: "${MERIDIAN_MASTER_KEY:-}"
+
+      # Off by default: nothing may route to a paid model until the operator
+      # turns this on AND the request or the user's preferences permit it.
+      MERIDIAN_ALLOW_PAID: "${MERIDIAN_ALLOW_PAID:-false}"
+      MERIDIAN_ROUTING_MODE: "${MERIDIAN_ROUTING_MODE:-AUTO}"
+      MERIDIAN_PRIVACY_MODE: "${MERIDIAN_PRIVACY_MODE:-TRUSTED_ONLY}"
+
+      # Require an API key on the gateway APIs. Leave false for a single-user
+      # install on a trusted network.
+      MERIDIAN_AUTH_REQUIRED: "${MERIDIAN_AUTH_REQUIRED:-false}"
+      MERIDIAN_ADMIN_EMAIL: "${MERIDIAN_ADMIN_EMAIL:-}"
+      MERIDIAN_ADMIN_PASSWORD: "${MERIDIAN_ADMIN_PASSWORD:-}"
+
+      # Agent command execution. "docker" gives real isolation and needs the
+      # socket mount below; "process" is the no-Docker fallback and is not a
+      # security boundary; "disabled" turns execution off entirely.
+      MERIDIAN_SANDBOX: "${MERIDIAN_SANDBOX:-docker}"
+      MERIDIAN_SANDBOX_IMAGE: "${MERIDIAN_SANDBOX_IMAGE:-meridian-sandbox:latest}"
+      MERIDIAN_SANDBOX_MEMORY_MB: "${MERIDIAN_SANDBOX_MEMORY_MB:-2048}"
+      MERIDIAN_SANDBOX_CPUS: "${MERIDIAN_SANDBOX_CPUS:-2}"
+      MERIDIAN_SANDBOX_TIMEOUT_MS: "${MERIDIAN_SANDBOX_TIMEOUT_MS:-120000}"
+      # Outbound network from sandboxed commands, and the agents' web_fetch
+      # tool, are both off unless this is on.
+      MERIDIAN_SANDBOX_NETWORK: "${MERIDIAN_SANDBOX_NETWORK:-false}"
+
+      # Local inference endpoints probed at startup. host.docker.internal is how
+      # a container reaches an Ollama running on the host.
+      MERIDIAN_LOCAL_ENDPOINTS: "${MERIDIAN_LOCAL_ENDPOINTS:-http://host.docker.internal:11434,http://host.docker.internal:8000,http://host.docker.internal:1234}"
+
+      # Provider credentials. Every one is optional; Meridian discovers whichever
+      # are present and reports the rest as "not configured".
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+      GROQ_API_KEY: "${GROQ_API_KEY:-}"
+      CEREBRAS_API_KEY: "${CEREBRAS_API_KEY:-}"
+      TOGETHER_API_KEY: "${TOGETHER_API_KEY:-}"
+      FIREWORKS_API_KEY: "${FIREWORKS_API_KEY:-}"
+      HYPERBOLIC_API_KEY: "${HYPERBOLIC_API_KEY:-}"
+      NVIDIA_API_KEY: "${NVIDIA_API_KEY:-}"
+      SAMBANOVA_API_KEY: "${SAMBANOVA_API_KEY:-}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      MISTRAL_API_KEY: "${MISTRAL_API_KEY:-}"
+      XAI_API_KEY: "${XAI_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+      CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:-}"
+      CLOUDFLARE_ACCOUNT_ID: "${CLOUDFLARE_ACCOUNT_ID:-}"
+      FAL_KEY: "${FAL_KEY:-}"
+      REPLICATE_API_TOKEN: "${REPLICATE_API_TOKEN:-}"
+      AI_HORDE_API_KEY: "${AI_HORDE_API_KEY:-}"
+    volumes:
+      # The database, generated assets and every workspace live here. These two
+      # volumes are the whole of Meridian's durable state.
+      - meridian-data:/data
+      - meridian-workspaces:/workspaces
+      # Required only for MERIDIAN_SANDBOX=docker: the gateway starts a
+      # throwaway container per command. Comment this out and set
+      # MERIDIAN_SANDBOX=process if you would rather not share the socket.
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      # Lets the container reach a local Ollama or vLLM on the host.
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4639/api/system/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # Builds the image agent commands run inside. It exits immediately; its only
+  # job is to produce meridian-sandbox:latest for the gateway to use.
+  sandbox-image:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.sandbox
+    image: meridian-sandbox:latest
+    profiles: ["build-sandbox"]
+    command: ["true"]
+
+volumes:
+  meridian-data:
+  meridian-workspaces:

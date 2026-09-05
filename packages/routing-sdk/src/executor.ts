@@ -1,0 +1,446 @@
+import {
+  MeridianError,
+  ZERO_USAGE,
+  backoffMs,
+  classifyUnknown,
+  newId,
+  shortId,
+  sleep,
+  type AIRequest,
+  type CompletionRequest,
+  type CompletionResponse,
+  type EmbeddingRequest,
+  type EmbeddingResponse,
+  type FallbackEvent,
+  type ImageRequest,
+  type ImageResponse,
+  type Logger,
+  type SpeechRequest,
+  type SpeechResponse,
+  type StreamChunk,
+  type TranscriptionRequest,
+  type TranscriptionResponse,
+  type UsageRecord,
+  type VideoRequest,
+  type VideoResponse,
+} from '@meridian/shared';
+import type { AdapterContext, ProviderRegistry } from '@meridian/provider-sdk';
+import type { ModelRegistry } from '@meridian/model-sdk';
+import type { CredentialResolver } from './credentials.js';
+import type { HealthStore } from './health.js';
+import type { PoolManager } from './pools.js';
+import type { Router } from './router.js';
+
+export interface ExecutorDeps {
+  router: Router;
+  models: ModelRegistry;
+  providers: ProviderRegistry;
+  health: HealthStore;
+  credentials: CredentialResolver;
+  pools: PoolManager;
+  logger: Logger;
+  /** Persist a usage row. Called once per attempt, successful or not. */
+  recordUsage?: (row: UsageRecord) => void;
+  /** Emitted whenever the engine moves to a different target. */
+  onFallback?: (event: FallbackEvent) => void;
+  now?: () => number;
+  /** Injected for deterministic tests. */
+  random?: () => number;
+}
+
+export interface ExecuteOptions {
+  /** Total attempts across all targets, including the first. */
+  retryBudget?: number;
+  /** Per-attempt timeout. */
+  timeoutMs?: number;
+  requestId?: string;
+  taskId?: string | null;
+  agentRole?: UsageRecord['agentRole'];
+  signal?: AbortSignal;
+}
+
+/** A completed execution plus everything observability needs. */
+export interface ExecutionResult<T> {
+  value: T;
+  providerId: string;
+  modelId: string;
+  attempts: number;
+  fallbacks: FallbackEvent[];
+  routingReason: import('@meridian/shared').RoutingReason;
+  totalLatencyMs: number;
+}
+
+interface Target {
+  providerId: string;
+  providerModelId: string;
+  credentialId: string | null;
+}
+
+const DEFAULT_TIMEOUT_MS = 120_000;
+
+/**
+ * Executes a routed request, recovering from provider failures.
+ *
+ * The retry budget is shared across the whole chain, so a request cannot spend
+ * an unbounded amount of time bouncing between providers: three attempts means
+ * three attempts total, whether they land on one provider or three. Errors the
+ * taxonomy marks as non-retryable are never retried against the same target,
+ * and errors marked non-failover stop the chain entirely — a content filter
+ * rejection is not fixed by asking a different model.
+ */
+export class Executor {
+  private readonly deps: ExecutorDeps;
+  private readonly now: () => number;
+  private readonly random: () => number;
+
+  constructor(deps: ExecutorDeps) {
+    this.deps = deps;
+    this.now = deps.now ?? (() => Date.now());
+    this.random = deps.random ?? Math.random;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Public entry points, one per modality                            */
+  /* ---------------------------------------------------------------- */
+
+  chat(req: AIRequest, completion: Omit<CompletionRequest, 'model'>, opts: ExecuteOptions = {}): Promise<ExecutionResult<CompletionResponse>> {
+    return this.run(req, opts, async (adapter, target, ctx) => {
+      if (!adapter.chat) throw new MeridianError('unsupported_capability', 'Adapter cannot chat', { providerId: target.providerId });
+      return adapter.chat({ ...completion, model: target.providerModelId, signal: ctx.signal }, ctx);
+    }, (r) => ({ usage: r.usage, latencyMs: r.latencyMs, ttftMs: r.ttftMs }));
+  }
+
+  embed(req: AIRequest, embedding: EmbeddingRequest, opts: ExecuteOptions = {}): Promise<ExecutionResult<EmbeddingResponse>> {
+    return this.run(req, opts, async (adapter, target, ctx) => {
+      if (!adapter.embed) throw new MeridianError('unsupported_capability', 'Adapter cannot embed', { providerId: target.providerId });
+      return adapter.embed({ ...embedding, model: target.providerModelId, signal: ctx.signal }, ctx);
+    }, (r) => ({ usage: r.usage, latencyMs: r.latencyMs, ttftMs: null }));
+  }
+
+  image(req: AIRequest, image: ImageRequest, opts: ExecuteOptions = {}): Promise<ExecutionResult<ImageResponse>> {
+    return this.run(req, opts, async (adapter, target, ctx) => {
+      if (!adapter.image) throw new MeridianError('unsupported_capability', 'Adapter cannot generate images', { providerId: target.providerId });
+      return adapter.image({ ...image, model: target.providerModelId, signal: ctx.signal }, ctx);
+    }, (r) => ({ usage: r.usage, latencyMs: r.latencyMs, ttftMs: null }));
+  }
+
+  video(req: AIRequest, video: VideoRequest, opts: ExecuteOptions = {}): Promise<ExecutionResult<VideoResponse>> {
+    return this.run(req, opts, async (adapter, target, ctx) => {
+      if (!adapter.video) throw new MeridianError('unsupported_capability', 'Adapter cannot generate video', { providerId: target.providerId });
+      return adapter.video({ ...video, model: target.providerModelId, signal: ctx.signal }, ctx);
+    }, (r) => ({ usage: r.usage, latencyMs: r.latencyMs, ttftMs: null }));
+  }
+
+  speech(req: AIRequest, speech: SpeechRequest, opts: ExecuteOptions = {}): Promise<ExecutionResult<SpeechResponse>> {
+    return this.run(req, opts, async (adapter, target, ctx) => {
+      if (!adapter.speech) throw new MeridianError('unsupported_capability', 'Adapter cannot synthesise speech', { providerId: target.providerId });
+      return adapter.speech({ ...speech, model: target.providerModelId, signal: ctx.signal }, ctx);
+    }, (r) => ({ usage: r.usage, latencyMs: r.latencyMs, ttftMs: null }));
+  }
+
+  transcribe(req: AIRequest, t: TranscriptionRequest, opts: ExecuteOptions = {}): Promise<ExecutionResult<TranscriptionResponse>> {
+    return this.run(req, opts, async (adapter, target, ctx) => {
+      if (!adapter.transcribe) throw new MeridianError('unsupported_capability', 'Adapter cannot transcribe', { providerId: target.providerId });
+      return adapter.transcribe({ ...t, model: target.providerModelId, signal: ctx.signal }, ctx);
+    }, (r) => ({ usage: r.usage, latencyMs: r.latencyMs, ttftMs: null }));
+  }
+
+  /**
+   * Streaming chat.
+   *
+   * Failover is only possible before the first token reaches the caller: once
+   * text has been emitted, silently restarting on another model would produce a
+   * spliced, incoherent response. After that point a failure is surfaced as an
+   * error chunk instead.
+   */
+  async *chatStream(
+    req: AIRequest,
+    completion: Omit<CompletionRequest, 'model'>,
+    opts: ExecuteOptions = {},
+  ): AsyncGenerator<StreamChunk & { meta?: { fallbacks: FallbackEvent[]; routingReason: unknown } }> {
+    const requestId = opts.requestId ?? shortId();
+    const decision = this.deps.router.route(req);
+    const targets = this.targets(decision);
+    const budget = opts.retryBudget ?? Math.min(targets.length + 1, 4);
+    const fallbacks: FallbackEvent[] = [];
+    const log = this.deps.logger.child({ requestId, taskId: opts.taskId ?? null });
+
+    let attempt = 0;
+    let emitted = false;
+
+    for (let i = 0; i < targets.length && attempt < budget; i++) {
+      const target = targets[i];
+      attempt += 1;
+      const started = this.now();
+      const release = this.acquire(target, req.pool ?? null);
+      let usage = ZERO_USAGE;
+      let ttftMs: number | null = null;
+
+      try {
+        const { adapter, ctx } = this.prepare(target, requestId, opts, log);
+        if (!adapter.chatStream) throw new MeridianError('unsupported_capability', 'Adapter cannot stream', { providerId: target.providerId });
+
+        for await (const chunk of adapter.chatStream({ ...completion, model: target.providerModelId, stream: true, signal: ctx.signal }, ctx)) {
+          if (chunk.type === 'text' && !emitted) {
+            emitted = true;
+            ttftMs = this.now() - started;
+          }
+          if (chunk.type === 'usage') usage = chunk.usage;
+          if (chunk.type === 'error') throw new MeridianError('server_error', chunk.error, { providerId: target.providerId });
+          if (chunk.type === 'start') {
+            yield { ...chunk, meta: { fallbacks, routingReason: decision.routingReason } };
+            continue;
+          }
+          yield chunk;
+        }
+
+        this.deps.health.recordSuccess(target.providerId, this.now() - started);
+        this.recordUsage(req, target, opts, requestId, usage, this.now() - started, ttftMs, true, null, fallbacks.length);
+        this.deps.pools.recordSpend(req.pool ?? 'balanced', usage.cost);
+        return;
+      } catch (e) {
+        const err = classifyUnknown(e, target.providerId, target.providerModelId);
+        this.deps.health.recordFailure(target.providerId, err.code, err.message, err.retryAfterSec);
+        this.recordUsage(req, target, opts, requestId, usage, this.now() - started, ttftMs, false, err.code, fallbacks.length);
+
+        if (emitted || !err.failover || i === targets.length - 1 || attempt >= budget) {
+          yield { type: 'error', error: err.message, code: err.code };
+          return;
+        }
+        const next = targets[i + 1];
+        const event = this.fallbackEvent(target, next, err, attempt);
+        fallbacks.push(event);
+        this.deps.onFallback?.(event);
+        log.warn('stream fallback', { providerId: target.providerId, errorCode: err.code, fallback: fallbacks.length });
+        await sleep(backoffMs(attempt, 200, 4000, this.random), opts.signal).catch(() => undefined);
+      } finally {
+        release();
+      }
+    }
+    yield { type: 'error', error: 'Every provider in the fallback chain failed', code: 'provider_unavailable' };
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Core loop                                                        */
+  /* ---------------------------------------------------------------- */
+
+  private async run<T>(
+    req: AIRequest,
+    opts: ExecuteOptions,
+    call: (adapter: NonNullable<ReturnType<ProviderRegistry['get']>>, target: Target, ctx: AdapterContext) => Promise<T>,
+    meter: (result: T) => { usage: import('@meridian/shared').Usage; latencyMs: number; ttftMs: number | null },
+  ): Promise<ExecutionResult<T>> {
+    const requestId = opts.requestId ?? shortId();
+    const startedAll = this.now();
+    const decision = this.deps.router.route(req);
+    const targets = this.targets(decision);
+    const budget = opts.retryBudget ?? Math.min(targets.length + 1, 4);
+    const fallbacks: FallbackEvent[] = [];
+    const log = this.deps.logger.child({ requestId, taskId: opts.taskId ?? null });
+
+    let attempt = 0;
+    let lastError: MeridianError | null = null;
+
+    for (let i = 0; i < targets.length; i++) {
+      const target = targets[i];
+      // Retry the same target while the error says it is worth retrying, then
+      // move on. Both loops draw from the one shared budget.
+      let sameTargetTries = 0;
+
+      while (attempt < budget) {
+        attempt += 1;
+        sameTargetTries += 1;
+        const started = this.now();
+        const release = this.acquire(target, req.pool ?? null);
+
+        try {
+          const { adapter, ctx } = this.prepare(target, requestId, opts, log);
+          const value = await call(adapter, target, ctx);
+          const m = meter(value);
+
+          this.deps.health.recordSuccess(target.providerId, m.latencyMs || this.now() - started);
+          this.recordUsage(req, target, opts, requestId, m.usage, m.latencyMs, m.ttftMs, true, null, fallbacks.length);
+          this.deps.pools.recordSpend(req.pool ?? 'balanced', m.usage.cost);
+          log.info('call succeeded', {
+            providerId: target.providerId,
+            modelId: target.providerModelId,
+            latencyMs: m.latencyMs,
+            tokens: m.usage.totalTokens,
+            cost: m.usage.cost,
+            fallback: fallbacks.length,
+          });
+
+          return {
+            value,
+            providerId: target.providerId,
+            modelId: target.providerModelId,
+            attempts: attempt,
+            fallbacks,
+            routingReason: decision.routingReason,
+            totalLatencyMs: this.now() - startedAll,
+          };
+        } catch (e) {
+          const err = classifyUnknown(e, target.providerId, target.providerModelId);
+          lastError = err;
+          this.deps.health.recordFailure(target.providerId, err.code, err.message, err.retryAfterSec);
+          this.recordUsage(req, target, opts, requestId, ZERO_USAGE, this.now() - started, null, false, err.code, fallbacks.length);
+          log.warn('call failed', { providerId: target.providerId, modelId: target.providerModelId, errorCode: err.code });
+
+          if (err.code === 'cancelled') throw err;
+          // A non-failover error is terminal: no other provider will do better.
+          if (!err.failover) throw err;
+
+          const canRetrySame = err.retryable && sameTargetTries < 2 && attempt < budget;
+          if (canRetrySame) {
+            const waitMs = err.retryAfterSec != null ? Math.min(err.retryAfterSec * 1000, 10_000) : backoffMs(sameTargetTries, 250, 8000, this.random);
+            await sleep(waitMs, opts.signal).catch(() => undefined);
+            continue;
+          }
+          break; // Move to the next target.
+        } finally {
+          release();
+        }
+      }
+
+      const next = targets[i + 1];
+      if (!next || attempt >= budget) break;
+      const event = this.fallbackEvent(target, next, lastError, attempt);
+      fallbacks.push(event);
+      this.deps.onFallback?.(event);
+      await sleep(backoffMs(fallbacks.length, 200, 4000, this.random), opts.signal).catch(() => undefined);
+    }
+
+    const exhausted = lastError ?? new MeridianError('provider_unavailable', 'No provider could serve the request');
+    throw new MeridianError(exhausted.code, `${exhausted.message} (after ${attempt} attempt${attempt === 1 ? '' : 's'} across ${fallbacks.length + 1} target${fallbacks.length ? 's' : ''})`, {
+      providerId: exhausted.providerId,
+      modelId: exhausted.modelId,
+      details: { fallbacks, attempts: attempt },
+      cause: exhausted,
+    });
+  }
+
+  /* ---------------------------------------------------------------- */
+
+  private targets(decision: import('@meridian/shared').RoutingDecision): Target[] {
+    return [
+      { providerId: decision.provider, providerModelId: decision.model, credentialId: decision.credential },
+      ...decision.fallbackChain.map((f) => ({ providerId: f.provider, providerModelId: f.model, credentialId: f.credential })),
+    ];
+  }
+
+  private prepare(
+    target: Target,
+    requestId: string,
+    opts: ExecuteOptions,
+    log: Logger,
+  ): { adapter: NonNullable<ReturnType<ProviderRegistry['get']>>; ctx: AdapterContext } {
+    const adapter = this.deps.providers.get(target.providerId);
+    if (!adapter) {
+      throw new MeridianError('provider_unavailable', `No adapter for provider ${target.providerId}`, { providerId: target.providerId });
+    }
+    const descriptor = adapter.descriptor;
+    const resolved = target.credentialId
+      ? this.deps.credentials.resolve({ providerId: target.providerId, explicitCredentialId: target.credentialId }, descriptor.auth !== 'none')
+      : this.deps.credentials.resolve({ providerId: target.providerId }, descriptor.auth !== 'none');
+
+    if (!resolved.credential && descriptor.auth !== 'none') {
+      throw new MeridianError('authentication_failed', resolved.reason, { providerId: target.providerId });
+    }
+
+    const ctx: AdapterContext = {
+      secret: resolved.credential?.secret ?? null,
+      logger: log,
+      requestId,
+      timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      signal: opts.signal,
+    };
+    return { adapter, ctx };
+  }
+
+  private acquire(target: Target, poolId: string | null): () => void {
+    const releaseCred = this.deps.credentials.acquire(target.credentialId);
+    const releasePool = poolId ? this.deps.pools.acquire(poolId) : () => undefined;
+    return () => {
+      releaseCred();
+      releasePool();
+    };
+  }
+
+  private fallbackEvent(from: Target, to: Target | undefined, err: MeridianError | null, attempt: number): FallbackEvent {
+    const code = err?.code ?? 'provider_unavailable';
+    return {
+      at: this.now(),
+      fromProvider: from.providerId,
+      fromModel: from.providerModelId,
+      toProvider: to?.providerId ?? null,
+      toModel: to?.providerModelId ?? null,
+      code,
+      message: fallbackMessage(code, from.providerId, to?.providerModelId ?? null),
+      attempt,
+    };
+  }
+
+  private recordUsage(
+    req: AIRequest,
+    target: Target,
+    opts: ExecuteOptions,
+    requestId: string,
+    usage: import('@meridian/shared').Usage,
+    latencyMs: number,
+    ttftMs: number | null,
+    success: boolean,
+    errorCode: string | null,
+    fallbackCount: number,
+  ): void {
+    this.deps.recordUsage?.({
+      id: newId('use'),
+      at: this.now(),
+      requestId,
+      userId: req.userId ?? null,
+      workspaceId: req.workspaceId ?? null,
+      taskId: opts.taskId ?? null,
+      agentRole: opts.agentRole ?? null,
+      providerId: target.providerId,
+      modelId: `${target.providerId}:${target.providerModelId}`,
+      credentialId: target.credentialId,
+      poolId: req.pool ?? null,
+      modality: req.modality,
+      taskType: req.taskType,
+      promptTokens: usage.promptTokens,
+      completionTokens: usage.completionTokens,
+      cost: usage.cost,
+      latencyMs,
+      ttftMs,
+      success,
+      fallbackCount,
+      errorCode,
+    });
+  }
+}
+
+/**
+ * The one-sentence explanation shown when a fallback happens. It states what
+ * occurred and what is being done about it, without alarming language — a
+ * recovered failure is normal operation, not an incident.
+ */
+export function fallbackMessage(code: string, fromProvider: string, toModel: string | null): string {
+  const dest = toModel ? ` Switching to ${toModel}.` : ' No alternate is available.';
+  switch (code) {
+    case 'rate_limited':
+      return `${fromProvider} is rate limited right now.${dest}`;
+    case 'quota_exhausted':
+      return `${fromProvider}'s quota is used up.${dest}`;
+    case 'timeout':
+      return `${fromProvider} did not respond in time.${dest}`;
+    case 'authentication_failed':
+      return `${fromProvider} rejected the credential.${dest}`;
+    case 'model_unavailable':
+      return `That model is not available on ${fromProvider}.${dest}`;
+    case 'server_error':
+      return `${fromProvider} returned an error.${dest}`;
+    case 'provider_unavailable':
+      return `${fromProvider} is unreachable.${dest}`;
+    default:
+      return `${fromProvider} could not complete the request.${dest}`;
+  }
+}

@@ -1,0 +1,519 @@
+/*
+ * Overlays: popover, menu, tooltip, dialog, sheet, toast.
+ *
+ * Panel widths are derived from --inspector-width rather than invented, so a
+ * dialog reads as one, one-and-a-half or two panels wide and stays in
+ * proportion with the panes it opens over.
+ */
+
+/* ------------------------------------------------------------------ */
+/* Popover                                                             */
+/* ------------------------------------------------------------------ */
+
+.mrd-popover {
+  /* Read by the positioner: the gap it leaves from the anchor, and the margin
+     it keeps from the viewport edge when it clamps. Declared here so the
+     measured geometry and the painted geometry cannot drift apart. */
+  --mrd-anchor-gap: var(--space-2);
+  --mrd-viewport-pad: var(--space-2);
+
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: var(--z-popover);
+  max-width: min(var(--inspector-width), calc(100vw - var(--space-7)));
+  max-height: calc(100vh - var(--space-8));
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-2);
+  background: var(--color-overlay);
+  -webkit-backdrop-filter: var(--blur-overlay);
+  backdrop-filter: var(--blur-overlay);
+  border-radius: var(--radius-2xl);
+  box-shadow: inset 0 0 0 1px var(--color-border), var(--shadow-3);
+  color: var(--color-text-primary);
+  /* Hidden until the first measure-and-place pass; otherwise the panel paints
+     at the viewport origin for a frame and then jumps to its anchor. */
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mrd-popover[data-positioned='true'] {
+  opacity: 1;
+  pointer-events: auto;
+  animation: mrd-overlay-rise var(--duration-fast) var(--ease-out);
+}
+
+/* The panel grows out of the corner nearest its anchor, so a flip reads as the
+   same panel moving rather than as a different one appearing. */
+:where(.mrd-popover, .mrd-tooltip)[data-placement='bottom'] {
+  transform-origin: top center;
+}
+:where(.mrd-popover, .mrd-tooltip)[data-placement='bottom-start'] {
+  transform-origin: top left;
+}
+:where(.mrd-popover, .mrd-tooltip)[data-placement='bottom-end'] {
+  transform-origin: top right;
+}
+:where(.mrd-popover, .mrd-tooltip)[data-placement='top'] {
+  transform-origin: bottom center;
+}
+:where(.mrd-popover, .mrd-tooltip)[data-placement='top-start'] {
+  transform-origin: bottom left;
+}
+:where(.mrd-popover, .mrd-tooltip)[data-placement='top-end'] {
+  transform-origin: bottom right;
+}
+:where(.mrd-popover, .mrd-tooltip)[data-placement='right'] {
+  transform-origin: left center;
+}
+:where(.mrd-popover, .mrd-tooltip)[data-placement='right-start'] {
+  transform-origin: left top;
+}
+:where(.mrd-popover, .mrd-tooltip)[data-placement='right-end'] {
+  transform-origin: left bottom;
+}
+:where(.mrd-popover, .mrd-tooltip)[data-placement='left'] {
+  transform-origin: right center;
+}
+:where(.mrd-popover, .mrd-tooltip)[data-placement='left-start'] {
+  transform-origin: right top;
+}
+:where(.mrd-popover, .mrd-tooltip)[data-placement='left-end'] {
+  transform-origin: right bottom;
+}
+
+@keyframes mrd-overlay-rise {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Menu                                                                */
+/* ------------------------------------------------------------------ */
+
+.mrd-menu {
+  min-width: max-content;
+}
+
+/* A menu opened at the pointer sits on it, not beside it. */
+.mrd-menu--at-pointer {
+  --mrd-anchor-gap: 0px;
+}
+
+.mrd-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--control-height);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-primary);
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+  text-align: left;
+  white-space: nowrap;
+  user-select: none;
+  transition:
+    background-color var(--duration-instant) var(--ease-out),
+    color var(--duration-instant) var(--ease-out);
+}
+
+/*
+ * The highlight follows focus rather than hover, because focus follows the
+ * pointer here: one highlight, whether the menu is being driven by mouse or by
+ * keyboard, and never two at once.
+ */
+.mrd-menu-item:focus {
+  outline: none;
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+}
+
+.mrd-menu-item:active:not(:disabled) {
+  background: var(--color-accent-active);
+}
+
+.mrd-menu-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.mrd-menu-item--destructive {
+  color: var(--color-error);
+}
+.mrd-menu-item--destructive:focus {
+  background: var(--color-error);
+  color: var(--color-text-on-accent);
+}
+
+/* A fixed leading column so labels align down the menu whether or not an
+   individual item carries an icon or a checkmark. */
+.mrd-menu-item__lead {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-4);
+  color: var(--color-text-secondary);
+}
+.mrd-menu-item__lead svg {
+  width: 14px;
+  height: 14px;
+}
+.mrd-menu-item:focus .mrd-menu-item__lead {
+  color: inherit;
+}
+
+.mrd-menu-item__label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mrd-menu-item__shortcut {
+  flex: 0 0 auto;
+  padding-left: var(--space-6);
+  color: var(--color-text-tertiary);
+  font-size: var(--text-secondary-size);
+  font-variant-numeric: tabular-nums;
+}
+.mrd-menu-item:focus .mrd-menu-item__shortcut {
+  color: inherit;
+  opacity: 0.72;
+}
+
+.mrd-menu-item__chevron {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--color-text-tertiary);
+}
+.mrd-menu-item__chevron svg {
+  width: 13px;
+  height: 13px;
+}
+.mrd-menu-item:focus .mrd-menu-item__chevron {
+  color: inherit;
+}
+
+/* Full-bleed: the rule reaches the panel edge by cancelling the menu padding. */
+.mrd-menu__separator {
+  height: 1px;
+  margin: var(--space-1) calc(var(--space-2) * -1);
+  background: var(--color-separator);
+}
+
+.mrd-menu__group + .mrd-menu__group {
+  margin-top: var(--space-1);
+}
+
+.mrd-menu__group-label {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+}
+
+/* ------------------------------------------------------------------ */
+/* Tooltip                                                             */
+/* ------------------------------------------------------------------ */
+
+.mrd-tooltip {
+  --mrd-anchor-gap: var(--space-1);
+  --mrd-viewport-pad: var(--space-2);
+
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: var(--z-tooltip);
+  max-width: calc(var(--inspector-width) - var(--space-11));
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-overlay);
+  -webkit-backdrop-filter: var(--blur-overlay);
+  backdrop-filter: var(--blur-overlay);
+  /* A tip is control-scale, not panel-scale, so it takes a control radius —
+     the surface radius would round it into a pill. */
+  border-radius: var(--radius-lg);
+  box-shadow: inset 0 0 0 1px var(--color-border), var(--shadow-2);
+  color: var(--color-text-primary);
+  font-size: var(--text-secondary-size);
+  line-height: var(--text-secondary-line);
+  /* Never a hover target: a tip that can be hovered can hide the thing it
+     describes, and it holds nothing to click. */
+  pointer-events: none;
+  opacity: 0;
+}
+
+.mrd-tooltip[data-positioned='true'] {
+  opacity: 1;
+  animation: mrd-overlay-rise var(--duration-fast) var(--ease-out);
+}
+
+/* ------------------------------------------------------------------ */
+/* Scrim                                                               */
+/* ------------------------------------------------------------------ */
+
+/* The scrim is also the layout box for what it dims: padding here is what
+   keeps a tall dialog off the viewport edges, so no panel needs viewport
+   units of its own to stay inside the window. */
+.mrd-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-7);
+  background: var(--color-scrim);
+  animation: mrd-scrim-in var(--duration-fast) var(--ease-out);
+}
+
+.mrd-scrim--sheet {
+  padding: 0;
+}
+.mrd-scrim--right {
+  justify-content: flex-end;
+  align-items: stretch;
+}
+.mrd-scrim--bottom {
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: stretch;
+}
+
+@keyframes mrd-scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Dialog                                                              */
+/* ------------------------------------------------------------------ */
+
+.mrd-dialog {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: 100%;
+  background: var(--color-surface);
+  border-radius: var(--radius-2xl);
+  box-shadow: inset 0 0 0 1px var(--color-border), var(--shadow-4);
+  animation: mrd-dialog-in var(--duration-base) var(--ease-out);
+}
+
+.mrd-dialog--sm {
+  max-width: var(--inspector-width);
+}
+.mrd-dialog--md {
+  max-width: calc(var(--inspector-width) + var(--space-11) * 2);
+}
+.mrd-dialog--lg {
+  max-width: calc(var(--inspector-width) * 2);
+}
+
+@keyframes mrd-dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.mrd-dialog__header,
+.mrd-sheet__header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  flex: 0 0 auto;
+  padding: var(--space-5) var(--space-5) var(--space-3);
+}
+
+.mrd-dialog__heading,
+.mrd-sheet__heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mrd-dialog__body,
+.mrd-sheet__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 var(--space-5);
+}
+
+/* An empty body would otherwise leave the header sitting on the footer. */
+.mrd-dialog__body:empty,
+.mrd-sheet__body:empty {
+  padding: 0;
+}
+
+.mrd-dialog__footer,
+.mrd-sheet__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  padding: var(--space-4) var(--space-5) var(--space-5);
+}
+
+/* ------------------------------------------------------------------ */
+/* Sheet                                                               */
+/* ------------------------------------------------------------------ */
+
+.mrd-sheet {
+  display: flex;
+  flex-direction: column;
+  background: var(--color-panel);
+  box-shadow: var(--shadow-4);
+}
+
+/* Only the corners that face the content are rounded — the edges against the
+   viewport stay square, which is what makes it read as anchored rather than
+   floating. */
+.mrd-sheet--right {
+  width: min(calc(var(--inspector-width) + var(--space-9)), 100%);
+  height: 100%;
+  border-radius: var(--radius-2xl) 0 0 var(--radius-2xl);
+  border-left: 1px solid var(--color-border);
+  animation: mrd-sheet-in-right var(--duration-base) var(--ease-out);
+}
+
+.mrd-sheet--bottom {
+  width: 100%;
+  max-height: 85%;
+  border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
+  border-top: 1px solid var(--color-border);
+  animation: mrd-sheet-in-bottom var(--duration-base) var(--ease-out);
+}
+
+@keyframes mrd-sheet-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes mrd-sheet-in-bottom {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Toast                                                               */
+/* ------------------------------------------------------------------ */
+
+.mrd-toast-viewport {
+  position: fixed;
+  right: var(--space-5);
+  bottom: var(--space-5);
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(var(--inspector-width), calc(100vw - var(--space-7)));
+  /* The stack spans a column of the app; only the cards in it may take a
+     click, or an empty viewport would swallow the interface behind it. */
+  pointer-events: none;
+}
+
+.mrd-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-surface-raised);
+  border-radius: var(--radius-xl);
+  box-shadow: inset 0 0 0 1px var(--color-border), var(--shadow-3);
+  pointer-events: auto;
+  animation: mrd-toast-in var(--duration-base) var(--ease-out);
+}
+
+@keyframes mrd-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-2));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.mrd-toast__icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  height: var(--text-body-line);
+}
+.mrd-toast__icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.mrd-toast--info .mrd-toast__icon {
+  color: var(--color-info);
+}
+.mrd-toast--success .mrd-toast__icon {
+  color: var(--color-success);
+}
+.mrd-toast--warning .mrd-toast__icon {
+  color: var(--color-warning);
+}
+.mrd-toast--error .mrd-toast__icon {
+  color: var(--color-error);
+}
+
+.mrd-toast__content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mrd-toast__title {
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+  font-weight: 500;
+}
+
+.mrd-toast__description {
+  overflow-wrap: anywhere;
+}
+
+.mrd-toast__action {
+  flex: 0 0 auto;
+}
+
+/* ------------------------------------------------------------------ */
+/* Context menu host                                                   */
+/* ------------------------------------------------------------------ */
+
+/* The host exists only to catch the event: display:contents keeps it out of
+   the layout of whatever it wraps — a table row, a cell, a canvas. */
+.mrd-context-menu-host {
+  display: contents;
+}

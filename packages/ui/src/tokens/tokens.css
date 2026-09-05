@@ -1,0 +1,406 @@
+/*
+ * Meridian design tokens.
+ *
+ * Every colour, size, radius, shadow and duration used anywhere in the product
+ * is declared here. Components consume tokens only — a literal colour or pixel
+ * value in a component is a bug, because it is a value that cannot follow the
+ * theme, cannot respond to reduced-motion, and cannot be adjusted in one place.
+ *
+ * The light palette is defined on bare :root. Dark mode redefines only the
+ * tokens whose values change, in two places: a prefers-color-scheme block
+ * guarded against an explicit light choice, and a [data-theme="dark"] block so
+ * an explicit choice wins in both directions.
+ */
+
+:root {
+  /* ---------------------------------------------------------------- */
+  /* Palette — light                                                   */
+  /*                                                                   */
+  /* A warm, slightly off-white ground rather than #fff: pure white     */
+  /* under a full-height app reads as glare, and the warmth gives the   */
+  /* white surfaces above it something to sit on.                       */
+  /* ---------------------------------------------------------------- */
+  --color-bg: #f7f6f4;
+  --color-surface: #ffffff;
+  --color-surface-raised: #ffffff;
+  --color-surface-sunken: #f1f0ed;
+  --color-sidebar: rgba(247, 246, 244, 0.82);
+  --color-toolbar: rgba(255, 255, 255, 0.72);
+  --color-panel: #ffffff;
+  --color-overlay: rgba(255, 255, 255, 0.86);
+  --color-scrim: rgba(28, 27, 25, 0.28);
+
+  /* Hairlines. Two weights: a separator you should barely notice, and a
+     border that defines an interactive edge. */
+  --color-separator: rgba(28, 27, 25, 0.07);
+  --color-border: rgba(28, 27, 25, 0.12);
+  --color-border-strong: rgba(28, 27, 25, 0.2);
+
+  --color-text-primary: #1c1b19;
+  --color-text-secondary: #6a6862;
+  --color-text-tertiary: #726f6a;
+  --color-text-inverse: #ffffff;
+  --color-text-on-accent: #ffffff;
+
+  /* The accent is used sparingly: selection, focus, the single primary
+     action in a view, and status. Everything else is neutral. */
+  --color-accent: #2f6ae8;
+  --color-accent-hover: #2a5fd0;
+  --color-accent-active: #2454b8;
+  --color-accent-subtle: rgba(47, 106, 232, 0.1);
+  --color-accent-subtle-hover: rgba(47, 106, 232, 0.16);
+  --color-accent-border: rgba(47, 106, 232, 0.35);
+
+  --color-success: #177a4c;
+  --color-success-subtle: rgba(23, 122, 76, 0.12);
+  --color-warning: #96620e;
+  --color-warning-subtle: rgba(150, 98, 14, 0.13);
+  --color-error: #c8322f;
+  --color-error-subtle: rgba(200, 50, 47, 0.11);
+  --color-info: var(--color-accent);
+  --color-info-subtle: var(--color-accent-subtle);
+
+  /* Diff colours, kept distinct from success/error so a rejected hunk and a
+     deletion never look like the same thing. */
+  --color-diff-add-bg: rgba(27, 138, 86, 0.11);
+  --color-diff-add-text: #12633c;
+  --color-diff-del-bg: rgba(200, 50, 47, 0.1);
+  --color-diff-del-text: #97231f;
+  --color-diff-gutter: rgba(28, 27, 25, 0.04);
+
+  /* Neutral fills for quiet controls and hover states. */
+  --color-fill-quiet: rgba(28, 27, 25, 0.045);
+  --color-fill-hover: rgba(28, 27, 25, 0.062);
+  --color-fill-active: rgba(28, 27, 25, 0.095);
+  --color-fill-selected: rgba(28, 27, 25, 0.075);
+
+  /* ---------------------------------------------------------------- */
+  /* Typography                                                        */
+  /* ---------------------------------------------------------------- */
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Segoe UI',
+    system-ui, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'SF Mono', ui-monospace, 'JetBrains Mono', 'Cascadia Code', Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  /* A dense professional tool wants a 13px base. Sizes below that are for
+     metadata; sizes above are for the few places that carry a page's identity. */
+  --text-display-size: 30px;
+  --text-display-line: 36px;
+  --text-display-weight: 600;
+  --text-display-tracking: -0.021em;
+
+  --text-title-size: 21px;
+  --text-title-line: 27px;
+  --text-title-weight: 600;
+  --text-title-tracking: -0.016em;
+
+  --text-section-size: 15px;
+  --text-section-line: 21px;
+  --text-section-weight: 600;
+  --text-section-tracking: -0.009em;
+
+  --text-panel-size: 11px;
+  --text-panel-line: 15px;
+  --text-panel-weight: 600;
+  --text-panel-tracking: 0.045em;
+
+  --text-body-size: 13px;
+  --text-body-line: 19px;
+  --text-body-weight: 400;
+  --text-body-tracking: -0.002em;
+
+  --text-body-lg-size: 14px;
+  --text-body-lg-line: 21px;
+
+  --text-secondary-size: 12px;
+  --text-secondary-line: 17px;
+
+  --text-caption-size: 11px;
+  --text-caption-line: 15px;
+
+  --text-code-size: 12.5px;
+  --text-code-line: 19px;
+
+  /* ---------------------------------------------------------------- */
+  /* Spacing — a strict scale. Values off it are a design error.        */
+  /* ---------------------------------------------------------------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --space-10: 64px;
+  --space-11: 80px;
+
+  /* ---------------------------------------------------------------- */
+  /* Radius — restrained. Pills are reserved for status and tags.       */
+  /* ---------------------------------------------------------------- */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 20px;
+  --radius-pill: 999px;
+
+  /* ---------------------------------------------------------------- */
+  /* Elevation — depth comes from a hairline plus a soft, short shadow. */
+  /* Level 0 app background, 1 panels, 2 raised, 3 menus, 4 modals.     */
+  /* ---------------------------------------------------------------- */
+  --shadow-0: none;
+  --shadow-1: 0 1px 2px rgba(28, 27, 25, 0.05);
+  --shadow-2: 0 1px 3px rgba(28, 27, 25, 0.07), 0 4px 12px rgba(28, 27, 25, 0.05);
+  --shadow-3: 0 2px 8px rgba(28, 27, 25, 0.09), 0 12px 28px rgba(28, 27, 25, 0.1);
+  --shadow-4: 0 8px 24px rgba(28, 27, 25, 0.12), 0 32px 64px rgba(28, 27, 25, 0.16);
+  --shadow-focus: 0 0 0 3px var(--color-accent-subtle);
+  --shadow-inset-hairline: inset 0 0 0 1px var(--color-border);
+
+  /* Translucency, used only on the toolbar, sidebar, menus and the command
+     palette — never on content surfaces. */
+  --blur-chrome: saturate(180%) blur(20px);
+  --blur-overlay: saturate(160%) blur(32px);
+
+  /* ---------------------------------------------------------------- */
+  /* Motion                                                            */
+  /* ---------------------------------------------------------------- */
+  --duration-instant: 80ms;
+  --duration-fast: 130ms;
+  --duration-base: 190ms;
+  --duration-slow: 280ms;
+
+  /* A decisive ease-out: quick to commit, gentle to settle. Used for
+     anything the user initiated. */
+  --ease-out: cubic-bezier(0.32, 0.72, 0, 1);
+  /* For things arriving without user action, so they do not snap. */
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-linear: linear;
+
+  /* ---------------------------------------------------------------- */
+  /* Layout                                                            */
+  /* ---------------------------------------------------------------- */
+  --toolbar-height: 44px;
+  --statusbar-height: 26px;
+  --sidebar-width: 216px;
+  --sidebar-width-collapsed: 52px;
+  --inspector-width: 340px;
+  --drawer-height: 260px;
+  --control-height-sm: 22px;
+  --control-height: 28px;
+  --control-height-lg: 34px;
+  --row-height: 26px;
+
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-toolbar: 20;
+  --z-dropdown: 40;
+  --z-popover: 50;
+  --z-tooltip: 60;
+  --z-modal: 70;
+  --z-palette: 80;
+  --z-toast: 90;
+
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 900px;
+  --breakpoint-lg: 1200px;
+  --breakpoint-xl: 1600px;
+
+  /* Syntax colours. Muted on purpose: code is read for structure first, and a
+     rainbow makes long files harder to scan, not easier. */
+  --syntax-keyword: #8250b8;
+  --syntax-string: #1a7f4f;
+  --syntax-number: #9a5518;
+  --syntax-comment: #726f6a;
+  --syntax-function: #2f6ae8;
+  --syntax-type: #0f7490;
+  --syntax-property: #a03a6b;
+  --syntax-operator: #6a6862;
+
+  color-scheme: light;
+}
+
+/*
+ * Dark mode.
+ *
+ * Deliberately not an inversion. The ground is a warm near-black rather than
+ * #000 so surfaces above it can be lighter without glowing; hairlines switch
+ * from dark-on-light to light-on-dark at a *higher* alpha because a light
+ * hairline reads as thinner than a dark one at the same opacity; and the accent
+ * is lifted in lightness so it keeps its contrast against a dark ground.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --color-bg: #171718;
+    --color-surface: #1e1e20;
+    --color-surface-raised: #26262a;
+    --color-surface-sunken: #131314;
+    --color-sidebar: rgba(23, 23, 24, 0.78);
+    --color-toolbar: rgba(30, 30, 32, 0.68);
+    --color-panel: #1e1e20;
+    --color-overlay: rgba(38, 38, 42, 0.86);
+    --color-scrim: rgba(0, 0, 0, 0.5);
+
+    --color-separator: rgba(255, 255, 255, 0.07);
+    --color-border: rgba(255, 255, 255, 0.11);
+    --color-border-strong: rgba(255, 255, 255, 0.2);
+
+    --color-text-primary: #f0efed;
+    --color-text-secondary: #9e9c97;
+    --color-text-tertiary: #8a8882;
+    --color-text-inverse: #171718;
+    --color-text-on-accent: #ffffff;
+
+    --color-accent: #5b8dff;
+    --color-accent-hover: #7aa2ff;
+    --color-accent-active: #4a7cf0;
+    --color-accent-subtle: rgba(91, 141, 255, 0.16);
+    --color-accent-subtle-hover: rgba(91, 141, 255, 0.24);
+    --color-accent-border: rgba(91, 141, 255, 0.42);
+
+    --color-success: #3fbc80;
+    --color-success-subtle: rgba(63, 188, 128, 0.16);
+    --color-warning: #dfa044;
+    --color-warning-subtle: rgba(223, 160, 68, 0.16);
+    --color-error: #f2635f;
+    --color-error-subtle: rgba(242, 99, 95, 0.16);
+
+    --color-diff-add-bg: rgba(63, 188, 128, 0.15);
+    --color-diff-add-text: #6fd6a1;
+    --color-diff-del-bg: rgba(242, 99, 95, 0.14);
+    --color-diff-del-text: #ff8a86;
+    --color-diff-gutter: rgba(255, 255, 255, 0.04);
+
+    --color-fill-quiet: rgba(255, 255, 255, 0.05);
+    --color-fill-hover: rgba(255, 255, 255, 0.075);
+    --color-fill-active: rgba(255, 255, 255, 0.11);
+    --color-fill-selected: rgba(255, 255, 255, 0.09);
+
+    /* Shadows carry almost no information on a dark ground — depth there comes
+       from surface lightness — so they shrink to a contact shadow. */
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.45), 0 4px 12px rgba(0, 0, 0, 0.35);
+    --shadow-3: 0 2px 8px rgba(0, 0, 0, 0.5), 0 12px 28px rgba(0, 0, 0, 0.45);
+    --shadow-4: 0 8px 24px rgba(0, 0, 0, 0.55), 0 32px 64px rgba(0, 0, 0, 0.6);
+
+    --syntax-keyword: #c393f0;
+    --syntax-string: #6fd6a1;
+    --syntax-number: #e0a464;
+    --syntax-comment: #6e6c68;
+    --syntax-function: #7aa2ff;
+    --syntax-type: #58c1dd;
+    --syntax-property: #f08bb4;
+    --syntax-operator: #9e9c97;
+
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --color-bg: #171718;
+  --color-surface: #1e1e20;
+  --color-surface-raised: #26262a;
+  --color-surface-sunken: #131314;
+  --color-sidebar: rgba(23, 23, 24, 0.78);
+  --color-toolbar: rgba(30, 30, 32, 0.68);
+  --color-panel: #1e1e20;
+  --color-overlay: rgba(38, 38, 42, 0.86);
+  --color-scrim: rgba(0, 0, 0, 0.5);
+
+  --color-separator: rgba(255, 255, 255, 0.07);
+  --color-border: rgba(255, 255, 255, 0.11);
+  --color-border-strong: rgba(255, 255, 255, 0.2);
+
+  --color-text-primary: #f0efed;
+  --color-text-secondary: #9e9c97;
+  --color-text-tertiary: #8a8882;
+  --color-text-inverse: #171718;
+  --color-text-on-accent: #ffffff;
+
+  --color-accent: #5b8dff;
+  --color-accent-hover: #7aa2ff;
+  --color-accent-active: #4a7cf0;
+  --color-accent-subtle: rgba(91, 141, 255, 0.16);
+  --color-accent-subtle-hover: rgba(91, 141, 255, 0.24);
+  --color-accent-border: rgba(91, 141, 255, 0.42);
+
+  --color-success: #3fbc80;
+  --color-success-subtle: rgba(63, 188, 128, 0.16);
+  --color-warning: #dfa044;
+  --color-warning-subtle: rgba(223, 160, 68, 0.16);
+  --color-error: #f2635f;
+  --color-error-subtle: rgba(242, 99, 95, 0.16);
+
+  --color-diff-add-bg: rgba(63, 188, 128, 0.15);
+  --color-diff-add-text: #6fd6a1;
+  --color-diff-del-bg: rgba(242, 99, 95, 0.14);
+  --color-diff-del-text: #ff8a86;
+  --color-diff-gutter: rgba(255, 255, 255, 0.04);
+
+  --color-fill-quiet: rgba(255, 255, 255, 0.05);
+  --color-fill-hover: rgba(255, 255, 255, 0.075);
+  --color-fill-active: rgba(255, 255, 255, 0.11);
+  --color-fill-selected: rgba(255, 255, 255, 0.09);
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.45), 0 4px 12px rgba(0, 0, 0, 0.35);
+  --shadow-3: 0 2px 8px rgba(0, 0, 0, 0.5), 0 12px 28px rgba(0, 0, 0, 0.45);
+  --shadow-4: 0 8px 24px rgba(0, 0, 0, 0.55), 0 32px 64px rgba(0, 0, 0, 0.6);
+
+  --syntax-keyword: #c393f0;
+  --syntax-string: #6fd6a1;
+  --syntax-number: #e0a464;
+  --syntax-comment: #6e6c68;
+  --syntax-function: #7aa2ff;
+  --syntax-type: #58c1dd;
+  --syntax-property: #f08bb4;
+  --syntax-operator: #9e9c97;
+
+  color-scheme: dark;
+}
+
+/*
+ * High contrast. Raises hairline and secondary-text contrast rather than
+ * changing hue, so the interface stays recognisably itself.
+ */
+@media (prefers-contrast: more) {
+  :root {
+    --color-border: rgba(28, 27, 25, 0.32);
+    --color-border-strong: rgba(28, 27, 25, 0.5);
+    --color-separator: rgba(28, 27, 25, 0.2);
+    --color-text-secondary: #4a4844;
+    --color-text-tertiary: #5c5a56;
+  }
+  :root[data-theme='dark'],
+  :root:not([data-theme='light']) {
+    --color-border: rgba(255, 255, 255, 0.32);
+    --color-border-strong: rgba(255, 255, 255, 0.5);
+    --color-separator: rgba(255, 255, 255, 0.2);
+    --color-text-secondary: #c9c7c2;
+    --color-text-tertiary: #b0aea8;
+  }
+}
+
+/*
+ * Reduced motion. Durations collapse to near-zero rather than to zero so
+ * transitionend handlers still fire and state machines that wait on them do
+ * not stall.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-instant: 1ms;
+    --duration-fast: 1ms;
+    --duration-base: 1ms;
+    --duration-slow: 1ms;
+  }
+}
+
+/* The same collapse, driven by the in-app preference rather than the OS. */
+:root[data-reduce-motion='true'] {
+  --duration-instant: 1ms;
+  --duration-fast: 1ms;
+  --duration-base: 1ms;
+  --duration-slow: 1ms;
+}
