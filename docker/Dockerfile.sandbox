@@ -13,8 +13,16 @@ RUN apt-get update \
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# A non-root user, so a command cannot write outside the mounted workspace even
-# if the isolation is later relaxed.
+# A non-root default user, so a command cannot write outside the mounted
+# workspace even if the isolation is later relaxed.
+#
+# At run time DockerSandbox overrides this with the gateway's own uid and gid.
+# It has to: files in the workspace belong to whoever runs the gateway, and a
+# container user with a different uid can read them but never write, which
+# breaks every command that installs, builds or commits. Matching the caller
+# grants exactly the access the gateway already has — the container is held in
+# by having no network, no capabilities, a read-only root and nothing mounted
+# but the workspace, not by its uid.
 RUN groupadd --system --gid 1002 runner \
  && useradd --system --uid 1002 --gid runner --home /home/runner --create-home runner
 USER runner

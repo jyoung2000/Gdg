@@ -234,6 +234,8 @@ export class App {
       cpus: config.sandboxCpus,
       network: config.sandboxNetwork,
       logger,
+      workspaceRoot: config.workspaceRoot,
+      hostWorkspaceRoot: config.workspaceHostRoot,
     });
     if (degraded && reason) warnings.push({ level: 'warn', message: reason });
 

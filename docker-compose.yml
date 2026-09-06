@@ -21,6 +21,19 @@ services:
       PORT: "4639"
       MERIDIAN_DATA_DIR: /data
       MERIDIAN_WORKSPACE_ROOT: /workspaces
+
+      # Where /workspaces lives on the Docker host. Required for
+      # MERIDIAN_SANDBOX=docker and ignored otherwise.
+      #
+      # The gateway starts sandbox containers through the host's Docker daemon,
+      # which resolves `-v <path>:/work` against the host filesystem — not
+      # against this container's. Without this, the daemon would mount an empty
+      # host directory called /workspaces and every command would run against
+      # nothing while appearing to succeed. Setting it also switches the
+      # workspace mount below from a named volume to that host directory, so the
+      # two really are the same files. Meridian probes this at startup and falls
+      # back to the process sandbox, loudly, if it is wrong.
+      MERIDIAN_WORKSPACE_HOST_ROOT: "${MERIDIAN_WORKSPACE_HOST_ROOT:-}"
       MERIDIAN_WEB_ROOT: /app/dist/web
       MERIDIAN_LOG_FORMAT: "${MERIDIAN_LOG_FORMAT:-json}"
       MERIDIAN_LOG_LEVEL: "${MERIDIAN_LOG_LEVEL:-info}"
@@ -84,7 +97,9 @@ services:
       # The database, generated assets and every workspace live here. These two
       # volumes are the whole of Meridian's durable state.
       - meridian-data:/data
-      - meridian-workspaces:/workspaces
+      # A named volume by default; the host directory named above when
+      # MERIDIAN_WORKSPACE_HOST_ROOT is set, which docker-mode sandboxing needs.
+      - "${MERIDIAN_WORKSPACE_HOST_ROOT:-meridian-workspaces}:/workspaces"
       # Required only for MERIDIAN_SANDBOX=docker: the gateway starts a
       # throwaway container per command. Comment this out and set
       # MERIDIAN_SANDBOX=process if you would rather not share the socket.

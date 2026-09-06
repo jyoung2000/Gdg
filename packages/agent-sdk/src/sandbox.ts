@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join, relative, resolve, sep } from 'node:path';
 import { MeridianError, type Logger } from '@meridian/shared';
 
 export interface ExecOptions {
@@ -59,6 +61,28 @@ function baseEnv(extra: Record<string, string> = {}): Record<string, string> {
  * capabilities, a pid ceiling and hard memory and CPU limits. This is the
  * strong option and the default in the shipped Compose stack.
  */
+export interface DockerSandboxOptions {
+  image: string;
+  memoryMb: number;
+  cpus: number;
+  network: boolean;
+  logger: Logger;
+  /**
+   * Where the workspace root lives *on the Docker host*, when the gateway is
+   * itself in a container.
+   *
+   * `docker run -v <path>:/work` is resolved by the daemon against the host
+   * filesystem, not against the caller's. A containerised gateway asking for
+   * `-v /workspaces/ws_x:/work` therefore mounts a host path that usually does
+   * not exist — Docker creates it, empty, and the command runs against nothing
+   * while appearing to succeed. Pairing this with {@link workspaceRoot} lets
+   * the sandbox translate its own path into the host's.
+   */
+  hostWorkspaceRoot?: string | null;
+  /** The workspace root as this process sees it. Required with hostWorkspaceRoot. */
+  workspaceRoot?: string | null;
+}
+
 export class DockerSandbox implements Sandbox {
   readonly kind = 'docker' as const;
   readonly isolationNote =
@@ -69,23 +93,160 @@ export class DockerSandbox implements Sandbox {
   private readonly cpus: number;
   private readonly network: boolean;
   private readonly logger: Logger;
+  private readonly hostWorkspaceRoot: string | null;
+  private readonly workspaceRoot: string | null;
 
-  constructor(opts: { image: string; memoryMb: number; cpus: number; network: boolean; logger: Logger }) {
+  constructor(opts: DockerSandboxOptions) {
     this.image = opts.image;
     this.memoryMb = opts.memoryMb;
     this.cpus = opts.cpus;
     this.network = opts.network;
     this.logger = opts.logger;
+    this.hostWorkspaceRoot = opts.hostWorkspaceRoot ? resolve(opts.hostWorkspaceRoot) : null;
+    this.workspaceRoot = opts.workspaceRoot ? resolve(opts.workspaceRoot) : null;
+  }
+
+  /**
+   * The path the Docker daemon should mount for a directory this process sees
+   * at `cwd`.
+   *
+   * Without a configured host root the two are the same, which is correct
+   * whenever the gateway runs directly on the Docker host.
+   */
+  hostPathFor(cwd: string): string {
+    if (!this.hostWorkspaceRoot || !this.workspaceRoot) return resolve(cwd);
+    const abs = resolve(cwd);
+    const rel = relative(this.workspaceRoot, abs);
+    // Outside the workspace root: nothing sensible to translate to, so pass it
+    // through rather than inventing a host path.
+    if (rel.startsWith('..') || rel.startsWith(sep)) return abs;
+    return rel ? join(this.hostWorkspaceRoot, rel) : this.hostWorkspaceRoot;
+  }
+
+  /**
+   * Run the sandboxed command as the same user as the gateway.
+   *
+   * The image ships a non-root user, but its uid is not the gateway's, so a
+   * command could read the workspace and never write to it. Matching the
+   * caller's uid gives the sandbox exactly the access the gateway already has
+   * and no more — the container has no network, no capabilities, a read-only
+   * root and nothing mounted but the workspace, so the uid is not what is
+   * holding it in.
+   */
+  private userFlag(): string[] {
+    if (process.platform === 'win32' || typeof process.getuid !== 'function' || typeof process.getgid !== 'function') return [];
+    return ['--user', `${process.getuid()}:${process.getgid()}`];
   }
 
   async available(): Promise<boolean> {
-    const res = await runProcess('docker', ['version', '--format', '{{.Server.Version}}'], {
+    return (await this.diagnose()) === null;
+  }
+
+  /**
+   * Why this sandbox cannot be used, or null when it can.
+   *
+   * A reachable daemon is not enough: without the image, every command fails at
+   * run time with a registry error the operator has no reason to connect to
+   * their sandbox setting. Checking it here turns that into one accurate
+   * sentence at startup.
+   */
+  async diagnose(): Promise<string | null> {
+    const version = await runProcess('docker', ['version', '--format', '{{.Server.Version}}'], {
       cwd: process.cwd(),
       timeoutMs: 8000,
       env: baseEnv(),
       maxOutputBytes: 4096,
     });
-    return res.exitCode === 0;
+    if (version.exitCode !== 0) {
+      return 'Docker is not reachable from the gateway';
+    }
+
+    const image = await runProcess('docker', ['image', 'inspect', this.image, '--format', '{{.Id}}'], {
+      cwd: process.cwd(),
+      timeoutMs: 15_000,
+      env: baseEnv(),
+      maxOutputBytes: 4096,
+    });
+    if (image.exitCode !== 0) {
+      return `The sandbox image "${this.image}" is not present — build it with \`docker build -f docker/Dockerfile.sandbox -t ${this.image} .\``;
+    }
+
+    return this.probeMount();
+  }
+
+  /**
+   * Check that a mounted workspace really reaches the same files, both ways.
+   *
+   * Two misconfigurations are otherwise silent and destructive. If the gateway
+   * runs in a container, the path it passes to `-v` is resolved against the
+   * host, so the daemon mounts an empty directory it just created and every
+   * command runs against nothing while reporting success. And if the container
+   * user cannot write the mount, every command that builds, installs or commits
+   * fails with a permission error the operator has no reason to connect to
+   * their sandbox setting.
+   *
+   * A read and a write through a real container is the only check that catches
+   * both, so it runs once at startup rather than being reasoned about.
+   */
+  private async probeMount(): Promise<string | null> {
+    if (!this.workspaceRoot) return null;
+
+    let dir: string;
+    try {
+      // The probe can run before the gateway has created the root, so create it
+      // here rather than reporting a missing directory as a permission problem.
+      mkdirSync(this.workspaceRoot, { recursive: true });
+      dir = mkdtempSync(join(this.workspaceRoot, '.sandbox-probe-'));
+    } catch (e) {
+      return `The workspace root ${this.workspaceRoot} is not writable by the gateway (${e instanceof Error ? e.message : String(e)})`;
+    }
+
+    const token = `meridian-probe-${Date.now().toString(36)}`;
+    try {
+      writeFileSync(join(dir, 'from-gateway'), token, 'utf8');
+
+      const res = await runProcess(
+        'docker',
+        [
+          'run', '--rm', '-i',
+          '--network', 'none',
+          '--cap-drop', 'ALL',
+          '--security-opt', 'no-new-privileges',
+          '--read-only',
+          '--tmpfs', '/tmp:rw,noexec,nosuid,size=16m',
+          ...this.userFlag(),
+          '-v', `${this.hostPathFor(dir)}:/work`,
+          '-w', '/work',
+          this.image,
+          'sh', '-lc', 'cat from-gateway 2>/dev/null; echo; printf %s "$0" > from-container 2>/dev/null || echo NOWRITE', token,
+        ],
+        { cwd: process.cwd(), timeoutMs: 60_000, env: baseEnv(), maxOutputBytes: 8192 },
+      );
+
+      if (res.exitCode !== 0) {
+        return `A probe container could not run (${(res.stderr || res.stdout).trim().slice(0, 300)})`;
+      }
+      if (!res.stdout.includes(token)) {
+        return this.hostWorkspaceRoot
+          ? `The sandbox mounted ${this.hostPathFor(dir)} but did not see the workspace's files, so MERIDIAN_WORKSPACE_HOST_ROOT does not match where ${this.workspaceRoot} actually lives on the Docker host`
+          : `The sandbox mounted ${dir} but did not see the workspace's files. This gateway appears to be running inside a container, where that path means something different to the Docker daemon — set MERIDIAN_WORKSPACE_HOST_ROOT to the host directory that ${this.workspaceRoot} is mounted from`;
+      }
+
+      let wroteBack = '';
+      try {
+        wroteBack = readFileSync(join(dir, 'from-container'), 'utf8');
+      } catch {
+        wroteBack = '';
+      }
+      if (wroteBack !== token) {
+        return `The sandbox can read the workspace but not write to it, so any command that builds, installs or commits would fail. Check the ownership of ${this.workspaceRoot}`;
+      }
+      return null;
+    } catch (e) {
+      return `The sandbox mount probe failed (${e instanceof Error ? e.message : String(e)})`;
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 
   async exec(command: string, opts: ExecOptions): Promise<ExecResult> {
@@ -105,7 +266,8 @@ export class DockerSandbox implements Sandbox {
       '--read-only',
       // Writable scratch that vanishes with the container.
       '--tmpfs', '/tmp:rw,noexec,nosuid,size=256m',
-      '-v', `${opts.cwd}:/work`,
+      ...this.userFlag(),
+      '-v', `${this.hostPathFor(opts.cwd)}:/work`,
       '-w', '/work',
     ];
     for (const [k, v] of Object.entries(baseEnv(opts.env))) args.push('-e', `${k}=${v}`);
@@ -168,7 +330,7 @@ export class DisabledSandbox implements Sandbox {
 
 export function createSandbox(
   kind: 'docker' | 'process' | 'disabled',
-  opts: { image: string; memoryMb: number; cpus: number; network: boolean; logger: Logger },
+  opts: DockerSandboxOptions,
 ): Sandbox {
   switch (kind) {
     case 'docker':
@@ -187,16 +349,18 @@ export function createSandbox(
  */
 export async function resolveSandbox(
   preferred: 'docker' | 'process' | 'disabled',
-  opts: { image: string; memoryMb: number; cpus: number; network: boolean; logger: Logger },
+  opts: DockerSandboxOptions,
 ): Promise<{ sandbox: Sandbox; degraded: boolean; reason: string | null }> {
   const chosen = createSandbox(preferred, opts);
-  if (await chosen.available()) return { sandbox: chosen, degraded: false, reason: null };
   if (preferred === 'docker') {
+    const detail = await (chosen as DockerSandbox).diagnose();
+    if (detail === null) return { sandbox: chosen, degraded: false, reason: null };
     const fallback = new ProcessSandbox(opts.logger);
-    const reason = 'Docker is not reachable from the gateway, so command execution fell back to the process sandbox, which is not a security boundary.';
-    opts.logger.warn('sandbox degraded', { requested: 'docker', using: 'process' });
+    const reason = `${detail.replace(/\.$/, '')}. Command execution fell back to the process sandbox, which is not a security boundary.`;
+    opts.logger.warn('sandbox degraded', { requested: 'docker', using: 'process', detail });
     return { sandbox: fallback, degraded: true, reason };
   }
+  if (await chosen.available()) return { sandbox: chosen, degraded: false, reason: null };
   return { sandbox: chosen, degraded: false, reason: null };
 }
 

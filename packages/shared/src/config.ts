@@ -34,6 +34,11 @@ export interface MeridianConfig {
   /** Sandbox strategy for tool execution. */
   sandbox: 'docker' | 'process' | 'disabled';
   sandboxImage: string;
+  /**
+   * Where MERIDIAN_WORKSPACE_ROOT lives on the Docker host, when the gateway is
+   * itself containerised. Only needed for MERIDIAN_SANDBOX=docker.
+   */
+  workspaceHostRoot: string | null;
   sandboxTimeoutMs: number;
   sandboxMemoryMb: number;
   sandboxCpus: number;
@@ -91,6 +96,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): MeridianConfig
     streamIdleTimeoutMs: num(env.MERIDIAN_STREAM_IDLE_TIMEOUT_MS, 90_000),
     sandbox: (env.MERIDIAN_SANDBOX as MeridianConfig['sandbox']) ?? 'process',
     sandboxImage: env.MERIDIAN_SANDBOX_IMAGE ?? 'meridian-sandbox:latest',
+    workspaceHostRoot: env.MERIDIAN_WORKSPACE_HOST_ROOT || null,
     sandboxTimeoutMs: num(env.MERIDIAN_SANDBOX_TIMEOUT_MS, 120_000),
     sandboxMemoryMb: num(env.MERIDIAN_SANDBOX_MEMORY_MB, 2048),
     sandboxCpus: num(env.MERIDIAN_SANDBOX_CPUS, 2),

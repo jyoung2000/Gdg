@@ -54,6 +54,7 @@ is not enough.
 | --- | --- | --- |
 | `MERIDIAN_SANDBOX` | `process` (`docker` in Compose) | `docker` · `process` · `disabled` |
 | `MERIDIAN_SANDBOX_IMAGE` | `meridian-sandbox:latest` | Image for docker mode |
+| `MERIDIAN_WORKSPACE_HOST_ROOT` | *(none)* | Where `MERIDIAN_WORKSPACE_ROOT` lives on the Docker host. Needed only when the gateway is itself containerised and the sandbox is `docker`: the daemon resolves the sandbox's mount against the host, so without this it mounts an empty directory and every command runs against nothing. Probed at startup |
 | `MERIDIAN_SANDBOX_MEMORY_MB` | `2048` | Hard memory limit; swap is capped to match |
 | `MERIDIAN_SANDBOX_CPUS` | `2` | CPU limit |
 | `MERIDIAN_SANDBOX_TIMEOUT_MS` | `120000` | Wall-clock ceiling per command |

@@ -147,3 +147,38 @@ neither is merging. Meridian never publishes anything on your behalf.
 
 Open an issue describing the impact and how to reproduce it. Do not include a
 working credential.
+
+---
+
+## Verifying the sandbox rather than trusting it
+
+Every isolation guarantee is a flag on a `docker run` invocation. Flags are easy
+to get wrong and impossible to check by reading, so Meridian probes the sandbox
+at startup and the test suite exercises each one against a real container.
+
+At startup, with `MERIDIAN_SANDBOX=docker`, the gateway checks that the daemon
+answers, that the image exists, and — by running a probe container that reads a
+file the gateway wrote and writes one back — that the mount really reaches the
+same files in both directions. That probe exists because two misconfigurations
+are otherwise silent and destructive:
+
+- A containerised gateway passes its own path to `docker run -v`. The daemon
+  resolves it against the *host*, creates an empty directory of that name, and
+  every command runs against nothing while reporting success. Fixed by
+  `MERIDIAN_WORKSPACE_HOST_ROOT`.
+- A container user whose uid differs from the gateway's can read the workspace
+  but never write to it, so anything that installs, builds or commits fails with
+  a permission error that looks like a bug in the command. The sandbox therefore
+  runs each container as the gateway's own uid and gid.
+
+When any check fails, Meridian falls back to the process sandbox and says so —
+in the startup warnings, in `GET /api/system/info`, and wherever the UI offers
+to run a command. Silently downgrading the isolation an operator asked for would
+be worse than not offering it.
+
+`tests/e2e/docker-sandbox.test.ts` checks each guarantee by having a command
+inside the container attempt the thing the flag forbids: writing outside the
+workspace, reaching the network, reading the gateway's environment, outliving
+its timeout, and forking without limit. It skips — with the reason printed —
+when Docker or the sandbox image is absent, because a silently skipped security
+test reads exactly like a passing one.
