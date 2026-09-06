@@ -313,7 +313,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     let finish: FinishReason = 'stop';
     let usage: Usage | null = null;
 
-    for await (const data of sseLines(res, ctx.signal)) {
+    for await (const data of sseLines(res, { signal: ctx.signal, idleTimeoutMs: ctx.streamIdleTimeoutMs, providerId: this.descriptor.id })) {
       let evt: OAIResponse;
       try {
         evt = JSON.parse(data) as OAIResponse;

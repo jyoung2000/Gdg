@@ -20,6 +20,8 @@ declare module 'fastify' {
     /** Identity resolved from the API key or session, null when anonymous. */
     auth: { userId: string | null; scopes: string[]; via: 'api-key' | 'anonymous' };
     requestId: string;
+    /** Set when this request claimed an Idempotency-Key and still owes a result. */
+    idempotency?: { key: string; userId: string; method: string; path: string };
   }
 }
 
@@ -162,6 +164,101 @@ export async function createServer(app: App): Promise<FastifyInstance> {
     if (isPublicPath(req.url)) return;
     reply.code(401).send(new MeridianError('authentication_failed', 'This gateway requires an API key').toResponse());
   });
+
+  /* ---- Idempotency ------------------------------------------------ */
+
+  // Retention for idempotency records. Long enough to cover any realistic
+  // client retry, short enough that the table does not grow without bound.
+  const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+
+  /**
+   * Replay a mutating request rather than repeating it.
+   *
+   * A network timeout tells the client nothing about whether the server acted.
+   * Without this, the safe move — retrying — is the one that charges twice or
+   * starts a second agent task. Opt-in per request via the `Idempotency-Key`
+   * header, which is the convention every provider SDK already speaks.
+   */
+  server.addHook('preHandler', async (req, reply) => {
+    const header = req.headers['idempotency-key'];
+    if (typeof header !== 'string' || !header.trim()) return;
+    if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'PATCH') return;
+
+    const body = req.body as Record<string, unknown> | undefined;
+    // A streamed response is bytes on a socket, not a value that can be stored
+    // and handed back. Saying so beats silently pretending the key was honoured.
+    if (body && typeof body === 'object' && body.stream === true) {
+      reply.header('x-idempotency', 'not-applied-to-streaming');
+      return;
+    }
+
+    const key = header.trim().slice(0, 255);
+    const path = req.url.split('?')[0];
+    // With auth off every request is the operator, so the scope is the instance
+    // rather than a user — still correct, just coarser.
+    const userId = req.auth.userId ?? 'anonymous';
+    const bodyHash = createHash('sha256').update(JSON.stringify(req.body ?? null)).digest('hex');
+    const claim = app.store.claimIdempotency({ key, userId, method: req.method, path, bodyHash });
+
+    if (claim.state === 'complete') {
+      reply.header('x-idempotency', 'replayed').code(claim.status).type('application/json').send(claim.response);
+      return reply;
+    }
+    if (claim.state === 'in_flight') {
+      reply
+        .header('x-idempotency', 'in-flight')
+        .code(409)
+        .send(
+          new MeridianError(
+            'invalid_request',
+            'A request with this Idempotency-Key is still running. Wait for it to finish rather than starting a second one.',
+          ).toResponse(),
+        );
+      return reply;
+    }
+    if (claim.state === 'conflict') {
+      reply
+        .header('x-idempotency', 'conflict')
+        .code(422)
+        .send(
+          new MeridianError(
+            'invalid_request',
+            'This Idempotency-Key was already used with a different request body. Use a new key for a different request.',
+          ).toResponse(),
+        );
+      return reply;
+    }
+
+    req.idempotency = { key, userId, method: req.method, path };
+    reply.header('x-idempotency', 'stored');
+  });
+
+  server.addHook('onSend', async (req, reply, payload) => {
+    const claim = req.idempotency;
+    if (!claim) return payload;
+    req.idempotency = undefined;
+
+    // Only a completed, materialised body can be replayed. Anything else — a
+    // stream, a file handle, an error — releases the claim so a retry is free to
+    // try again rather than being told a duplicate is in flight forever.
+    const storable = typeof payload === 'string' || Buffer.isBuffer(payload);
+    if (!storable || reply.statusCode >= 500) {
+      app.store.releaseIdempotency(claim);
+      return payload;
+    }
+    app.store.completeIdempotency(claim, reply.statusCode, payload.toString());
+    return payload;
+  });
+
+  const idempotencySweeper = setInterval(() => {
+    try {
+      app.store.pruneIdempotency(IDEMPOTENCY_TTL_MS);
+    } catch (e) {
+      app.logger.warn('idempotency prune failed', { errorCode: e instanceof Error ? e.message : String(e) });
+    }
+  }, 60 * 60 * 1000);
+  idempotencySweeper.unref?.();
+  server.addHook('onClose', async () => clearInterval(idempotencySweeper));
 
   /* ---- Errors ----------------------------------------------------- */
 

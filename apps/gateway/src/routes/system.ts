@@ -63,6 +63,28 @@ export async function registerSystemRoutes(server: FastifyInstance, app: App): P
     subscribers: app.events.subscriberCount,
   }));
 
+  /**
+   * Readiness, for a container platform's readiness probe.
+   *
+   * Answers 503 rather than 200 when the instance cannot serve a request, so an
+   * orchestrator holds traffic back instead of routing it into an error. The
+   * body lists every check either way, because a probe that only flips a
+   * boolean makes the operator go digging.
+   */
+  server.get('/api/system/ready', async (_req, reply) => {
+    const result = app.readiness();
+    return reply.code(result.ready ? 200 : 503).send({
+      ...result,
+      uptimeSec: Math.round(process.uptime()),
+    });
+  });
+
+  /** What a fresh install still needs before it is useful. */
+  server.get('/api/onboarding', async () => ({
+    ...app.onboarding(),
+    warnings: app.warnings,
+  }));
+
   /** Every enum the UI renders, with its human copy. */
   server.get('/api/system/vocabulary', async () => ({
     routingModes: ROUTING_MODES.map((mode) => ({

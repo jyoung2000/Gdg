@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { beginSse } from './shared.js';
 import type { App } from '../services/app.js';
 
 /**
@@ -40,12 +41,7 @@ export async function registerEventRoutes(server: FastifyInstance, app: App): Pr
   });
 
   server.get('/api/events', async (req, reply) => {
-    reply.raw.writeHead(200, {
-      'content-type': 'text/event-stream',
-      'cache-control': 'no-cache, no-transform',
-      connection: 'keep-alive',
-      'x-accel-buffering': 'no',
-    });
+    beginSse(reply);
 
     const write = (event: unknown): void => {
       reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);

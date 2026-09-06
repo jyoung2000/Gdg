@@ -224,6 +224,7 @@ export class App {
         events.publish({ type: 'usage', record: row });
       },
       onFallback: (event: FallbackEvent) => events.publish({ type: 'fallback', event }),
+      streamIdleTimeoutMs: config.streamIdleTimeoutMs,
     });
 
     /* ---- Sandbox, agents, media ----------------------------------- */
@@ -290,6 +291,9 @@ export class App {
   /* Lifecycle                                                        */
   /* ---------------------------------------------------------------- */
 
+  /** When the first discovery pass finished; null until it has. */
+  private discoveredAt: number | null = null;
+
   async start(): Promise<void> {
     await mkdir(resolve(this.config.assetRoot), { recursive: true });
     await mkdir(resolve(this.config.workspaceRoot), { recursive: true });
@@ -309,6 +313,7 @@ export class App {
     }
 
     await this.discovery.runOnce();
+    this.discoveredAt = Date.now();
 
     if (this.config.discoveryIntervalMs > 0) {
       this.every(this.config.discoveryIntervalMs, () => this.discovery.runOnce(), 'discovery');
@@ -316,6 +321,123 @@ export class App {
     if (this.config.healthIntervalMs > 0) {
       this.every(this.config.healthIntervalMs, () => this.discovery.checkHealth(), 'health check');
     }
+  }
+
+  /**
+   * Readiness, as distinct from liveness.
+   *
+   * `/api/system/health` answers "is this process alive"; this answers "can it
+   * serve a request right now". They differ in exactly the case that matters to
+   * a container platform: a gateway that has started but has no reachable model
+   * is alive and must not receive traffic. Each check names what is wrong and
+   * what to do about it, because a readiness probe that only says `false` sends
+   * the operator to the logs.
+   */
+  readiness(): { ready: boolean; checks: { name: string; ok: boolean; detail: string }[] } {
+    const checks: { name: string; ok: boolean; detail: string }[] = [];
+
+    let dbOk = false;
+    let dbDetail = '';
+    try {
+      // A real read against the schema, not a ping: an unreadable or unmigrated
+      // database is the failure this check exists to catch.
+      const row = this.store.db.prepare('SELECT COUNT(*) AS n FROM _migrations').get() as { n: number };
+      dbOk = row.n > 0;
+      dbDetail = dbOk ? `${row.n} migrations applied` : 'no migrations recorded';
+    } catch (e) {
+      dbDetail = e instanceof Error ? e.message : String(e);
+    }
+    checks.push({ name: 'database', ok: dbOk, detail: dbDetail });
+
+    checks.push({
+      name: 'discovery',
+      ok: this.discoveredAt !== null,
+      detail:
+        this.discoveredAt === null
+          ? 'the first discovery pass has not finished yet'
+          : `last completed ${Math.round((Date.now() - this.discoveredAt) / 1000)}s ago`,
+    });
+
+    const usable = this.providers.usable().length;
+    const models = this.models.size();
+    checks.push({
+      name: 'models',
+      ok: models > 0,
+      detail:
+        models > 0
+          ? `${models} model(s) across ${usable} usable provider(s)`
+          : 'no models are available — add a provider credential or start a local inference server',
+    });
+
+    return { ready: checks.every((c) => c.ok), checks };
+  }
+
+  /**
+   * What a fresh install still needs, and what it already has.
+   *
+   * Deliberately derived from live state rather than a stored "onboarded" flag:
+   * an instance whose only provider credential is later removed is back to
+   * needing one, and a flag would say otherwise.
+   */
+  onboarding(): {
+    complete: boolean;
+    steps: { id: string; title: string; done: boolean; detail: string; docs: string | null }[];
+  } {
+    const providers = this.providers.list();
+    const credentialed = providers.filter((p) => p.auth === 'none' || this.credentials.hasAny(p.id));
+    const local = providers.filter((p) => p.local && this.models.all().some((m) => m.providerId === p.id));
+    const models = this.models.size();
+    const workspaces = this.store.listWorkspaces().length;
+
+    const steps = [
+      {
+        id: 'inference',
+        title: 'Connect somewhere to run models',
+        done: models > 0,
+        detail:
+          models > 0
+            ? `${models} model(s) available from ${credentialed.length} provider(s)${local.length ? `, including ${local.length} running locally` : ''}`
+            : 'Set a provider API key in the environment, add one under Credentials, or start a local server such as Ollama on port 11434',
+        docs: '/docs/CONFIGURATION.md',
+      },
+      {
+        id: 'privacy',
+        title: 'Choose how much may leave this machine',
+        done: true,
+        detail: `Currently ${this.config.defaultPrivacyMode}. Change it in Settings, or with MERIDIAN_PRIVACY_MODE.`,
+        docs: '/docs/SECURITY.md',
+      },
+      {
+        id: 'spending',
+        title: 'Decide whether Meridian may spend money',
+        done: true,
+        detail: this.config.allowPaid
+          ? 'Paid routing is enabled. Per-task budgets still apply.'
+          : 'Paid routing is off, so only free and local models are eligible. Set MERIDIAN_ALLOW_PAID=true to change that.',
+        docs: '/docs/ROUTING.md',
+      },
+      {
+        id: 'sandbox',
+        title: 'Isolate commands the agents run',
+        done: this.sandbox.kind === 'docker',
+        detail:
+          this.sandbox.kind === 'docker'
+            ? 'Commands run in a Docker container with no network and a read-only root.'
+            : `Commands run with ${this.sandbox.isolationNote}${this.sandboxDegradedReason ? ` — ${this.sandboxDegradedReason}` : ''}`,
+        docs: '/docs/SECURITY.md',
+      },
+      {
+        id: 'workspace',
+        title: 'Open a workspace to work in',
+        done: workspaces > 0,
+        detail: workspaces > 0 ? `${workspaces} workspace(s)` : 'Create one from the Workspaces screen, or clone a repository into it',
+        docs: '/docs/AGENTS.md',
+      },
+    ];
+
+    // Only the steps that genuinely block use decide completeness; the ones that
+    // merely record a choice are always "done" and must not gate the banner.
+    return { complete: steps.every((s) => s.done || s.id === 'sandbox'), steps };
   }
 
   private every(ms: number, fn: () => Promise<unknown>, label: string): void {

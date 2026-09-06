@@ -852,6 +852,69 @@ export class Store implements CredentialStore {
       ip: (r.ip as string) ?? null,
     }));
   }
+
+  /* ---------------------------------------------------------------- */
+  /* Idempotency                                                      */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Claim an idempotency key, or report what is already known about it.
+   *
+   * The insert is the lock: two concurrent retries race on the primary key and
+   * exactly one wins, so the second sees `in_flight` rather than starting a
+   * duplicate. Doing this with a read-then-write would leave the window open.
+   */
+  claimIdempotency(input: {
+    key: string;
+    userId: string;
+    method: string;
+    path: string;
+    bodyHash: string;
+  }): { state: 'claimed' } | { state: 'in_flight' } | { state: 'complete'; status: number; response: string } | { state: 'conflict' } {
+    const now = Date.now();
+    try {
+      this.db
+        .prepare(
+          'INSERT INTO idempotency (key, user_id, method, path, body_hash, state, created_at) VALUES (?,?,?,?,?,?,?)',
+        )
+        .run(input.key, input.userId, input.method, input.path, input.bodyHash, 'in_flight', now);
+      return { state: 'claimed' };
+    } catch {
+      // The key already exists for this caller and route.
+    }
+
+    const row = this.db
+      .prepare('SELECT * FROM idempotency WHERE key = ? AND user_id = ? AND method = ? AND path = ?')
+      .get(input.key, input.userId, input.method, input.path) as Row | undefined;
+    if (!row) return { state: 'claimed' };
+
+    // A key reused with a different payload is a client bug. Replaying the first
+    // response would silently discard the second request.
+    if (String(row.body_hash) !== input.bodyHash) return { state: 'conflict' };
+    if (String(row.state) !== 'complete' || row.response == null) return { state: 'in_flight' };
+    return { state: 'complete', status: Number(row.status ?? 200), response: String(row.response) };
+  }
+
+  completeIdempotency(input: { key: string; userId: string; method: string; path: string }, status: number, response: string): void {
+    this.db
+      .prepare(
+        'UPDATE idempotency SET state = ?, status = ?, response = ?, completed_at = ? WHERE key = ? AND user_id = ? AND method = ? AND path = ?',
+      )
+      .run('complete', status, response, Date.now(), input.key, input.userId, input.method, input.path);
+  }
+
+  /** Drop a claim whose request failed, so a retry is allowed to try again. */
+  releaseIdempotency(input: { key: string; userId: string; method: string; path: string }): void {
+    this.db
+      .prepare('DELETE FROM idempotency WHERE key = ? AND user_id = ? AND method = ? AND path = ? AND state = ?')
+      .run(input.key, input.userId, input.method, input.path, 'in_flight');
+  }
+
+  /** Expire old records. Retention is bounded so the table cannot grow forever. */
+  pruneIdempotency(olderThanMs: number): number {
+    const result = this.db.prepare('DELETE FROM idempotency WHERE created_at < ?').run(Date.now() - olderThanMs);
+    return result.changes;
+  }
 }
 
 /* ------------------------------------------------------------------ */

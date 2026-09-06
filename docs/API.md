@@ -91,7 +91,9 @@ to **any** model you have configured, not only Anthropic's.
 | Route | Purpose |
 | --- | --- |
 | `GET /api/system/info` | Version, port, counts, sandbox posture, warnings |
-| `GET /api/system/health` | Liveness |
+| `GET /api/system/health` | Liveness — is the process alive |
+| `GET /api/system/ready` | Readiness — can it serve a request. `503` with per-check detail when not |
+| `GET /api/onboarding` | What a fresh install still needs, derived from live state |
 | `GET /api/system/vocabulary` | Every enum the UI renders, with its copy |
 | `GET/POST/DELETE /api/system/keys` | Gateway API keys. The plaintext is returned once |
 | `GET /api/system/audit` | Audit log, secrets redacted |
@@ -158,3 +160,26 @@ Both transports carry the identical event union, so there is one contract:
 
 Recent events are replayed on connect, so a client joining mid-task sees the
 steps that already happened rather than a blank timeline.
+
+---
+
+## Idempotency
+
+Send `Idempotency-Key: <your key>` on any `POST`, `PUT` or `PATCH` and the
+response is stored against that key for 24 hours. A repeat of the same request
+replays the stored response byte for byte instead of running it again, so a
+client that retries after a timeout is not charged twice and does not start a
+second agent task.
+
+The key is scoped to the caller, the method and the path, so two callers cannot
+collide and one route's key cannot replay another's.
+
+| `X-Idempotency` | Meaning |
+| --- | --- |
+| `stored` | First time this key was seen; the response was recorded |
+| `replayed` | The stored response was returned; nothing ran |
+| `in-flight` | The original request is still running — `409`, wait rather than retrying |
+| `conflict` | The key was used before with a different body — `422`, use a new key |
+| `not-applied-to-streaming` | Streamed responses are bytes on a socket, not a value that can be replayed, so the key was ignored |
+
+A request that fails with a `5xx` releases its key, so retrying it is allowed.

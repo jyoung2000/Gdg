@@ -27,6 +27,13 @@ export interface AdapterContext {
   requestId: string;
   /** Per-call timeout. Adapters must honour it. */
   timeoutMs: number;
+  /**
+   * How long a stream may go without a byte before it is treated as stalled.
+   *
+   * Separate from `timeoutMs` because a long generation is not a stalled one:
+   * the deadline that matters mid-stream is silence, not total duration.
+   */
+  streamIdleTimeoutMs?: number;
   signal?: AbortSignal;
   /** Extra headers merged last, e.g. provider-specific attribution headers. */
   headers?: Record<string, string>;

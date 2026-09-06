@@ -345,7 +345,7 @@ export class GeminiAdapter implements ProviderAdapter {
     let finish: FinishReason = 'stop';
     let sawToolCall = false;
 
-    for await (const data of sseLines(res, ctx.signal)) {
+    for await (const data of sseLines(res, { signal: ctx.signal, idleTimeoutMs: ctx.streamIdleTimeoutMs, providerId: this.descriptor.id })) {
       let evt: GeminiGenerateResponse;
       try {
         evt = JSON.parse(data) as GeminiGenerateResponse;

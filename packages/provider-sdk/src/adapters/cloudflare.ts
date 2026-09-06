@@ -249,7 +249,7 @@ export class CloudflareWorkersAIAdapter implements ProviderAdapter {
     yield { type: 'start', model: req.model, providerId: this.descriptor.id };
 
     let usage: WorkersTextResult['usage'] | null = null;
-    for await (const data of sseLines(res, ctx.signal)) {
+    for await (const data of sseLines(res, { signal: ctx.signal, idleTimeoutMs: ctx.streamIdleTimeoutMs, providerId: this.descriptor.id })) {
       let evt: Record<string, unknown>;
       try {
         evt = JSON.parse(data) as Record<string, unknown>;

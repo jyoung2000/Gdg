@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { MeridianError, type ChatMessage, type ContentPart, type ToolDefinition } from '@meridian/shared';
+import { beginSse } from './shared.js';
 import type { App } from '../services/app.js';
 import { buildAIRequest, routingMeta } from './openai.js';
 
@@ -104,13 +105,7 @@ async function streamMessages(
   completion: Parameters<App['executor']['chatStream']>[1],
   requestId: string,
 ): Promise<void> {
-  reply.raw.writeHead(200, {
-    'content-type': 'text/event-stream',
-    'cache-control': 'no-cache, no-transform',
-    connection: 'keep-alive',
-    'x-accel-buffering': 'no',
-    'x-request-id': requestId,
-  });
+  beginSse(reply, { 'x-request-id': requestId });
 
   // The Anthropic stream is a typed event sequence, not bare deltas: clients
   // read `event:` as well as `data:`, so both must be emitted.

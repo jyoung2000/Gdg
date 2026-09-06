@@ -46,6 +46,8 @@ export interface ExecutorDeps {
   now?: () => number;
   /** Injected for deterministic tests. */
   random?: () => number;
+  /** How long a provider stream may go silent before it is abandoned. */
+  streamIdleTimeoutMs?: number;
 }
 
 export interface ExecuteOptions {
@@ -204,7 +206,11 @@ export class Executor {
         this.recordUsage(req, target, opts, requestId, usage, this.now() - started, ttftMs, false, err.code, fallbacks.length);
 
         if (emitted || !err.failover || i === targets.length - 1 || attempt >= budget) {
-          yield { type: 'error', error: err.message, code: err.code };
+          // Report the whole chain, not just the last link. A stalled stream
+          // that fell through to a rate-limited alternate would otherwise be
+          // reported as a rate limit, sending the operator after the wrong
+          // problem entirely.
+          yield { type: 'error', error: describeChain(err, fallbacks, attempt), code: err.code };
           return;
         }
         const next = targets[i + 1];
@@ -217,7 +223,11 @@ export class Executor {
         release();
       }
     }
-    yield { type: 'error', error: 'Every provider in the fallback chain failed', code: 'provider_unavailable' };
+    yield {
+      type: 'error',
+      error: `Every provider in the fallback chain failed${describeAttempts(fallbacks, attempt)}`,
+      code: 'provider_unavailable',
+    };
   }
 
   /* ---------------------------------------------------------------- */
@@ -352,6 +362,7 @@ export class Executor {
       logger: log,
       requestId,
       timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      streamIdleTimeoutMs: this.deps.streamIdleTimeoutMs,
       signal: opts.signal,
     };
     return { adapter, ctx };
@@ -443,4 +454,17 @@ export function fallbackMessage(code: string, fromProvider: string, toModel: str
     default:
       return `${fromProvider} could not complete the request.${dest}`;
   }
+}
+
+/** "…(after 3 attempts across 3 targets: local-a timeout → local-b rate_limited)" */
+function describeChain(err: MeridianError, fallbacks: FallbackEvent[], attempt: number): string {
+  return `${err.message}${describeAttempts(fallbacks, attempt)}`;
+}
+
+function describeAttempts(fallbacks: FallbackEvent[], attempt: number): string {
+  const targets = fallbacks.length + 1;
+  const trail = fallbacks.length
+    ? `: ${fallbacks.map((f) => `${f.fromProvider} ${f.code}`).join(' → ')} → final attempt`
+    : '';
+  return ` (after ${attempt} attempt${attempt === 1 ? '' : 's'} across ${targets} target${targets === 1 ? '' : 's'}${trail})`;
 }

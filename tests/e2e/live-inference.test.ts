@@ -56,6 +56,9 @@ describe('E2E: gateway against a real local inference server', () => {
       MERIDIAN_DISCOVERY_INTERVAL_MS: '0',
       MERIDIAN_SANDBOX: 'process',
       MERIDIAN_LOCAL_ENDPOINTS: `${sim.root},${failing.root}`,
+      // Short enough that a stalled stream is observable in a test, long enough
+      // that a healthy local server never trips it.
+      MERIDIAN_STREAM_IDLE_TIMEOUT_MS: '1500',
       PORT: '0',
     } as NodeJS.ProcessEnv);
 
@@ -122,6 +125,11 @@ describe('E2E: gateway against a real local inference server', () => {
       body: JSON.stringify({ model: 'auto', stream: true, messages: [{ role: 'user', content: 'one two three four' }] }),
     });
     assert.match(res.headers.get('content-type') ?? '', /text\/event-stream/);
+    // A streamed response writes to the raw socket, which bypasses Fastify's
+    // header handling. It must still carry what a buffered response carries.
+    assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+    assert.ok(res.headers.get('content-security-policy'), 'the CSP must survive the switch to raw streaming');
+    assert.ok(res.headers.get('x-request-id'), 'a streamed response must still be traceable');
     const text = await res.text();
     const deltas = [...text.matchAll(/"content":"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
     assert.ok(deltas.length >= 3, `expected the stream to arrive in pieces, saw ${deltas.length}`);
@@ -287,6 +295,91 @@ describe('E2E: gateway against a real local inference server', () => {
     } finally {
       await api('/api/preferences', { method: 'PUT', body: JSON.stringify({ preferredProviders: [] }) });
     }
+  });
+
+  it('abandons a stream that goes silent instead of hanging on it', async () => {
+    const started = Date.now();
+    const res = await api('/v1/chat/completions', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'auto', stream: true, messages: [{ role: 'user', content: '[[sim: stall]]' }] }),
+    });
+    // The provider opened a stream and then sent nothing. The gateway must give
+    // up on its own; the client is not the thing that ends this.
+    const text = await res.text();
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 30_000, `the gateway should have abandoned the stall quickly, took ${elapsed}ms`);
+    assert.ok(elapsed >= 1_000, `it must not give up before the configured idle window, took ${elapsed}ms`);
+    assert.match(text, /stall|timeout|timed out/i, `the failure must say the stream stalled, got: ${text.slice(0, 300)}`);
+  });
+
+  /* ---------------- Readiness and onboarding ---------------- */
+
+  it('reports readiness separately from liveness', async () => {
+    const live = await api('/api/system/health');
+    assert.equal(live.status, 200);
+
+    const res = await api('/api/system/ready');
+    const body = (await res.json()) as { ready: boolean; checks: { name: string; ok: boolean; detail: string }[] };
+    assert.equal(res.status, 200, `a gateway with models available must be ready: ${JSON.stringify(body.checks)}`);
+    assert.equal(body.ready, true);
+    const names = body.checks.map((c) => c.name);
+    for (const expected of ['database', 'discovery', 'models']) {
+      assert.ok(names.includes(expected), `readiness should check ${expected}, saw ${names.join(', ')}`);
+    }
+    assert.ok(
+      body.checks.every((c) => c.detail.length > 0),
+      'every check must say what it found, not just pass or fail',
+    );
+  });
+
+  it('describes what a fresh install still needs', async () => {
+    const body = await json<{ complete: boolean; steps: { id: string; done: boolean; detail: string }[] }>('/api/onboarding');
+    const inference = body.steps.find((s) => s.id === 'inference');
+    assert.ok(inference, 'onboarding must cover connecting somewhere to run models');
+    assert.equal(inference.done, true, 'an instance with a discovered local server has inference covered');
+    assert.match(inference.detail, /model/i);
+    const sandbox = body.steps.find((s) => s.id === 'sandbox');
+    assert.ok(sandbox);
+    // This instance runs with MERIDIAN_SANDBOX=process, which is not isolation.
+    assert.equal(sandbox.done, false, 'the process sandbox must not be reported as isolated');
+  });
+
+  /* ---------------- Idempotency ---------------- */
+
+  it('replays a repeated request instead of running it twice', async () => {
+    const payload = JSON.stringify({ model: 'auto', messages: [{ role: 'user', content: 'charge me once' }] });
+    const key = 'e2e-idempotency-1';
+
+    const first = await api('/v1/chat/completions', { method: 'POST', headers: { 'idempotency-key': key }, body: payload });
+    assert.equal(first.status, 200);
+    assert.equal(first.headers.get('x-idempotency'), 'stored');
+    const firstBody = (await first.json()) as { id: string; meridian: { request_id: string } };
+
+    const second = await api('/v1/chat/completions', { method: 'POST', headers: { 'idempotency-key': key }, body: payload });
+    assert.equal(second.headers.get('x-idempotency'), 'replayed');
+    const secondBody = (await second.json()) as { id: string; meridian: { request_id: string } };
+    // Same response, byte for byte — including the request id, which proves the
+    // second call was replayed rather than re-run.
+    assert.deepEqual(secondBody, firstBody);
+
+    // A key reused for a different body is a client bug, not a cache hit.
+    const conflict = await api('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'idempotency-key': key },
+      body: JSON.stringify({ model: 'auto', messages: [{ role: 'user', content: 'something else entirely' }] }),
+    });
+    assert.equal(conflict.status, 422);
+    assert.equal(conflict.headers.get('x-idempotency'), 'conflict');
+
+    // A streamed response cannot be stored and handed back, and the header says
+    // so rather than pretending the key was honoured.
+    const streamed = await api('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'idempotency-key': 'e2e-idempotency-stream' },
+      body: JSON.stringify({ model: 'auto', stream: true, messages: [{ role: 'user', content: 'stream' }] }),
+    });
+    assert.equal(streamed.headers.get('x-idempotency'), 'not-applied-to-streaming');
+    await streamed.text();
   });
 
   /* ---------------- Cancellation ---------------- */

@@ -9,6 +9,7 @@ import {
   type RoutingMode,
   type ToolDefinition,
 } from '@meridian/shared';
+import { beginSse } from './shared.js';
 import type { App } from '../services/app.js';
 
 interface OAIMessage {
@@ -293,14 +294,7 @@ async function streamChat(
   requestId: string,
   requestedModel: string,
 ): Promise<void> {
-  reply.raw.writeHead(200, {
-    'content-type': 'text/event-stream',
-    'cache-control': 'no-cache, no-transform',
-    connection: 'keep-alive',
-    // Nginx buffers SSE by default, which turns a live stream into one late blob.
-    'x-accel-buffering': 'no',
-    'x-request-id': requestId,
-  });
+  beginSse(reply, { 'x-request-id': requestId });
 
   const id = `chatcmpl-${requestId}`;
   const created = Math.floor(Date.now() / 1000);

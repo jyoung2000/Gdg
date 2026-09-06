@@ -29,6 +29,8 @@ export interface MeridianConfig {
   maxConcurrentTasks: number;
   /** Requests per minute per API key. */
   rateLimitPerMinute: number;
+  /** How long a provider stream may go silent before it is abandoned. */
+  streamIdleTimeoutMs: number;
   /** Sandbox strategy for tool execution. */
   sandbox: 'docker' | 'process' | 'disabled';
   sandboxImage: string;
@@ -86,6 +88,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): MeridianConfig
     allowPaid: bool(env.MERIDIAN_ALLOW_PAID, false),
     maxConcurrentTasks: num(env.MERIDIAN_MAX_TASKS, 4),
     rateLimitPerMinute: num(env.MERIDIAN_RATE_LIMIT, 240),
+    streamIdleTimeoutMs: num(env.MERIDIAN_STREAM_IDLE_TIMEOUT_MS, 90_000),
     sandbox: (env.MERIDIAN_SANDBOX as MeridianConfig['sandbox']) ?? 'process',
     sandboxImage: env.MERIDIAN_SANDBOX_IMAGE ?? 'meridian-sandbox:latest',
     sandboxTimeoutMs: num(env.MERIDIAN_SANDBOX_TIMEOUT_MS, 120_000),

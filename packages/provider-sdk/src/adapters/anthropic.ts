@@ -216,7 +216,7 @@ export class AnthropicAdapter implements ProviderAdapter {
     let outputTokens = 0;
     let finish: FinishReason = 'stop';
 
-    for await (const data of sseLines(res, ctx.signal)) {
+    for await (const data of sseLines(res, { signal: ctx.signal, idleTimeoutMs: ctx.streamIdleTimeoutMs, providerId: this.descriptor.id })) {
       let evt: Record<string, unknown>;
       try {
         evt = JSON.parse(data) as Record<string, unknown>;
