@@ -1,3 +1,5 @@
+import { BlockedAddressError, guardedFetchText } from './fetch.js';
+import { isPrivateHost } from './net.js';
 import {
   MeridianError,
   newId,
@@ -371,38 +373,35 @@ export function createWebFetchTool(opts: { enabled: boolean; timeoutMs?: number;
         return fail('Web access is disabled on this instance. An operator can enable it in Settings → Security.');
       }
       const raw = str(args, 'url');
-      let url: URL;
       try {
-        url = new URL(raw);
+        new URL(raw);
       } catch {
         return fail(`"${raw}" is not a valid URL`);
-      }
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-        return fail('Only http and https URLs can be fetched');
-      }
-      // Refuse loopback and link-local targets: a fetch tool that can reach
-      // 169.254.169.254 or localhost is a cloud-metadata and internal-service
-      // exfiltration path, not a research tool.
-      if (isPrivateHost(url.hostname)) {
-        return fail('Refusing to fetch a loopback, link-local or private-network address');
       }
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 20_000);
       try {
-        const res = await fetch(url, {
-          redirect: 'follow',
+        const res = await guardedFetchText(raw, {
+          timeoutMs: opts.timeoutMs ?? 20_000,
+          maxBytes: opts.maxBytes ?? 400_000,
+          // Enough for the usual canonical-URL and www redirects, few enough
+          // that a redirect loop ends quickly. Every hop is re-checked.
+          maxRedirects: 5,
           signal: ctx.signal ? anySignal([ctx.signal, controller.signal]) : controller.signal,
-          headers: { accept: 'text/html,text/plain,application/json;q=0.9,*/*;q=0.8' },
         });
-        if (!res.ok) return fail(`HTTP ${res.status} from ${url.host}`);
-        const type = res.headers.get('content-type') ?? '';
-        const body = (await res.text()).slice(0, opts.maxBytes ?? 400_000);
-        if (type.includes('json')) return ok(clip(body));
-        const text = type.includes('html') ? htmlToText(body) : body;
+        if (res.status < 200 || res.status >= 300) return fail(`HTTP ${res.status} from ${new URL(res.finalUrl).host}`);
+
+        const type = res.contentType;
+        if (type.includes('json')) return ok(clip(res.body));
+        const text = type.includes('html') ? htmlToText(res.body) : res.body;
         return ok(clip(text.trim() || '(the page returned no readable text; it may require JavaScript)'));
       } catch (e) {
-        return fail(`Fetch failed: ${e instanceof Error ? e.message : String(e)}`);
+        if (e instanceof BlockedAddressError) return fail(e.message);
+        // A guarded DNS refusal surfaces as a connect error, so the reason has to
+        // come through rather than being flattened into "fetch failed".
+        const message = e instanceof Error ? e.message : String(e);
+        return fail(`Fetch failed: ${message}`);
       } finally {
         clearTimeout(timer);
       }
@@ -423,20 +422,6 @@ function anySignal(signals: AbortSignal[]): AbortSignal {
 }
 
 /** Hostnames that must never be fetched on a model's instruction. */
-export function isPrivateHost(hostname: string): boolean {
-  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.internal') || h.endsWith('.local')) return true;
-  if (h === '::1' || h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return true;
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
-  if (!v4) return false;
-  const [a, b] = [Number(v4[1]), Number(v4[2])];
-  if (a === 10 || a === 127 || a === 0) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
-  return false;
-}
 
 /** Strip markup down to readable prose. Good enough for server-rendered pages. */
 export function htmlToText(html: string): string {

@@ -29,6 +29,12 @@ export interface MeridianConfig {
   maxConcurrentTasks: number;
   /** Requests per minute per API key. */
   rateLimitPerMinute: number;
+  /**
+   * Largest body accepted on the routes that legitimately carry media — an
+   * image in a vision request, audio to transcribe. Every other route is held
+   * to a much smaller limit, because nothing else has a reason to be large.
+   */
+  maxBodyBytes: number;
   /** How long a provider stream may go silent before it is abandoned. */
   streamIdleTimeoutMs: number;
   /** Sandbox strategy for tool execution. */
@@ -93,6 +99,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): MeridianConfig
     allowPaid: bool(env.MERIDIAN_ALLOW_PAID, false),
     maxConcurrentTasks: num(env.MERIDIAN_MAX_TASKS, 4),
     rateLimitPerMinute: num(env.MERIDIAN_RATE_LIMIT, 240),
+    maxBodyBytes: num(env.MERIDIAN_MAX_BODY_MB, 32) * 1024 * 1024,
     streamIdleTimeoutMs: num(env.MERIDIAN_STREAM_IDLE_TIMEOUT_MS, 90_000),
     sandbox: (env.MERIDIAN_SANDBOX as MeridianConfig['sandbox']) ?? 'process',
     sandboxImage: env.MERIDIAN_SANDBOX_IMAGE ?? 'meridian-sandbox:latest',

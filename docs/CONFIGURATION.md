@@ -31,6 +31,7 @@ one through so `.env` is the single place to change them.
 | `MERIDIAN_ADMIN_EMAIL` | `operator@localhost` | Bootstrap operator, created only when no users exist |
 | `MERIDIAN_ADMIN_PASSWORD` | *(none)* | Password for that account |
 | `MERIDIAN_RATE_LIMIT` | `240` | Requests per minute per credential or IP, on the gateway APIs |
+| `MERIDIAN_MAX_BODY_MB` | `32` | Largest body on the routes that carry media. Every other route is held to 2 MB |
 | `MERIDIAN_STREAM_IDLE_TIMEOUT_MS` | `90000` | How long a provider stream may go silent before it is abandoned. Distinct from the request timeout: a long generation is not a stalled one |
 | `MERIDIAN_CORS_ORIGINS` | *(none)* | Comma-separated origins. Unset means same-origin only |
 | `MERIDIAN_TRUST_PROXY` | `false` | Trust `X-Forwarded-*`. Enable only behind a proxy you control |

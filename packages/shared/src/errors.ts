@@ -1,3 +1,5 @@
+import { redactString } from './redact.js';
+
 /**
  * The error taxonomy the fallback engine switches on.
  *
@@ -92,9 +94,22 @@ export class MeridianError extends Error {
   }
 
   /** Safe JSON body for an API response — never leaks a cause chain. */
+  /**
+   * The wire form of this error.
+   *
+   * Redacted on the way out because error messages quote what the caller sent —
+   * a model name, a URL, a header — and a caller who pastes a key into the wrong
+   * field would otherwise have it echoed back into their console, their logs and
+   * anything that aggregates them.
+   */
   toResponse(): { error: { code: ErrorCode; message: string; provider: string | null; model: string | null } } {
     return {
-      error: { code: this.code, message: this.message, provider: this.providerId, model: this.modelId },
+      error: {
+        code: this.code,
+        message: redactString(this.message),
+        provider: this.providerId,
+        model: this.modelId === null ? null : redactString(this.modelId),
+      },
     };
   }
 }

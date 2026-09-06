@@ -1,4 +1,6 @@
 export * from './sandbox.js';
+export * from './net.js';
+export * from './fetch.js';
 export * from './workspace.js';
 export * from './tools.js';
 export * from './agents.js';

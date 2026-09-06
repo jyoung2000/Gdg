@@ -76,7 +76,11 @@ export async function createServer(app: App): Promise<FastifyInstance> {
   const server = Fastify({
     logger: false, // Meridian has its own structured, redacting logger.
     trustProxy: app.config.trustProxy,
-    bodyLimit: 32 * 1024 * 1024, // Image and audio uploads travel as JSON.
+    // The default for every route. Only the handful that carry media — a vision
+    // request's image, audio to transcribe — raise it, individually, to
+    // MERIDIAN_MAX_BODY_MB. A single large global limit would let any admin or
+    // workspace route be used to push tens of megabytes into memory.
+    bodyLimit: 2 * 1024 * 1024,
   });
 
   /* ---- Cross-cutting -------------------------------------------- */

@@ -48,7 +48,7 @@ export async function registerMediaRoutes(server: FastifyInstance, app: App): Pr
     cancelled: app.media.cancel(req.params.id),
   }));
 
-  server.post<{ Body: GenerateBody }>('/api/generations/image', async (req) => {
+  server.post<{ Body: GenerateBody }>('/api/generations/image', { bodyLimit: app.config.maxBodyBytes }, async (req) => {
     const body = req.body ?? {};
     if (!body.prompt) throw new MeridianError('invalid_request', '"prompt" is required');
     const prefs = app.preferencesFor(req.auth.userId);
@@ -81,7 +81,7 @@ export async function registerMediaRoutes(server: FastifyInstance, app: App): Pr
     return { job };
   });
 
-  server.post<{ Body: GenerateBody & { durationSec?: number; fps?: number; motion?: number } }>('/api/generations/video', async (req) => {
+  server.post<{ Body: GenerateBody & { durationSec?: number; fps?: number; motion?: number } }>('/api/generations/video', { bodyLimit: app.config.maxBodyBytes }, async (req) => {
     const body = req.body ?? {};
     if (!body.prompt) throw new MeridianError('invalid_request', '"prompt" is required');
     const prefs = app.preferencesFor(req.auth.userId);
@@ -113,7 +113,7 @@ export async function registerMediaRoutes(server: FastifyInstance, app: App): Pr
   });
 
   server.post<{ Body: { text?: string; voice?: string; format?: 'mp3' | 'wav' | 'opus' | 'flac'; speed?: number; model?: string; allowPaid?: boolean } }>(
-    '/api/generations/speech',
+    '/api/generations/speech', { bodyLimit: app.config.maxBodyBytes },
     async (req) => {
       const body = req.body ?? {};
       if (!body.text) throw new MeridianError('invalid_request', '"text" is required');
@@ -132,7 +132,7 @@ export async function registerMediaRoutes(server: FastifyInstance, app: App): Pr
   );
 
   server.post<{ Body: { audio?: string; mimeType?: string; language?: string; model?: string; allowPaid?: boolean } }>(
-    '/api/generations/transcribe',
+    '/api/generations/transcribe', { bodyLimit: app.config.maxBodyBytes },
     async (req) => {
       const body = req.body ?? {};
       if (!body.audio) throw new MeridianError('invalid_request', '"audio" must be base64-encoded audio or a data: URL');

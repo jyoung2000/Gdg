@@ -97,7 +97,7 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
 
   /* ---- Chat completions ------------------------------------------ */
 
-  server.post<{ Body: OAIChatBody }>('/v1/chat/completions', async (req, reply) => {
+  server.post<{ Body: OAIChatBody }>('/v1/chat/completions', { bodyLimit: app.config.maxBodyBytes }, async (req, reply) => {
     const body = req.body ?? {};
     const messages = toChatMessages(body.messages ?? []);
     if (!messages.length) throw new MeridianError('invalid_request', '"messages" must contain at least one message');
@@ -155,7 +155,7 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
 
   /* ---- Responses API --------------------------------------------- */
 
-  server.post<{ Body: OAIChatBody & { input?: string | OAIMessage[]; instructions?: string; max_output_tokens?: number } }>('/v1/responses', async (req) => {
+  server.post<{ Body: OAIChatBody & { input?: string | OAIMessage[]; instructions?: string; max_output_tokens?: number } }>('/v1/responses', { bodyLimit: app.config.maxBodyBytes }, async (req) => {
     const body = req.body ?? {};
     const messages: ChatMessage[] = [];
     if (body.instructions) messages.push({ role: 'system', content: body.instructions });
@@ -194,7 +194,7 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
 
   /* ---- Embeddings ------------------------------------------------- */
 
-  server.post<{ Body: { model?: string; input?: string | string[]; meridian?: OAIChatBody['meridian'] } }>('/v1/embeddings', async (req) => {
+  server.post<{ Body: { model?: string; input?: string | string[]; meridian?: OAIChatBody['meridian'] } }>('/v1/embeddings', { bodyLimit: app.config.maxBodyBytes }, async (req) => {
     const body = req.body ?? {};
     const input = typeof body.input === 'string' ? [body.input] : (body.input ?? []);
     if (!input.length) throw new MeridianError('invalid_request', '"input" is required');
@@ -217,7 +217,7 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
 
   server.post<{
     Body: { model?: string; prompt?: string; n?: number; size?: string; negative_prompt?: string; seed?: number; meridian?: OAIChatBody['meridian'] };
-  }>('/v1/images/generations', async (req) => {
+  }>('/v1/images/generations', { bodyLimit: app.config.maxBodyBytes }, async (req) => {
     const body = req.body ?? {};
     if (!body.prompt) throw new MeridianError('invalid_request', '"prompt" is required');
     const [width, height] = parseSize(body.size);
@@ -237,7 +237,7 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
   /* ---- Audio ------------------------------------------------------ */
 
   server.post<{ Body: { model?: string; input?: string; voice?: string; response_format?: string; speed?: number; meridian?: OAIChatBody['meridian'] } }>(
-    '/v1/audio/speech',
+    '/v1/audio/speech', { bodyLimit: app.config.maxBodyBytes },
     async (req, reply) => {
       const body = req.body ?? {};
       if (!body.input) throw new MeridianError('invalid_request', '"input" is required');
@@ -263,7 +263,7 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
   );
 
   server.post<{ Body: { model?: string; file?: string; mime_type?: string; language?: string; prompt?: string; meridian?: OAIChatBody['meridian'] } }>(
-    '/v1/audio/transcriptions',
+    '/v1/audio/transcriptions', { bodyLimit: app.config.maxBodyBytes },
     async (req) => {
       const body = req.body ?? {};
       // Multipart would need another plugin and a temp-file policy; a base64

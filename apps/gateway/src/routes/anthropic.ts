@@ -39,7 +39,7 @@ interface AnthropicBody {
  * alongside the OpenAI one.
  */
 export async function registerAnthropicRoutes(server: FastifyInstance, app: App): Promise<void> {
-  server.post<{ Body: AnthropicBody }>('/anthropic/v1/messages', async (req, reply) => {
+  server.post<{ Body: AnthropicBody }>('/anthropic/v1/messages', { bodyLimit: app.config.maxBodyBytes }, async (req, reply) => {
     const body = req.body ?? {};
     const messages = toMessages(body);
     if (!messages.length) throw new MeridianError('invalid_request', '"messages" must contain at least one message');
@@ -77,7 +77,7 @@ export async function registerAnthropicRoutes(server: FastifyInstance, app: App)
   });
 
   /** Token counting, so a client can budget before it sends. */
-  server.post<{ Body: AnthropicBody }>('/anthropic/v1/messages/count_tokens', async (req) => {
+  server.post<{ Body: AnthropicBody }>('/anthropic/v1/messages/count_tokens', { bodyLimit: app.config.maxBodyBytes }, async (req) => {
     const messages = toMessages(req.body ?? {});
     const text = messages.map((m) => (typeof m.content === 'string' ? m.content : partsText(m.content))).join('\n');
     const { estimateTokens } = await import('@meridian/shared');

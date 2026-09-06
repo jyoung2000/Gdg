@@ -182,3 +182,60 @@ workspace, reaching the network, reading the gateway's environment, outliving
 its timeout, and forking without limit. It skips — with the reason printed —
 when Docker or the sandbox image is absent, because a silently skipped security
 test reads exactly like a passing one.
+
+---
+
+## Outbound fetches from an agent
+
+`web_fetch` is off unless `MERIDIAN_SANDBOX_NETWORK=true`. When it is on, the
+guard is not a check on the URL the model supplied — that check leaves the two
+holes that are the standard ways to reach a metadata service:
+
+- **Redirects.** A public URL that answers `302 http://169.254.169.254/...` is
+  followed by an ordinary `fetch`, so the check only ever saw the harmless first
+  hop. Redirects are followed one at a time and every hop is re-checked, up to
+  five.
+- **Names that resolve into private space.** `db.example.com` pointing at
+  `10.0.0.5` is not a literal private address, so a textual check passes it. The
+  guard therefore also runs inside the DNS lookup, on the address the socket is
+  about to connect to, and refuses if *any* address a name resolves to is
+  private. That also closes most of the rebinding window: there is no second
+  resolution between check and connect, because this is the resolution.
+
+Blocked: loopback, link-local (including `169.254.0.0/16`), RFC1918,
+carrier-grade NAT (`100.64.0.0/10`), IPv6 loopback and unique-local, IPv4-mapped
+IPv6 forms of all of the above, and the `.local`, `.internal` and `.localhost`
+suffixes. Response bodies are capped and the socket destroyed at the cap.
+
+Residual risk, stated plainly: a name whose DNS record changes between the
+lookup and a *later* request is not covered, and neither is an internal service
+reachable at a public address. `web_fetch` remains off by default for that
+reason.
+
+## Request size
+
+Every route is held to 2 MB. Only the routes that legitimately carry media — a
+vision request's image, audio to transcribe, a generated asset — are raised, and
+only to `MERIDIAN_MAX_BODY_MB` (32 MB by default). A single large global limit
+would let any admin or workspace route be used to push tens of megabytes into
+memory.
+
+## Errors
+
+Error responses are redacted on the way out. Messages quote what the caller
+sent — a model name, a URL, a header — and a caller who pastes a key into the
+wrong field would otherwise have it echoed straight back into their console,
+their logs, and anything that aggregates them.
+
+## Content Security Policy
+
+`script-src` allows `'self'` plus the computed SHA-256 of the one inline
+bootstrap script, and never `'unsafe-inline'` or `'unsafe-eval'`. `object-src`
+and `base-uri` are `'none'`. Streamed responses carry the same headers as
+buffered ones.
+
+`style-src` does allow `'unsafe-inline'`. React sets component styles as inline
+`style` attributes, which CSP treats as inline styles; the alternative is a
+nonce threaded through every render for a directive that cannot execute script.
+It is a real if narrow weakening, and it is listed here rather than left for a
+reader to notice in the header.
