@@ -24,7 +24,8 @@
     "verify:release": "node scripts/verify-release.mjs --out docs/evidence/RELEASE.md",
     "test:contract": "node scripts/test.mjs contract",
     "test:live": "node scripts/test-live.mjs",
-    "sandbox:image": "node scripts/build-sandbox-image.mjs"
+    "sandbox:image": "node scripts/build-sandbox-image.mjs",
+    "scorecard": "node scripts/scorecard.mjs"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

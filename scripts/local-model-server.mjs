@@ -76,6 +76,9 @@ const MODELS = [
   { id: 'meridian-sim-chat', context: 32768, caps: ['chat', 'tools'] },
   { id: 'meridian-sim-coder', context: 32768, caps: ['chat', 'tools'] },
   { id: 'meridian-sim-embed', context: 8192, caps: ['embedding'] },
+  // Named so model enrichment recognises it as vision-capable, the same way it
+  // recognises a real multimodal model from its id.
+  { id: 'meridian-sim-vision', context: 32768, caps: ['chat', 'tools', 'vision'] },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -92,6 +95,39 @@ function textOf(message) {
   if (typeof c === 'string') return c;
   if (Array.isArray(c)) return c.map((p) => (typeof p === 'string' ? p : (p?.text ?? ''))).join(' ');
   return '';
+}
+
+/**
+ * Describe the non-text parts a message carries.
+ *
+ * Reported back verbatim so a caller can prove its own request mapping: an
+ * image that arrives as the wrong media type, truncated, or not at all is
+ * invisible to a server that only ever answers with prose.
+ */
+function attachmentsOf(messages) {
+  const seen = [];
+  for (const message of messages) {
+    const parts = Array.isArray(message?.content) ? message.content : [];
+    for (const part of parts) {
+      if (!part || typeof part !== 'object') continue;
+      if (part.type === 'image_url' && typeof part.image_url?.url === 'string') {
+        const url = part.image_url.url;
+        const data = /^data:([^;,]+);base64,(.*)$/.exec(url);
+        seen.push(
+          data
+            ? { kind: 'image', mediaType: data[1], bytes: Math.floor((data[2].length * 3) / 4) }
+            : { kind: 'image', mediaType: 'url', bytes: url.length },
+        );
+      } else if (part.type === 'input_audio' && typeof part.input_audio?.data === 'string') {
+        seen.push({
+          kind: 'audio',
+          mediaType: part.input_audio.format ?? 'unknown',
+          bytes: Math.floor((part.input_audio.data.length * 3) / 4),
+        });
+      }
+    }
+  }
+  return seen;
 }
 
 function promptTokens(messages) {
@@ -313,6 +349,14 @@ function planTurn(body) {
 
   const lastUser = [...messages].reverse().find((m) => m.role === 'user');
   const instruction = textOf(lastUser);
+
+  // A request carrying an image is answered by describing what arrived, which
+  // is the only answer that can prove the mapping was faithful.
+  const attachments = attachmentsOf(messages);
+  if (attachments.length) {
+    const described = attachments.map((a) => `${a.kind} ${a.mediaType} ${a.bytes}B`).join('; ');
+    return { kind: 'text', text: `meridian-sim received ${attachments.length} attachment(s): ${described}` };
+  }
   const lastTool = [...messages].reverse().find((m) => m.role === 'tool');
 
   const filesWritten = [];

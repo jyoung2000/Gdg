@@ -27,6 +27,7 @@ describe('E2E: gateway against a real local inference server', () => {
   let server: FastifyInstance;
   let sim: SimServer;
   let failing: SimServer;
+  let stalling: SimServer;
   let dataDir: string;
   let base: string;
   let config: ReturnType<typeof loadConfig>;
@@ -62,6 +63,10 @@ describe('E2E: gateway against a real local inference server', () => {
     // A second server that is up, reachable and refuses every completion. This
     // is the shape a fallback chain has to survive.
     failing = await startSimServer(['--fail-with', 'rate_limited']);
+    // A third instance exists purely so the stall test can be pinned to it.
+    // Stalling the healthy server would trip its circuit breaker and every later
+    // test would then be measuring the breaker rather than what it asked about.
+    stalling = await startSimServer();
 
     config = loadConfig({
       MERIDIAN_DATA_DIR: dataDir,
@@ -73,7 +78,7 @@ describe('E2E: gateway against a real local inference server', () => {
       MERIDIAN_HEALTH_INTERVAL_MS: '0',
       MERIDIAN_DISCOVERY_INTERVAL_MS: '0',
       MERIDIAN_SANDBOX: 'process',
-      MERIDIAN_LOCAL_ENDPOINTS: `${sim.root},${failing.root}`,
+      MERIDIAN_LOCAL_ENDPOINTS: `${sim.root},${failing.root},${stalling.root}`,
       // Short enough that a stalled stream is observable in a test, long enough
       // that a healthy local server never trips it.
       MERIDIAN_STREAM_IDLE_TIMEOUT_MS: '1500',
@@ -94,6 +99,7 @@ describe('E2E: gateway against a real local inference server', () => {
     await app?.stop();
     await sim?.close();
     await failing?.close();
+    await stalling?.close();
     rmSync(dataDir, { recursive: true, force: true });
   });
 
@@ -105,10 +111,10 @@ describe('E2E: gateway against a real local inference server', () => {
 
   /* ---------------- Discovery ---------------- */
 
-  it('discovers both inference servers and registers their models', () => {
+  it('discovers every local inference server and registers its models', () => {
     const models = app.models.all();
     const mine = models.filter((m) => m.providerModelId.startsWith('meridian-sim'));
-    assert.ok(mine.length >= 3, `expected the sim models to be registered, saw ${mine.length}`);
+    assert.ok(mine.length >= 4, `expected the sim models to be registered, saw ${mine.length}`);
 
     const chat = mine.find((m) => m.providerModelId === 'meridian-sim-chat');
     assert.ok(chat);
@@ -287,6 +293,60 @@ describe('E2E: gateway against a real local inference server', () => {
     assert.match(failure.error.message, /openai/i, 'the explanation must name what could not be satisfied');
   });
 
+  it('carries an image through both surfaces without altering it', async () => {
+    // A 1x1 PNG. Small, but the mapping either preserves the media type and the
+    // bytes or it does not, and the server reports exactly what arrived.
+    const png =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const expectedBytes = Math.floor((png.length * 3) / 4);
+
+    const openai = await json<{ choices: { message: { content: string } }[]; meridian: { model: string } }>(
+      '/v1/chat/completions',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          model: 'auto',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: 'What is in this image?' },
+                { type: 'image_url', image_url: { url: `data:image/png;base64,${png}` } },
+              ],
+            },
+          ],
+          meridian: { task_type: 'vision' },
+        }),
+      },
+    );
+    assert.match(openai.choices[0].message.content, /1 attachment/, 'the provider must have received the image');
+    assert.match(openai.choices[0].message.content, /image image\/png/, 'the media type must survive the mapping');
+    assert.match(openai.choices[0].message.content, new RegExp(`${expectedBytes}B`), 'the image must arrive whole');
+
+    // The Anthropic surface expresses images differently; the same bytes must
+    // reach the provider through it.
+    const anthropic = await json<{ content: { type: string; text?: string }[] }>('/anthropic/v1/messages', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'auto',
+        max_tokens: 128,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'What is in this image?' },
+              { type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } },
+            ],
+          },
+        ],
+      }),
+    });
+    const text = anthropic.content.find((c) => c.type === 'text')?.text ?? '';
+    assert.match(text, /1 attachment/, 'the Anthropic surface must pass the image through too');
+    assert.match(text, /image image\/png/);
+    assert.match(text, new RegExp(`${expectedBytes}B`));
+  });
+
   /* ---------------- Fallback ---------------- */
 
   it('fails over to a healthy provider when the preferred one refuses', async () => {
@@ -316,10 +376,21 @@ describe('E2E: gateway against a real local inference server', () => {
   });
 
   it('abandons a stream that goes silent instead of hanging on it', async () => {
+    const stallProvider = app.providers.list().find((p) => p.local && p.baseUrl.includes(`:${stalling.port}`));
+    assert.ok(stallProvider, 'the stalling inference server should be registered');
+
     const started = Date.now();
     const res = await api('/v1/chat/completions', {
       method: 'POST',
-      body: JSON.stringify({ model: 'auto', stream: true, messages: [{ role: 'user', content: '[[sim: stall]]' }] }),
+      body: JSON.stringify({
+        model: 'auto',
+        stream: true,
+        messages: [{ role: 'user', content: '[[sim: stall]]' }],
+        // Pinned so the stall stays on this instance. Left unpinned it would
+        // fail over into the healthy server, stall there too, and open that
+        // provider's breaker for every test that follows.
+        meridian: { provider: stallProvider.id },
+      }),
     });
     // The provider opened a stream and then sent nothing. The gateway must give
     // up on its own; the client is not the thing that ends this.

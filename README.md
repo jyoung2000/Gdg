@@ -187,7 +187,11 @@ rejection with the rule that caused it.
 
 ## Honesty rules
 
-These are enforced in code and covered by tests, not aspirations.
+Each of these is a test that fails if the rule stops holding, not a paragraph.
+Most live in `tests/contract/providers.test.ts`, which runs against the whole
+catalog, and `tests/contract/router-invariants.test.ts`, which asserts the
+routing rules over 400 generated registries rather than the handful someone
+thought to write down.
 
 | Rule | How it holds |
 | --- | --- |
@@ -197,7 +201,8 @@ These are enforced in code and covered by tests, not aspirations.
 | No silent spending | Paid routing needs the instance switch **and** per-request permission. Budgets are hard ceilings. |
 | No invented measurements | A model that has never been measured shows "Not measured", never a zero. |
 | No secret harvesting | Automatic discovery reads documented environment variables and nothing else — no browser storage, no other applications' config, no cloud metadata, no repositories. |
-| No silent data loss | Every agent write records its previous content; Reject restores it byte-for-byte. |
+| No silent data loss | Every agent write records its previous content; Reject restores it byte-for-byte, and a checkpoint before each step means a run can be taken back one agent at a time. |
+| No unverified claims | What has been verified, what has not, and why is written down in `docs/FINAL_VERIFICATION_REPORT.md`. `pnpm verify:release` regenerates the gate table from a run. |
 
 ---
 
@@ -234,7 +239,7 @@ packages/   shared · provider-sdk · model-sdk · routing-sdk
 design/     design system and UI documentation
 database/   migrations
 docker/     Dockerfile, sandbox image
-tests/      unit · router · integration · chaos
+tests/      unit · router · contract · integration · e2e · chaos · live
 ```
 
 The SDKs are pure and dependency-injected: the router is tested against
@@ -252,7 +257,14 @@ NVIDIA), first-party (OpenAI, Anthropic, Google, DeepSeek, Mistral, xAI), media
 Replicate) and local (Ollama, vLLM, llama.cpp, LM Studio).
 
 Each has a real adapter. Each declares only the surfaces it genuinely serves,
-so the router cannot select it for something it cannot do.
+so the router cannot select it for something it cannot do — and the contract
+suite fails if any adapter ever advertises a surface it has no method for.
+
+None of the twenty remote providers has been exercised against its real API in
+this repository's environment: no credential is present here. They are
+`IMPLEMENTED_UNVERIFIED`, which is neither working nor broken, and
+`docs/PROVIDER_VERIFICATION.md` says so provider by provider. `pnpm test:live`
+converts that into a measured matrix the moment a key is available.
 
 ---
 
@@ -278,14 +290,37 @@ See `docs/SECURITY.md`.
 ## Testing
 
 ```bash
-pnpm test              # 143 tests
+pnpm test              # 219 tests, nothing outside this machine
 pnpm test:router       # routing, fallback, pools, credentials
+pnpm test:contract     # the provider contract and the router's invariants
+pnpm test:e2e          # the gateway against a real inference server, over a real socket
 pnpm test:chaos        # provider loss, key rotation, restarts, resource limits
+pnpm verify:release    # everything, then a gate-by-gate report you can check
+pnpm test:live         # real providers — refuses to spend without explicit permission and a ceiling
 ```
 
-Provider behaviour is simulated deterministically — a provider that 429s after
-N calls, one that hangs forever, one that fails every third request — so
-routing and recovery are verified rather than hoped for.
+Three layers, and the difference between them matters.
+
+**Simulated, in process.** Provider behaviour that no real provider will produce
+on demand: a 429 on the sixth call, a stream that hangs forever, a failure every
+third request. This is how routing and recovery are verified rather than hoped
+for.
+
+**Real, over a socket.** `scripts/local-model-server.mjs` is a dependency-free
+OpenAI-compatible server — real SSE, real index-keyed tool-call fragments, real
+usage accounting — that the gateway discovers and routes to like any local
+inference server. Its responses come from a rule-based policy rather than a
+model, so what it verifies is Meridian: routing, streaming, tool-call assembly,
+the agent loop, workspace mutation, fallback, cancellation. It says nothing
+about model quality, and nothing in this repository claims otherwise.
+
+**Real providers.** `pnpm test:live` sends real requests with real credentials.
+Nothing runs without one; nothing that can charge runs unless
+`ALLOW_PAID_LIVE_TESTS=true` and `LIVE_TEST_MAX_COST_USD` names a ceiling the
+suite tracks against reported usage and stops at.
+
+What has and has not been verified is written down rather than implied — see
+`docs/FINAL_VERIFICATION_REPORT.md` and the matrices beside it.
 
 ---
 
@@ -301,6 +336,12 @@ routing and recovery are verified rather than hoped for.
 | `docs/AGENTS.md` | The agent roster and the task pipeline |
 | `design/DESIGN_SYSTEM.md` | Tokens, components, states, theming |
 | `design/ACCESSIBILITY.md` | The accessibility contract, with measured contrast |
+| `docs/FINAL_VERIFICATION_REPORT.md` | What is verified, what is not, and the release classification |
+| `docs/VERIFICATION_MATRIX.md` | Every capability with its status and its evidence |
+| `docs/GAP_ANALYSIS.md` | What the second pass found, closed, and left open |
+| `docs/PROVIDER_VERIFICATION.md` | Every provider and the status of its integration |
+| `docs/AGENT_VERIFICATION.md` | The agent roster, and what each has been observed doing |
+| `docs/MODALITY_VERIFICATION.md` | How far each modality's path has been exercised |
 
 ---
 

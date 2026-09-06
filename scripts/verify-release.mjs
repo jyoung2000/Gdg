@@ -96,6 +96,7 @@ const GATES = [
       'serves the Anthropic Messages contract, including tool use',
       'streams Anthropic events in the documented order',
       'reassembles a tool call whose arguments arrive as JSON fragments',
+      'stops streaming when the client disconnects',
     ],
   },
   {
@@ -103,6 +104,7 @@ const GATES = [
     title: 'Autonomous coding pipeline',
     tests: [
       'runs the coding pipeline end to end and writes a real file',
+      'runs a coding task and reports the files it changed',
       'checkpoints each step and can take the workspace back to one',
       'forks a task into its own workspace without disturbing the original',
       'runs parallel lanes at the same time, not one after another',
@@ -131,7 +133,10 @@ const GATES = [
   {
     id: 'multimodal',
     title: 'Multimodal surfaces',
-    tests: ['serves embeddings through the gateway, deterministically and at the requested width'],
+    tests: [
+      'serves embeddings through the gateway, deterministically and at the requested width',
+      'carries an image through both surfaces without altering it',
+    ],
     blocked: 'Image, video, speech and transcription need a credentialed provider; none is configured here.',
   },
   {
