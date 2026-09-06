@@ -169,7 +169,10 @@ export function HomeScreen(): React.JSX.Element {
             <Stack direction="column" gap={1}>
               <span className="mrd-caption">Command execution</span>
               <span className="mrd-title">{info?.sandbox.kind ?? '—'}</span>
-              <span className="mrd-caption">{info?.sandbox.degradedReason ?? info?.sandbox.isolation.slice(0, 90)}</span>
+              {/* The summary, not the full note: this line is narrow, and
+                  truncating the note would cut off exactly the clause that
+                  says the process sandbox is not a security boundary. */}
+              <span className="mrd-caption">{info?.sandbox.degradedReason ?? info?.sandbox.isolationSummary}</span>
             </Stack>
           </Card>
         </div>

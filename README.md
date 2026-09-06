@@ -290,10 +290,11 @@ See `docs/SECURITY.md`.
 ## Testing
 
 ```bash
-pnpm test              # 219 tests, nothing outside this machine
+pnpm test              # 237 tests, nothing outside this machine
 pnpm test:router       # routing, fallback, pools, credentials
 pnpm test:contract     # the provider contract and the router's invariants
 pnpm test:e2e          # the gateway against a real inference server, over a real socket
+pnpm test:ui           # every screen in a real browser, against a real gateway
 pnpm test:chaos        # provider loss, key rotation, restarts, resource limits
 pnpm verify:release    # everything, then a gate-by-gate report you can check
 pnpm test:live         # real providers — refuses to spend without explicit permission and a ceiling
@@ -318,6 +319,11 @@ about model quality, and nothing in this repository claims otherwise.
 Nothing runs without one; nothing that can charge runs unless
 `ALLOW_PAID_LIVE_TESTS=true` and `LIVE_TEST_MAX_COST_USD` names a ceiling the
 suite tracks against reported usage and stops at.
+
+**A real browser.** Every screen is opened in Chromium against a running
+gateway and asked whether it rendered, whether it logged an error, and whether
+it fits at 390, 834 and 1440 pixels. Screenshots land in
+`docs/evidence/screens/`.
 
 What has and has not been verified is written down rather than implied — see
 `docs/FINAL_VERIFICATION_REPORT.md` and the matrices beside it.

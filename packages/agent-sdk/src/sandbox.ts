@@ -27,6 +27,16 @@ export interface Sandbox {
   readonly kind: 'docker' | 'process' | 'disabled';
   /** Honest description of what this sandbox does and does not isolate. */
   readonly isolationNote: string;
+  /**
+   * One line, complete on its own, leading with whatever the reader most needs
+   * to know.
+   *
+   * The long note gets truncated wherever space is tight, and truncation drops
+   * the end of a sentence — which for the process sandbox is exactly the clause
+   * that says it is not a security boundary. A summary that is already short
+   * cannot lose its warning that way.
+   */
+  readonly isolationSummary: string;
   exec(command: string, opts: ExecOptions): Promise<ExecResult>;
   available(): Promise<boolean>;
 }
@@ -87,6 +97,7 @@ export class DockerSandbox implements Sandbox {
   readonly kind = 'docker' as const;
   readonly isolationNote =
     'Each command runs in a throwaway container with no network, a read-only root filesystem, dropped capabilities, and hard memory, CPU and process limits. Only the workspace directory is writable.';
+  readonly isolationSummary = 'Isolated: a throwaway container with no network and no writable path but the workspace.';
 
   private readonly image: string;
   private readonly memoryMb: number;
@@ -293,6 +304,7 @@ export class ProcessSandbox implements Sandbox {
   readonly kind = 'process' as const;
   readonly isolationNote =
     'Commands run as child processes of the gateway with a clean environment, a wall-clock timeout, an output cap, and the workspace as the working directory. This limits accidents; it is not a security boundary — the command can reach the host filesystem and network. Use the Docker sandbox for untrusted work.';
+  readonly isolationSummary = 'Not a security boundary: a command can reach the host filesystem and network.';
 
   private readonly logger: Logger;
 
@@ -318,6 +330,7 @@ export class ProcessSandbox implements Sandbox {
 export class DisabledSandbox implements Sandbox {
   readonly kind = 'disabled' as const;
   readonly isolationNote = 'Command execution is disabled on this instance.';
+  readonly isolationSummary = 'Off: agents cannot run commands on this instance.';
 
   async available(): Promise<boolean> {
     return false;

@@ -35,6 +35,7 @@ export async function registerSystemRoutes(server: FastifyInstance, app: App): P
       sandbox: {
         kind: app.sandbox.kind,
         isolation: app.sandbox.isolationNote,
+        isolationSummary: app.sandbox.isolationSummary,
         degradedReason: app.sandboxDegradedReason,
         networkEnabled: app.config.sandboxNetwork,
       },

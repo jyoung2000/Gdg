@@ -61,6 +61,7 @@ const SUITES = [
   { id: 'contract', label: 'Contract and invariants', dir: 'tests/contract' },
   { id: 'integration', label: 'Gateway integration', dir: 'tests/integration' },
   { id: 'e2e', label: 'End to end', dir: 'tests/e2e' },
+  { id: 'ui', label: 'Web client', dir: 'tests/ui' },
   { id: 'chaos', label: 'Chaos', dir: 'tests/chaos' },
 ];
 
@@ -138,6 +139,17 @@ const GATES = [
       'carries an image through both surfaces without altering it',
     ],
     blocked: 'Image, video, speech and transcription need a credentialed provider; none is configured here.',
+  },
+  {
+    id: 'web',
+    title: 'Web client',
+    tests: [
+      'boots without a console error and applies its own policy',
+      'renders the settings screen',
+      'fits a phone viewport without sideways scrolling',
+      'shows live data from the gateway rather than an empty shell',
+      'states the sandbox posture in full rather than truncating the warning',
+    ],
   },
   {
     id: 'security',

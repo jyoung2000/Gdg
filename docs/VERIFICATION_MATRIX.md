@@ -126,14 +126,23 @@ Covered in detail in [SECURITY.md](SECURITY.md).
 
 ## Web client and design system
 
+Exercised in a real browser against a real gateway (`tests/ui/screens.test.ts`).
+A React app that compiles is not one that runs: a screen can throw on first
+paint, a CSP can block the bundle it was written for, and a layout can overflow
+on a phone without anything failing to build.
+
 | Capability | Status | Evidence |
 | --- | --- | --- |
-| Eleven screens | IMPLEMENTED_UNVERIFIED | Rendered and navigated manually; no automated UI test |
-| Design tokens and three-state theming | VERIFIED | Contrast ratios computed rather than asserted; four values were corrected as a result |
-| Responsive behaviour | PARTIAL | Verified by a headless sweep at three viewports during the first pass; not automated |
+| Eleven screens render without a console error | VERIFIED | Each opened through the app's own navigation, in Chromium |
+| The bundle loads under the app's own CSP | VERIFIED | A policy that blocked it would surface as a console error on first paint |
+| Live data reaches the client | VERIFIED | The discovered model appears on the Models screen |
+| Design tokens and three-state theming | VERIFIED | Both themes resolve a painted background and a distinct text colour; contrast ratios were computed, and four values corrected as a result |
+| Responsive behaviour | VERIFIED | No horizontal overflow on any screen at 390, 834 and 1440 px |
+| Sandbox posture stated in full | VERIFIED | The home card must contain "not a security boundary" as a complete sentence |
 | Routing explanation panel | VERIFIED | Renders the requested mode and the applied policy when they differ |
-| Checkpoint, rewind and fork controls | IMPLEMENTED_UNVERIFIED | Wired to verified endpoints; the controls themselves are not automated |
-| CodeMirror editor and xterm terminal | IMPLEMENTED_UNVERIFIED | Themed from the same tokens; not automated |
+| Checkpoint, rewind and fork controls | IMPLEMENTED_UNVERIFIED | Wired to verified endpoints; the controls are rendered but not driven |
+| CodeMirror editor and xterm terminal | IMPLEMENTED_UNVERIFIED | Themed from the same tokens; not driven |
+| Screenshots as artifacts | VERIFIED | `docs/evidence/screens/` is written on every run (git-ignored, since it changes every time) |
 
 ## CLI
 

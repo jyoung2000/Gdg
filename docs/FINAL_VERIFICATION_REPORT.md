@@ -43,10 +43,10 @@ writes files that exist on disk afterwards. State survives a restart. This is
 past the point where "does it work at all" is the open question.
 
 **Not RELEASE CANDIDATE.** See above. Also: three of nine agents, eight of
-fifteen CLI commands, the WebSocket transport and the entire web client have no
-automated end-to-end coverage. Each is IMPLEMENTED_UNVERIFIED — real code, no
-evidence — and a release candidate should not have that much of its surface in
-that state.
+fifteen CLI commands, the WebSocket transport, reservations under load and the
+in-app editor and terminal have no end-to-end coverage. Each is
+IMPLEMENTED_UNVERIFIED — real code, no evidence — and a release candidate should
+not have that much of its surface in that state.
 
 **Not PRODUCTION READY.** No live provider, no verified container deployment, no
 production soak, no load testing, no upgrade-path testing beyond a single
@@ -64,14 +64,16 @@ rows' evidence. Regenerate with `node scripts/scorecard.mjs --write`.
 
 | Status | Count | Share |
 | --- | ---: | ---: |
-| VERIFIED | 100 | 63% |
-| IMPLEMENTED_UNVERIFIED | 26 | 16% |
-| PARTIAL | 7 | 4% |
-| BLOCKED_EXTERNAL | 27 | 17% |
+| VERIFIED | 106 | 65% |
+| IMPLEMENTED_UNVERIFIED | 25 | 15% |
+| PARTIAL | 6 | 4% |
+| BLOCKED_EXTERNAL | 27 | 16% |
 | MISSING | 0 | — |
 | STUB | 0 | — |
 | FAILED | 0 | — |
 
+164 claims across the four matrices, counted by `node scripts/scorecard.mjs`.
+164 claims across the four matrices, counted by `node scripts/scorecard.mjs`.
 160 claims across the four matrices, counted by `node scripts/scorecard.mjs`.
 
 The BLOCKED_EXTERNAL share is high because the provider matrix contributes
@@ -95,7 +97,7 @@ and placeholder returns across `apps`, `packages` and `tests` finds one match: a
 | Persistence | VERIFIED across a full restart |
 | Provider integrations | IMPLEMENTED_UNVERIFIED / BLOCKED_EXTERNAL — the contract is enforced mechanically; no live request has been sent |
 | Media generation | IMPLEMENTED_UNVERIFIED — the refusal path is verified, the success path needs a provider |
-| Web client | IMPLEMENTED_UNVERIFIED — no automated UI coverage |
+| Web client | VERIFIED — eleven screens in a real browser, three viewports, both themes, live data |
 | CLI | PARTIAL — seven of fifteen commands verified end to end |
 | Docker deployment | PARTIAL — sandbox and persistence verified; build and compose blocked |
 
@@ -108,6 +110,7 @@ From `docs/evidence/RELEASE.md`, regenerated on every `pnpm verify:release`.
 | Gate | Status |
 | --- | --- |
 | Deployment: persistence and container configuration | PARTIAL |
+| Web client | VERIFIED |
 | Core routing | VERIFIED |
 | Anthropic-compatible surface, end to end | VERIFIED |
 | Autonomous coding pipeline | VERIFIED |
@@ -116,7 +119,7 @@ From `docs/evidence/RELEASE.md`, regenerated on every `pnpm verify:release`.
 | Multimodal surfaces | PARTIAL |
 | Security | VERIFIED |
 
-Six of eight VERIFIED; two PARTIAL for reasons named in the report and outside
+Seven of nine VERIFIED; two PARTIAL for reasons named in the report and outside
 the product.
 
 ---
@@ -134,6 +137,7 @@ Seven commits, +4,679 / −102 across 57 files, 143 → 219 tests.
 | Adversarial security pass | Two SSRF bypasses, secrets echoed in errors, one body limit for every route, an IPv6 mapping hole |
 | Provider contract and router invariants | Endpoint variables read as credentials; seven undocumented variables; the honesty rules turned from prose into tests |
 | Release and live verification tooling | No way to reproduce a verification claim; no guarded path to spending real money |
+| The web client in a real browser | The largest unautomated surface. Also found the home screen truncating its sandbox warning mid-sentence, dropping the words "not a security boundary" |
 
 ---
 
@@ -175,7 +179,7 @@ re-derived from a run. Nine of them turned out to be wrong.
 2. **Build the real sandbox image** where a registry is reachable, then
    `docker compose up -d` and re-run the E2E suite against it.
 3. **Cover the three unexercised agents** with pipelines that select them.
-4. **Automate the web client** — the eleven screens are the largest
-   unautomated surface.
+4. **Drive the in-app editor, terminal and the checkpoint controls**, which the
+   screen-level tests render but do not operate.
 5. **Drive rate limiting and reservations under concurrent load**, which is the
    only way those two rows move.

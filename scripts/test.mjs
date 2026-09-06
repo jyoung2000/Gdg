@@ -22,7 +22,8 @@ const GROUPS = {
   chaos: ['tests/chaos'],
   e2e: ['tests/e2e'],
   contract: ['tests/contract'],
-  all: ['tests/unit', 'tests/router', 'tests/contract', 'tests/integration', 'tests/e2e', 'tests/chaos'],
+  ui: ['tests/ui'],
+  all: ['tests/unit', 'tests/router', 'tests/contract', 'tests/integration', 'tests/e2e', 'tests/ui', 'tests/chaos'],
 };
 
 const dirs = GROUPS[suite];

@@ -13,3 +13,6 @@ coverage/
 *.tsbuildinfo
 .pnpm-store/
 apps/web/dist/
+
+# Screenshots written by the UI suite on every run.
+docs/evidence/screens/

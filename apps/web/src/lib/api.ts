@@ -34,7 +34,7 @@ export interface SystemInfo {
   allowPaid: boolean;
   defaultRoutingMode: RoutingMode;
   defaultPrivacyMode: string;
-  sandbox: { kind: string; isolation: string; degradedReason: string | null; networkEnabled: boolean };
+  sandbox: { kind: string; isolation: string; isolationSummary: string; degradedReason: string | null; networkEnabled: boolean };
   counts: { providers: number; providersConfigured: number; providersVerified: number; models: number; pools: number; workspaces: number };
   warnings: { level: 'info' | 'warn'; message: string }[];
   endpoints: { openai: string; anthropic: string; events: string };
