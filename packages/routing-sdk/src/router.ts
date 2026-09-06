@@ -109,7 +109,8 @@ export class Router {
 
   route(req: AIRequest): RoutingDecision {
     const prefs = this.deps.preferencesFor?.(req.userId) ?? null;
-    const mode = canonicalMode(req.mode ?? prefs?.routingMode ?? 'AUTO');
+    const requestedMode = req.mode ?? prefs?.routingMode ?? 'AUTO';
+    const mode = canonicalMode(requestedMode);
     const privacy = req.privacyMode ?? prefs?.privacyMode ?? 'TRUSTED_ONLY';
     const rejected: Rejection[] = [];
 
@@ -142,7 +143,7 @@ export class Router {
       credential: credential.credentialId,
       pool,
       fallbackChain: this.buildFallbackChain(scored, req, winner),
-      routingReason: this.explain(winner, winnerModel, scored, rejected, effectiveMode, credential.reason, req),
+      routingReason: this.explain(winner, winnerModel, scored, rejected, effectiveMode, requestedMode, credential.reason, req),
       expectedCost: winner.estimatedCost,
       expectedLatency: winner.estimatedLatencyMs,
     };
@@ -433,6 +434,7 @@ export class Router {
     scored: RoutingCandidate[],
     rejected: Rejection[],
     mode: RoutingMode,
+    requestedMode: RoutingMode,
     credentialReason: string,
     req: AIRequest,
   ): RoutingReason {
@@ -506,6 +508,7 @@ export class Router {
       // panel only needs enough to be convincing.
       rejected: dedupeRejections(rejected).slice(0, 12),
       mode,
+      requestedMode,
     };
   }
 

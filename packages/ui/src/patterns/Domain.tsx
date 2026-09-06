@@ -628,7 +628,10 @@ export function RoutingExplanation({ reason, className }: { reason: RoutingReaso
         </div>
       )}
 
-      <div className="mrd-caption">Mode: {reason.mode}</div>
+      <div className="mrd-caption">
+        Mode: {reason.requestedMode ?? reason.mode}
+        {reason.requestedMode && reason.requestedMode !== reason.mode ? ` (applied as ${reason.mode})` : ''}
+      </div>
     </div>
   );
 }

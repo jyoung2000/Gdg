@@ -20,7 +20,8 @@ const GROUPS = {
   router: ['tests/router'],
   integration: ['tests/integration'],
   chaos: ['tests/chaos'],
-  all: ['tests/unit', 'tests/router', 'tests/integration', 'tests/chaos'],
+  e2e: ['tests/e2e'],
+  all: ['tests/unit', 'tests/router', 'tests/integration', 'tests/e2e', 'tests/chaos'],
 };
 
 const dirs = GROUPS[suite];

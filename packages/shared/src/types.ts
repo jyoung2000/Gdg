@@ -455,7 +455,17 @@ export interface RoutingReason {
   considered: RoutingCandidate[];
   /** Candidates dropped before scoring, with the rule that dropped them. */
   rejected: { modelId: string; reason: string }[];
+  /**
+   * The policy the scoring actually ran under.
+   *
+   * This is not always what the caller asked for: the plain-language modes are
+   * aliases (FAST is FASTEST, BEST is QUALITY_FIRST), and choosing a pool
+   * overrides the mode entirely. Reporting the applied policy is what makes the
+   * scores below explicable.
+   */
   mode: RoutingMode;
+  /** What the caller asked for, before aliasing and any pool override. */
+  requestedMode: RoutingMode;
 }
 
 export interface RoutingDecision {
