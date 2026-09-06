@@ -191,7 +191,16 @@ export interface ProviderDescriptor {
   baseUrl: string;
   auth: AuthKind;
   /** Env var names checked during automatic credential discovery. */
+  /**
+   * Environment variables that may carry this provider's credential.
+   *
+   * Credentials only. A variable listed here is read as a secret, sealed and
+   * sent as this provider's key — so an endpoint override must never appear in
+   * it. Use {@link ProviderDescriptor.baseUrlEnvKeys} for that.
+   */
   envKeys: string[];
+  /** Environment variables that override {@link ProviderDescriptor.baseUrl}. */
+  baseUrlEnvKeys?: string[];
   trust: TrustLevel;
   docsUrl: string | null;
   /** True when the provider runs on the operator's own hardware. */

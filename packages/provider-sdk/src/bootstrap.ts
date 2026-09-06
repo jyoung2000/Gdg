@@ -69,6 +69,8 @@ export interface BootstrapOptions {
   extraProviders?: ProviderDescriptor[];
   /** Resolves catalog pricing for a specific model, when known. */
   pricingLookup?: (providerId: string, providerModelId: string) => Pricing | null;
+  /** Environment to read endpoint overrides from. Injected for tests. */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -145,10 +147,43 @@ export function createRegistry(opts: BootstrapOptions = {}): ProviderRegistry {
     return adapter;
   });
 
-  for (const d of PROVIDER_CATALOG) registry.registerProvider(d);
-  for (const d of opts.extraProviders ?? []) registry.registerProvider(d);
+  for (const d of PROVIDER_CATALOG) registry.registerProvider(withEnvBaseUrl(d, opts.env ?? process.env));
+  for (const d of opts.extraProviders ?? []) registry.registerProvider(withEnvBaseUrl(d, opts.env ?? process.env));
 
   return registry;
+}
+
+/**
+ * Apply an operator's endpoint override.
+ *
+ * A self-hosted server does not have to be on the port the catalog assumes, and
+ * the override is a URL, not a secret — keeping the two apart matters, because
+ * anything in `envKeys` is read as a credential, sealed, and sent as this
+ * provider's key.
+ */
+function withEnvBaseUrl(descriptor: ProviderDescriptor, env: NodeJS.ProcessEnv): ProviderDescriptor {
+  for (const key of descriptor.baseUrlEnvKeys ?? []) {
+    const raw = env[key]?.trim();
+    if (!raw) continue;
+    // OLLAMA_HOST is conventionally a bare host or host:port, so a missing
+    // scheme is the documented form rather than a mistake.
+    const candidate = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+    let url: URL;
+    try {
+      // Parsed rather than trusted: a malformed value would otherwise surface
+      // much later as an unexplained request failure.
+      url = new URL(candidate);
+    } catch {
+      continue;
+    }
+
+    let base = candidate.replace(/\/+$/, '');
+    // A host with no path, where the catalog's default carries one, means the
+    // operator moved the server rather than restructured its API.
+    if ((url.pathname === '/' || url.pathname === '') && descriptor.baseUrl.endsWith('/v1')) base = `${base}/v1`;
+    return { ...descriptor, baseUrl: base };
+  }
+  return descriptor;
 }
 
 /**

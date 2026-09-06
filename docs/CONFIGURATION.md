@@ -110,3 +110,37 @@ restart rather than a database edit.
 **This is the whole of automatic discovery.** Meridian does not read browser
 storage, other applications' configuration files, cloud metadata services, or
 any repository.
+
+---
+
+## Endpoint overrides
+
+A self-hosted inference server does not have to be on the port the catalog
+assumes. These variables move it, and are read as URLs — never stored, sealed or
+sent as a credential:
+
+| Variable | Provider | Default |
+| --- | --- | --- |
+| `OLLAMA_HOST` | Ollama | `http://localhost:11434/v1` |
+| `VLLM_BASE_URL` | vLLM | `http://localhost:8000/v1` |
+| `LLAMACPP_BASE_URL` | llama.cpp `llama-server` | `http://localhost:8080/v1` |
+| `LMSTUDIO_BASE_URL` | LM Studio | `http://localhost:1234/v1` |
+
+`OLLAMA_HOST` follows Ollama's own convention and may be a bare `host` or
+`host:port`; the scheme is filled in, and `/v1` is appended when the value names
+a host rather than a path. A value that does not parse as a URL is ignored, and
+the default stands.
+
+## Credential variable aliases
+
+Several providers publish more than one conventional name for the same key.
+Meridian reads whichever is present, first match wins:
+
+| Provider | Variables |
+| --- | --- |
+| Google Gemini | `GEMINI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` |
+| Hugging Face | `HF_TOKEN`, `HUGGING_FACE_HUB_TOKEN` |
+| fal.ai | `FAL_KEY`, `FAL_API_KEY` |
+| AI Horde | `AI_HORDE_API_KEY`, `STABLEHORDE_API_KEY` |
+
+Nothing outside these lists is read. See **Automatic discovery** above.
