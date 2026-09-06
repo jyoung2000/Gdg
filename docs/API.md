@@ -186,3 +186,17 @@ collide and one route's key cannot replay another's.
 | `not-applied-to-streaming` | Streamed responses are bytes on a socket, not a value that can be replayed, so the key was ignored |
 
 A request that fails with a `5xx` releases its key, so retrying it is allowed.
+
+---
+
+## Verification commands
+
+| Command | What it does |
+| --- | --- |
+| `pnpm test` | Every suite that needs nothing outside this machine |
+| `pnpm test:contract` | The provider contract and the router's invariants |
+| `pnpm test:e2e` | The gateway against a real inference server over a real socket |
+| `pnpm verify:release` | Typecheck, build, every suite, then a gate-by-gate report written to `docs/evidence/RELEASE.md` |
+| `pnpm test:live` | Real requests to real providers. Refuses to spend without `ALLOW_PAID_LIVE_TESTS=true` *and* `LIVE_TEST_MAX_COST_USD` |
+| `pnpm sandbox:image` | Build the sandbox image (`--offline` assembles a verification-only one without a registry) |
+| `node scripts/local-model-server.mjs` | A deterministic OpenAI-compatible server for local verification |

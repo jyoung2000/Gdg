@@ -29,6 +29,7 @@ describe('E2E: gateway against a real local inference server', () => {
   let failing: SimServer;
   let dataDir: string;
   let base: string;
+  let config: ReturnType<typeof loadConfig>;
 
   const api = async (path: string, init: RequestInit = {}): Promise<Response> =>
     fetch(`${base}${path}`, {
@@ -62,7 +63,7 @@ describe('E2E: gateway against a real local inference server', () => {
     // is the shape a fallback chain has to survive.
     failing = await startSimServer(['--fail-with', 'rate_limited']);
 
-    const config = loadConfig({
+    config = loadConfig({
       MERIDIAN_DATA_DIR: dataDir,
       MERIDIAN_DB: join(dataDir, 'e2e.db'),
       MERIDIAN_WORKSPACE_ROOT: join(dataDir, 'workspaces'),
@@ -590,6 +591,45 @@ describe('E2E: gateway against a real local inference server', () => {
       ['shared.md'],
     );
     assert.deepEqual(result.conflicts[0].lanes.sort(), ['alpha', 'gamma']);
+  });
+
+  /* ---------------- Persistence ---------------- */
+
+  it('keeps its state across a restart', async () => {
+    const { workspace } = await json<{ workspace: { id: string; name: string } }>('/api/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'survives-restart' }),
+    });
+    const before = await json<{ summary: { totals: { requests: number } } }>('/api/usage?limit=1');
+
+    // A full stop and a fresh App over the same directory: exactly what a
+    // container restart does. Anything held only in memory disappears here.
+    await server.close();
+    await app.stop();
+
+    app = await App.create(config);
+    await app.start();
+    server = await createServer(app);
+    await server.listen({ port: 0, host: '127.0.0.1' });
+    const addr = server.server.address();
+    if (!addr || typeof addr === 'string') throw new Error('server did not rebind');
+    base = `http://127.0.0.1:${addr.port}`;
+
+    const workspaces = await json<{ workspaces: { id: string; name: string }[] }>('/api/workspaces');
+    assert.ok(
+      workspaces.workspaces.some((w) => w.id === workspace.id && w.name === 'survives-restart'),
+      'a workspace must survive a restart',
+    );
+
+    const after = await json<{ summary: { totals: { requests: number } } }>('/api/usage?limit=1');
+    assert.ok(
+      after.summary.totals.requests >= before.summary.totals.requests,
+      'usage history must survive a restart, not start over',
+    );
+
+    // And the instance is serving again, on the same data.
+    const ready = await api('/api/system/ready');
+    assert.equal(ready.status, 200, 'the gateway must be ready again after a restart');
   });
 
   /* ---------------- Usage accounting ---------------- */

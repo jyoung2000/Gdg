@@ -20,7 +20,11 @@
     "lint": "tsc --noEmit -p tsconfig.json",
     "uag": "node dist/cli/uag.js",
     "test:router": "node scripts/test.mjs router",
-    "test:chaos": "node scripts/test.mjs chaos"
+    "test:chaos": "node scripts/test.mjs chaos",
+    "verify:release": "node scripts/verify-release.mjs --out docs/evidence/RELEASE.md",
+    "test:contract": "node scripts/test.mjs contract",
+    "test:live": "node scripts/test-live.mjs",
+    "sandbox:image": "node scripts/build-sandbox-image.mjs"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
