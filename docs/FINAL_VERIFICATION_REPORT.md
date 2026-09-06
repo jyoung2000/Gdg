@@ -36,9 +36,10 @@ environment, not by the product.
 
 ### Why not the neighbouring classifications
 
-**Not PROTOTYPE or ALPHA.** 219 tests pass, including 52 that cross a socket and
-a process boundary into a real inference server, 10 that attack the running
-gateway, and 10 that exercise real containers. The autonomous coding pipeline
+**Not PROTOTYPE or ALPHA.** 237 tests pass, including 52 that cross a socket and
+a process boundary into a real inference server, 18 that drive the web client in
+a real browser, 13 that attack the running gateway, and 10 that exercise real
+containers. The autonomous coding pipeline
 writes files that exist on disk afterwards. State survives a restart. This is
 past the point where "does it work at all" is the open question.
 
@@ -72,6 +73,7 @@ rows' evidence. Regenerate with `node scripts/scorecard.mjs --write`.
 | STUB | 0 | — |
 | FAILED | 0 | — |
 
+164 claims across the four matrices, counted by `node scripts/scorecard.mjs`.
 164 claims across the four matrices, counted by `node scripts/scorecard.mjs`.
 164 claims across the four matrices, counted by `node scripts/scorecard.mjs`.
 160 claims across the four matrices, counted by `node scripts/scorecard.mjs`.
@@ -126,7 +128,7 @@ the product.
 
 ## What the second pass changed
 
-Seven commits, +4,679 / −102 across 57 files, 143 → 219 tests.
+Nine commits, +6,111 / −112 across 69 files, 143 → 237 tests.
 
 | Commit | What it closed |
 | --- | --- |
@@ -137,7 +139,10 @@ Seven commits, +4,679 / −102 across 57 files, 143 → 219 tests.
 | Adversarial security pass | Two SSRF bypasses, secrets echoed in errors, one body limit for every route, an IPv6 mapping hole |
 | Provider contract and router invariants | Endpoint variables read as credentials; seven undocumented variables; the honesty rules turned from prose into tests |
 | Release and live verification tooling | No way to reproduce a verification claim; no guarded path to spending real money |
+| The verification documents themselves | Claims nobody could check; the scorecard is now derived from the matrices rather than typed |
 | The web client in a real browser | The largest unautomated surface. Also found the home screen truncating its sandbox warning mid-sentence, dropping the words "not a security boundary" |
+
+Ten defects in total: nine found by running the product, one by rendering it.
 
 ---
 

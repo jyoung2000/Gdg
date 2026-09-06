@@ -7,9 +7,9 @@ question this pass asked was not "does it look right" but "what happens when it
 is actually run" — against a real inference server over a real socket, against
 real containers, and against an attacker's requests rather than a developer's.
 
-Nine defects surfaced that way. Six of them could not have been found by reading
-the code, and two would have made a headline feature silently useless in the
-shipped configuration.
+Ten defects surfaced that way. Seven of them could not have been found by
+reading the code, and two would have made a headline feature silently useless in
+the shipped configuration.
 
 ## Closed in this pass
 
@@ -114,6 +114,20 @@ already did.
 **Severity: low.** `::ffff:169.254.169.254` reaches the same host as the bare
 IPv4 address but was not judged as one.
 
+### 10. The home screen truncated its own safety warning — CLOSED
+
+**Severity: low, and squarely against the product's own honesty rules.** The
+sandbox card cut its description at 90 characters. With the process sandbox in
+use, the part that fell off the end was "it is not a security boundary — the
+command can reach the host filesystem and network". The card read "process" and
+then trailed off, exactly where the reader most needs the sentence to finish.
+
+**Found by:** rendering the page. Nothing about it is visible in the source.
+
+**Closed by:** a short `isolationSummary` on every sandbox that is complete on
+its own and leads with the warning, shown in the card instead of a truncated
+paragraph — with a browser test asserting the words survive.
+
 ## Missing capabilities that were built
 
 | Gap | Status |
@@ -149,7 +163,7 @@ IPv4 address but was not judged as one.
 | Rate limiting at its limit | The bucket and sweeper exist; nothing here drove them to 429 |
 | Auth-required mode adversarially | Covered by integration tests, not by the adversarial pass |
 | Eight of fifteen CLI commands | Seven are verified end to end; the rest have real implementations and no test |
-| Web client screens | Rendered and navigated manually in the first pass; no automated UI test |
+| The in-app editor, terminal and checkpoint controls | Rendered and asserted present; not driven |
 | Media asset writing and cancellation | The engine is wired end to end; no generation has produced an asset here |
 
 ### Deliberately not built
