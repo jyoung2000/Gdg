@@ -1,7 +1,7 @@
 import { constants } from 'node:fs';
 import { access, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
-import { MeridianError, type FileChange, type FileNode } from '@meridian/shared';
+import { MeridianError, newId, type FileChange, type FileNode } from '@meridian/shared';
 
 /** Directories never walked, listed or searched. Noise, and often enormous. */
 const IGNORED_DIRS = new Set([
@@ -20,6 +20,27 @@ const BINARY_EXTS = new Set([
 ]);
 
 const MAX_READ_BYTES = 512 * 1024;
+
+/**
+ * Largest file a checkpoint will copy.
+ *
+ * A checkpoint that quietly skipped a big file would rewind to a state that
+ * never existed, so anything over the limit is recorded as skipped and the
+ * rewind reports it rather than pretending the file was restored.
+ */
+const MAX_CHECKPOINT_BYTES = 1024 * 1024;
+
+export interface WorkspaceCheckpoint {
+  id: string;
+  label: string;
+  at: number;
+  /** Content of every touched file at snapshot time; null means it did not exist. */
+  files: { path: string; content: string | null }[];
+  /** Files too large to copy. A rewind leaves these alone and says so. */
+  skipped: string[];
+  /** The review state as it stood, so a rewind restores that too. */
+  changes: FileChange[];
+}
 
 /**
  * A workspace on disk, with every path operation confined to its root.
@@ -297,6 +318,87 @@ export class Workspace {
   /** Files an agent has touched during the current task. */
   touchedPaths(): string[] {
     return [...this.changes.keys()];
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Checkpoints                                                      */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Snapshot the workspace as it stands.
+   *
+   * Only touched files are copied. Everything else is, by definition,
+   * unmodified since the task began, and its pre-task content is already
+   * recorded in the change log — so copying the whole tree would cost a great
+   * deal to preserve nothing extra.
+   */
+  async checkpoint(label: string): Promise<WorkspaceCheckpoint> {
+    const files: WorkspaceCheckpoint['files'] = [];
+    const skipped: string[] = [];
+
+    for (const path of [...this.changes.keys()].sort()) {
+      const abs = this.absolute(path);
+      try {
+        const info = await stat(abs);
+        if (info.size > MAX_CHECKPOINT_BYTES) {
+          skipped.push(path);
+          continue;
+        }
+        files.push({ path, content: await readFile(abs, 'utf8') });
+      } catch {
+        // Absent now — which is itself the state to restore.
+        files.push({ path, content: null });
+      }
+    }
+
+    return {
+      id: newId('ckpt'),
+      label,
+      at: Date.now(),
+      files,
+      skipped,
+      changes: this.pendingChanges(),
+    };
+  }
+
+  /**
+   * Restore the workspace to a checkpoint.
+   *
+   * Files touched after the checkpoint are undone to their pre-task state
+   * rather than left behind: a rewind that leaves half of a later step's work
+   * on disk produces a tree that never existed, which is worse than either
+   * keeping or discarding the whole step.
+   */
+  async rewind(cp: WorkspaceCheckpoint): Promise<{ restored: string[]; removed: string[]; skipped: string[] }> {
+    const restored: string[] = [];
+    const removed: string[] = [];
+    const inSnapshot = new Set(cp.files.map((f) => f.path));
+
+    for (const path of [...this.changes.keys()]) {
+      if (inSnapshot.has(path)) continue;
+      const change = this.changes.get(path);
+      if (!change) continue;
+      // reject() restores exactly what was there before the task touched it.
+      await this.reject(path);
+      (change.before === null ? removed : restored).push(path);
+    }
+
+    for (const file of cp.files) {
+      const abs = this.absolute(file.path);
+      if (file.content === null) {
+        await rm(abs, { force: true });
+        removed.push(file.path);
+        continue;
+      }
+      await mkdir(dirname(abs), { recursive: true });
+      await writeFile(abs, file.content, 'utf8');
+      restored.push(file.path);
+    }
+
+    this.changes.clear();
+    for (const change of cp.changes) this.changes.set(change.path, { ...change });
+
+    return { restored: [...new Set(restored)].sort(), removed: [...new Set(removed)].sort(), skipped: [...cp.skipped] };
   }
 }
 

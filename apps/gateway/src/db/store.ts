@@ -28,6 +28,7 @@ import {
   type Workspace,
 } from '@meridian/shared';
 import type { CredentialStore } from '@meridian/routing-sdk';
+import type { WorkspaceCheckpoint } from '@meridian/agent-sdk';
 import { bool, int, json, type DB } from './database.js';
 import { SecretBox, generateApiKey, hashApiKey, hashPassword, verifyPassword } from './crypto.js';
 
@@ -851,6 +852,53 @@ export class Store implements CredentialStore {
       details: json<Record<string, unknown>>(r.details as string, {}),
       ip: (r.ip as string) ?? null,
     }));
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Task checkpoints                                                 */
+  /* ---------------------------------------------------------------- */
+
+  saveCheckpoint(taskId: string, stepId: string | null, cp: WorkspaceCheckpoint): void {
+    this.db
+      .prepare('INSERT OR REPLACE INTO task_checkpoints (id, task_id, step_id, label, at, snapshot) VALUES (?,?,?,?,?,?)')
+      .run(cp.id, taskId, stepId, cp.label, cp.at, JSON.stringify(cp));
+  }
+
+  /**
+   * Checkpoints for a task, newest last.
+   *
+   * `withSnapshot` is off by default because the listing feeds a UI that only
+   * needs labels and times — shipping every file's content to render a row
+   * would make the panel unusable on a large change set.
+   */
+  listCheckpoints(taskId: string, withSnapshot = false): (WorkspaceCheckpoint | Omit<WorkspaceCheckpoint, 'files' | 'changes'>)[] {
+    const rows = this.db.prepare('SELECT * FROM task_checkpoints WHERE task_id = ? ORDER BY at ASC').all(taskId) as Row[];
+    return rows.map((r) => {
+      const snapshot = json<WorkspaceCheckpoint>(r.snapshot as string, {
+        id: String(r.id),
+        label: String(r.label),
+        at: Number(r.at),
+        files: [],
+        skipped: [],
+        changes: [],
+      });
+      if (withSnapshot) return snapshot;
+      const { files, changes, ...rest } = snapshot;
+      return { ...rest, fileCount: files.length, changeCount: changes.length } as Omit<WorkspaceCheckpoint, 'files' | 'changes'>;
+    });
+  }
+
+  getCheckpoint(id: string): { taskId: string; stepId: string | null; snapshot: WorkspaceCheckpoint } | null {
+    const row = this.db.prepare('SELECT * FROM task_checkpoints WHERE id = ?').get(id) as Row | undefined;
+    if (!row) return null;
+    const snapshot = json<WorkspaceCheckpoint | null>(row.snapshot as string, null);
+    if (!snapshot) return null;
+    return { taskId: String(row.task_id), stepId: (row.step_id as string) ?? null, snapshot };
+  }
+
+  /** Drop checkpoints taken after this one, since a rewind invalidates them. */
+  deleteCheckpointsAfter(taskId: string, at: number): number {
+    return this.db.prepare('DELETE FROM task_checkpoints WHERE task_id = ? AND at > ?').run(taskId, at).changes;
   }
 
   /* ---------------------------------------------------------------- */

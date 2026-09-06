@@ -101,6 +101,25 @@ function promptTokens(messages) {
 let counter = 0;
 const nextId = (prefix) => `${prefix}-${Date.now().toString(36)}-${(counter += 1).toString(36)}`;
 
+/**
+ * In-flight and peak concurrent completions.
+ *
+ * Exposed at `/stats` so a caller can prove its own parallelism directly —
+ * "two requests were open at the same moment" — instead of inferring it from
+ * wall-clock timings, which are noisy enough to make such a test useless.
+ */
+const stats = { inFlight: 0, peakInFlight: 0, completions: 0, embeddings: 0 };
+
+function enter() {
+  stats.inFlight += 1;
+  stats.completions += 1;
+  if (stats.inFlight > stats.peakInFlight) stats.peakInFlight = stats.inFlight;
+}
+
+function leave() {
+  stats.inFlight = Math.max(0, stats.inFlight - 1);
+}
+
 /* ------------------------------------------------------------------ */
 /* Deterministic embeddings                                           */
 /* ------------------------------------------------------------------ */
@@ -469,6 +488,20 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'GET' && path === '/stats') {
+      sendJson(res, 200, { ...stats });
+      return;
+    }
+
+    if (req.method === 'POST' && path === '/stats/reset') {
+      stats.inFlight = 0;
+      stats.peakInFlight = 0;
+      stats.completions = 0;
+      stats.embeddings = 0;
+      sendJson(res, 200, { ...stats });
+      return;
+    }
+
     if (req.method === 'GET' && (path === '/v1/models' || path === '/models')) {
       sendJson(res, 200, {
         object: 'list',
@@ -489,7 +522,6 @@ const server = createServer(async (req, res) => {
     }
 
     const body = await readBody(req);
-    if (LATENCY_MS) await sleep(LATENCY_MS);
 
     if (path === '/v1/chat/completions' || path === '/chat/completions') {
       if (FAIL_WITH) {
@@ -501,17 +533,31 @@ const server = createServer(async (req, res) => {
         sendError(res, turn.code);
         return;
       }
-      if (body.stream) {
-        await streamChat(res, body, turn);
-      } else if (turn.kind === 'stall') {
-        // A non-streaming stall never answers; the client's own timeout ends it.
-      } else {
-        sendJson(res, 200, completionBody(body, turn));
+      enter();
+      try {
+        // The configured latency is counted inside the tracked window: a caller
+        // measuring concurrency needs the slot held for as long as the request
+        // is actually occupying the server.
+        if (LATENCY_MS) await sleep(LATENCY_MS);
+        if (body.stream) {
+          await streamChat(res, body, turn);
+        } else if (turn.kind === 'stall') {
+          // A non-streaming stall never answers; the client's own timeout ends it.
+        } else {
+          sendJson(res, 200, completionBody(body, turn));
+        }
+      } finally {
+        // A stall never reaches here until the socket closes, which is exactly
+        // when it stops occupying a slot.
+        if (turn.kind !== 'stall') leave();
+        else res.on('close', leave);
       }
       return;
     }
 
     if (path === '/v1/embeddings' || path === '/embeddings') {
+      stats.embeddings += 1;
+      if (LATENCY_MS) await sleep(LATENCY_MS);
       const input = Array.isArray(body.input) ? body.input : [body.input ?? ''];
       const dims = Number(body.dimensions) > 0 ? Number(body.dimensions) : EMBED_DIMS;
       sendJson(res, 200, {

@@ -141,6 +141,9 @@ field rather than a path segment.
 | `GET /api/tasks/:id` | Task, steps, tool calls, usage |
 | `POST /api/tasks/:id/cancel` · `/feedback` | Stop it; teach the ranker |
 | `POST /api/tasks/parallel` | Lanes in isolated workspace copies, with conflicts reported |
+| `GET /api/tasks/:id/checkpoints` | Workspace snapshots taken before each step |
+| `POST /api/tasks/:id/rewind` | Restore the workspace to a checkpoint. Refused while the task is running |
+| `POST /api/tasks/:id/fork` | Copy the workspace (optionally rewound) and run a different request in it |
 | `POST /api/generations/image` · `video` · `speech` · `transcribe` | Media jobs |
 | `GET /api/usage?days=N` | Totals, by model, by provider, by day |
 

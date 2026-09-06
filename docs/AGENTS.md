@@ -133,3 +133,31 @@ toward neutral until enough samples exist — a model measured three times shoul
 not outrank one measured three hundred times on a lucky run.
 
 **The content of your repository is never part of what is learned.**
+
+---
+
+## Checkpoints, rewind and forking
+
+Before every step, the orchestrator snapshots the workspace and stores it
+against the task. Only touched files are copied — everything else is unmodified
+by definition, and its pre-task content is already in the change log — so a
+checkpoint costs roughly what the step's own edits cost. Files over 1 MB are
+recorded as skipped rather than copied, and a rewind reports them instead of
+pretending they were restored.
+
+`POST /api/tasks/:id/rewind` takes the workspace back to a checkpoint. Files
+touched after that point are undone to their pre-task state, not left behind: a
+rewind that keeps half of a later step's work produces a tree that never
+existed. Checkpoints taken after the rewind point are then discarded, because
+they describe a tree that no longer exists.
+
+A rewind is refused while the task is queued or running. Moving the tree out
+from under a live agent gives neither the old state nor the new one.
+
+`POST /api/tasks/:id/fork` copies the workspace — optionally rewound to a
+checkpoint — into a new workspace and runs a different request there. The
+original task's work is untouched, so a fork is a genuine alternative to compare
+against rather than a destructive retry. `.git` is excluded from the copy, so a
+fork cannot commit to the original's history.
+
+Both are in the task detail panel on the Tasks screen.

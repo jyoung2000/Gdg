@@ -258,6 +258,7 @@ export class App {
       persistStep: (step) => store.saveStep(step),
       persistTask: (task) => store.saveTask(task),
       persistToolCall: (record) => store.saveToolCall(record),
+      persistCheckpoint: (taskId, stepId, checkpoint) => store.saveCheckpoint(taskId, stepId, checkpoint),
       onEvent: (event: TaskEvent) => events.publish({ type: 'task', event }),
     });
 

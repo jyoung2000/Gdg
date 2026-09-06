@@ -1,6 +1,6 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
@@ -38,9 +38,26 @@ describe('E2E: gateway against a real local inference server', () => {
 
   const json = async <T>(path: string, init: RequestInit = {}): Promise<T> => (await api(path, init)).json() as Promise<T>;
 
+  type TaskView = { task: { status: string; error: string | null }; steps: { role: string; status: string }[] };
+
+  /** Poll a task to a terminal state. Tasks run detached, so there is nothing to await. */
+  const waitForTask = async (taskId: string): Promise<TaskView> => {
+    const deadline = Date.now() + 60_000;
+    let detail: TaskView | null = null;
+    while (Date.now() < deadline) {
+      detail = await json<TaskView>(`/api/tasks/${taskId}`);
+      if (['completed', 'failed', 'cancelled'].includes(detail.task.status)) return detail;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    throw new Error(`task ${taskId} did not finish: ${detail?.task.status ?? 'unknown'}`);
+  };
+
   before(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'meridian-e2e-'));
-    sim = await startSimServer();
+    // A small latency makes overlapping requests observable, which is how the
+    // parallelism test proves lanes really run at once rather than inferring it
+    // from wall-clock timings.
+    sim = await startSimServer(['--latency-ms', '40']);
     // A second server that is up, reachable and refuses every completion. This
     // is the shape a fallback chain has to survive.
     failing = await startSimServer(['--fail-with', 'rate_limited']);
@@ -421,18 +438,9 @@ describe('E2E: gateway against a real local inference server', () => {
       body: JSON.stringify({ workspaceId: workspace.id, request: 'Create a file `notes.md` describing the change.' }),
     });
 
-    const deadline = Date.now() + 60_000;
-    let status = 'queued';
-    type TaskView = { task: { status: string; error: string | null }; steps: { role: string; status: string }[] };
-    let detail: TaskView | null = null;
-    while (Date.now() < deadline) {
-      detail = await json<TaskView>(`/api/tasks/${task.id}`);
-      status = detail.task.status;
-      if (status === 'completed' || status === 'failed' || status === 'cancelled') break;
-      await new Promise((r) => setTimeout(r, 250));
-    }
+    const detail = await waitForTask(task.id);
+    const status = detail.task.status;
 
-    assert.ok(detail, 'the task should have been readable while polling');
     assert.equal(status, 'completed', `task did not complete: ${detail.task.error ?? 'timed out'}`);
     const roles = detail.steps.map((s) => s.role);
     for (const expected of ['planner', 'implementer', 'reviewer']) {
@@ -451,6 +459,137 @@ describe('E2E: gateway against a real local inference server', () => {
       'the write must be recorded as a reviewable change',
     );
     assert.match(changes.diff, /\+\+\+ b\/notes\.md/);
+  });
+
+  /* ---------------- Checkpoints, rewind and forking ---------------- */
+
+  it('checkpoints each step and can take the workspace back to one', async () => {
+    const { workspace } = await json<{ workspace: { id: string; path: string } }>('/api/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'e2e-rewind' }),
+    });
+    const { task } = await json<{ task: { id: string } }>('/api/tasks', {
+      method: 'POST',
+      body: JSON.stringify({ workspaceId: workspace.id, request: 'Create a file `draft.md` with a first draft.' }),
+    });
+    await waitForTask(task.id);
+
+    const before = await json<{ checkpoints: { id: string; label: string; at: number }[] }>(`/api/tasks/${task.id}/checkpoints`);
+    assert.ok(before.checkpoints.length >= 3, `expected one checkpoint per step, saw ${before.checkpoints.length}`);
+    assert.ok(
+      before.checkpoints.every((c, i, all) => i === 0 || c.at >= all[i - 1].at),
+      'checkpoints must be ordered oldest first',
+    );
+    assert.ok(existsSync(join(workspace.path, 'draft.md')), 'the pipeline should have written the file');
+
+    // The first checkpoint predates every write, so rewinding to it must leave
+    // the workspace as it was before the task ran at all.
+    const first = before.checkpoints[0];
+    const result = await json<{ removed: string[]; restored: string[]; droppedCheckpoints: number }>(
+      `/api/tasks/${task.id}/rewind`,
+      { method: 'POST', body: JSON.stringify({ checkpointId: first.id }) },
+    );
+    assert.ok(result.removed.includes('draft.md'), `the created file should have been removed, got ${JSON.stringify(result)}`);
+    assert.equal(existsSync(join(workspace.path, 'draft.md')), false, 'the file must actually be gone from disk');
+
+    // Later checkpoints describe a tree that no longer exists.
+    assert.ok(result.droppedCheckpoints >= 1, 'checkpoints after the rewind point must be discarded, not left to mislead');
+    const after = await json<{ checkpoints: unknown[] }>(`/api/tasks/${task.id}/checkpoints`);
+    assert.equal(after.checkpoints.length, 1, 'only the checkpoint that was rewound to should remain');
+
+    const changes = await json<{ changes: unknown[] }>(`/api/workspaces/${workspace.id}/changes`);
+    assert.deepEqual(changes.changes, [], 'the change log must match the restored tree');
+  });
+
+  it('refuses to rewind a task that is still running', async () => {
+    const { workspace } = await json<{ workspace: { id: string } }>('/api/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'e2e-rewind-guard' }),
+    });
+    const { task } = await json<{ task: { id: string } }>('/api/tasks', {
+      method: 'POST',
+      body: JSON.stringify({ workspaceId: workspace.id, request: 'Create a file `busy.md`.' }),
+    });
+
+    // Racing the pipeline on purpose: while it is queued or running, a rewind
+    // would move the tree out from under a live agent.
+    const res = await api(`/api/tasks/${task.id}/rewind`, { method: 'POST', body: JSON.stringify({ checkpointId: 'ckpt_none' }) });
+    const body = (await res.json()) as { error?: { message: string } };
+    assert.ok(res.status >= 400);
+    assert.ok(body.error?.message, 'the refusal must explain itself');
+    await waitForTask(task.id);
+  });
+
+  it('forks a task into its own workspace without disturbing the original', async () => {
+    const { workspace } = await json<{ workspace: { id: string; path: string } }>('/api/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'e2e-fork-source' }),
+    });
+    const { task } = await json<{ task: { id: string } }>('/api/tasks', {
+      method: 'POST',
+      body: JSON.stringify({ workspaceId: workspace.id, request: 'Create a file `original.md` with the first approach.' }),
+    });
+    await waitForTask(task.id);
+    assert.ok(existsSync(join(workspace.path, 'original.md')));
+
+    const fork = await json<{
+      task: { id: string };
+      workspace: { id: string; path: string; name: string };
+      forkedFrom: { taskId: string };
+    }>(`/api/tasks/${task.id}/fork`, {
+      method: 'POST',
+      body: JSON.stringify({ request: 'Create a file `alternative.md` with a different approach.' }),
+    });
+
+    assert.notEqual(fork.workspace.id, workspace.id, 'a fork must get its own workspace');
+    assert.equal(fork.forkedFrom.taskId, task.id);
+    // The copy starts from the source tree, so the original work is present.
+    assert.ok(existsSync(join(fork.workspace.path, 'original.md')), 'the fork should start from the original state');
+
+    await waitForTask(fork.task.id);
+    assert.ok(existsSync(join(fork.workspace.path, 'alternative.md')), 'the forked task should have done its own work');
+    // And none of it leaked back.
+    assert.equal(existsSync(join(workspace.path, 'alternative.md')), false, 'the original workspace must be untouched');
+  });
+
+  it('runs parallel lanes at the same time, not one after another', async () => {
+    const { workspace } = await json<{ workspace: { id: string } }>('/api/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'e2e-parallel' }),
+    });
+
+    await fetch(`${sim.root}/stats/reset`, { method: 'POST' });
+    const result = await json<{
+      runs: { lane: string; task: { status: string }; changes: { path: string }[] }[];
+      conflicts: { path: string; lanes: string[] }[];
+    }>('/api/tasks/parallel', {
+      method: 'POST',
+      body: JSON.stringify({
+        workspaceId: workspace.id,
+        concurrency: 3,
+        lanes: [
+          { name: 'alpha', request: 'Create a file `shared.md` describing alpha.' },
+          { name: 'beta', request: 'Create a file `beta-only.md` describing beta.' },
+          { name: 'gamma', request: 'Create a file `shared.md` describing gamma.' },
+        ],
+      }),
+    });
+
+    assert.equal(result.runs.length, 3);
+    for (const run of result.runs) assert.equal(run.task.status, 'completed', `lane ${run.lane} did not complete`);
+
+    // Direct evidence rather than a timing heuristic: the inference server saw
+    // more than one request open at the same moment.
+    const stats = (await (await fetch(`${sim.root}/stats`)).json()) as { peakInFlight: number };
+    assert.ok(stats.peakInFlight >= 2, `lanes must overlap; peak concurrent requests was ${stats.peakInFlight}`);
+
+    // Two lanes wrote the same path. Reporting that is the whole reason lanes
+    // run in copies rather than in the workspace itself.
+    assert.deepEqual(
+      result.conflicts.map((c) => c.path),
+      ['shared.md'],
+    );
+    assert.deepEqual(result.conflicts[0].lanes.sort(), ['alpha', 'gamma']);
   });
 
   /* ---------------- Usage accounting ---------------- */

@@ -11,6 +11,8 @@ import {
   TimelineStep,
   IconActivity,
   IconSplit,
+  IconUndo,
+  IconGitBranch,
 } from '@meridian/ui';
 import { formatCost, formatDuration, formatRelative } from '@meridian/shared';
 import { api } from '../lib/api.js';
@@ -30,6 +32,19 @@ export function TasksScreen(): React.JSX.Element {
   const toast = useStore((s) => s.toast);
   const [parallelOpen, setParallelOpen] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [checkpoints, setCheckpoints] = useState<Record<string, { id: string; label: string; at: number }[]>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+
+  // Checkpoints are loaded when a task is expanded rather than with the list:
+  // most tasks are never opened, and each carries a snapshot per step.
+  const loadCheckpoints = async (taskId: string): Promise<void> => {
+    try {
+      const res = await api.checkpoints(taskId);
+      setCheckpoints((prev) => ({ ...prev, [taskId]: res.checkpoints }));
+    } catch {
+      setCheckpoints((prev) => ({ ...prev, [taskId]: [] }));
+    }
+  };
 
   useEffect(() => {
     void refreshTasks();
@@ -99,6 +114,7 @@ export function TasksScreen(): React.JSX.Element {
                       onClick={() => {
                         setExpanded(expanded === t.id ? null : t.id);
                         void openTask(t.id);
+                        void loadCheckpoints(t.id);
                       }}
                       aria-expanded={expanded === t.id}
                     >
@@ -137,6 +153,71 @@ export function TasksScreen(): React.JSX.Element {
                         </TimelineStep>
                       ))}
                     </Timeline>
+                    {(checkpoints[t.id] ?? []).length > 0 && (
+                      <div>
+                        <h3 className="mrd-panel-title">Checkpoints</h3>
+                        <p className="mrd-caption">
+                          The workspace as it stood before each step. Rewinding discards every later step's work and the
+                          checkpoints that described it.
+                        </p>
+                        <Stack direction="column" gap={2}>
+                          {(checkpoints[t.id] ?? []).map((c) => (
+                            <Stack key={c.id} direction="row" gap={2} align="center" justify="between">
+                              <span className="mrd-secondary">
+                                {c.label} · {formatRelative(c.at, Date.now())}
+                              </span>
+                              <Stack direction="row" gap={2}>
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  icon={<IconUndo />}
+                                  disabled={busy === t.id || t.status === 'running' || t.status === 'queued'}
+                                  onClick={async () => {
+                                    setBusy(t.id);
+                                    try {
+                                      const res = await api.rewindTask(t.id, c.id);
+                                      await loadCheckpoints(t.id);
+                                      toast({
+                                        level: 'success',
+                                        message: `Back to "${res.checkpoint.label}" — ${res.restored.length} restored, ${res.removed.length} removed`,
+                                      });
+                                    } catch (e) {
+                                      toast({ level: 'error', message: e instanceof Error ? e.message : 'Rewind failed' });
+                                    } finally {
+                                      setBusy(null);
+                                    }
+                                  }}
+                                >
+                                  Rewind here
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  icon={<IconGitBranch />}
+                                  disabled={busy === t.id}
+                                  onClick={async () => {
+                                    const request = window.prompt(`Try something else from "${c.label}". What should the agents do instead?`, t.request);
+                                    if (!request?.trim()) return;
+                                    setBusy(t.id);
+                                    try {
+                                      const res = await api.forkTask(t.id, { request: request.trim(), checkpointId: c.id });
+                                      await refreshTasks();
+                                      toast({ level: 'success', message: `Forked into "${res.workspace.name}" — the original is untouched` });
+                                    } catch (e) {
+                                      toast({ level: 'error', message: e instanceof Error ? e.message : 'Fork failed' });
+                                    } finally {
+                                      setBusy(null);
+                                    }
+                                  }}
+                                >
+                                  Fork from here
+                                </Button>
+                              </Stack>
+                            </Stack>
+                          ))}
+                        </Stack>
+                      </div>
+                    )}
                     <Stack direction="row" gap={2}>
                       <Button
                         size="sm"

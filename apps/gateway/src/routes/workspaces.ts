@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises';
+import { cp, mkdir } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { MeridianError, newId, type PrivacyMode, type RoutingMode, type Workspace as WorkspaceRecord } from '@meridian/shared';
@@ -242,6 +242,137 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
   server.post<{ Params: { id: string } }>('/api/tasks/:id/cancel', async (req) => ({
     cancelled: app.orchestrator.cancel(req.params.id),
   }));
+
+  /**
+   * Branch a task: copy its workspace and run a different request against it.
+   *
+   * Copying rather than reusing is the point — the original task's work stays
+   * exactly as it was, so a fork is a genuine alternative to compare against
+   * rather than a destructive retry. With a `checkpointId`, the copy is first
+   * rewound to that step, which is how "try this differently from here" works.
+   */
+  server.post<{ Params: { id: string }; Body: { request?: string; checkpointId?: string; name?: string; mode?: RoutingMode; allowPaid?: boolean } }>(
+    '/api/tasks/:id/fork',
+    async (req) => {
+      const body = req.body ?? {};
+      if (!body.request) throw new MeridianError('invalid_request', '"request" is required');
+      const source = app.store.getTask(req.params.id);
+      if (!source) throw new MeridianError('invalid_request', 'No such task');
+      const sourceRecord = app.store.getWorkspace(source.workspaceId);
+      if (!sourceRecord) throw new MeridianError('invalid_request', 'The task\'s workspace no longer exists');
+
+      let checkpoint: ReturnType<App['store']['getCheckpoint']> = null;
+      if (body.checkpointId) {
+        checkpoint = app.store.getCheckpoint(body.checkpointId);
+        if (!checkpoint || checkpoint.taskId !== source.id) {
+          throw new MeridianError('invalid_request', 'No such checkpoint for this task');
+        }
+      }
+
+      const id = newId('ws');
+      const path = resolve(join(app.config.workspaceRoot, id));
+      await mkdir(path, { recursive: true });
+      // Same exclusions as a parallel lane: node_modules and dist are large and
+      // reproducible, and copying .git would give the fork a history it can
+      // commit to under the original's identity.
+      await cp(sourceRecord.path, path, {
+        recursive: true,
+        filter: (src) => !/[/\\](node_modules|\.git|dist|build|\.next|\.turbo|coverage)([/\\]|$)/.test(src),
+      });
+
+      const record: WorkspaceRecord = {
+        ...sourceRecord,
+        id,
+        name: body.name ?? `${sourceRecord.name} (fork)`,
+        path,
+        createdAt: Date.now(),
+        lastOpenedAt: Date.now(),
+      };
+      app.store.createWorkspace(record);
+
+      const ws = requireWorkspace(app, id);
+      let rewound: { restored: string[]; removed: string[]; skipped: string[] } | null = null;
+      if (checkpoint) rewound = await ws.rewind(checkpoint.snapshot);
+
+      const prefs = app.preferencesFor(req.auth.userId);
+      const mode = body.mode ?? record.defaultMode ?? prefs.routingMode;
+      const task = newTask({ workspaceId: id, userId: req.auth.userId, request: body.request, mode });
+      task.estimate = app.orchestrator.estimate(body.request, {
+        mode,
+        workspaceId: id,
+        userId: req.auth.userId,
+        allowPaid: body.allowPaid ?? prefs.allowPaid,
+      });
+      app.store.saveTask(task);
+
+      void app.orchestrator
+        .run({
+          task,
+          workspace: ws,
+          mode,
+          privacyMode: record.privacyMode,
+          allowPaid: body.allowPaid ?? prefs.allowPaid,
+          sensitive: record.privacyMode === 'STRICT_LOCAL' || record.privacyMode === 'TRUSTED_ONLY',
+          budget: prefs.maxCostPerTask,
+        })
+        .catch((e: unknown) => {
+          app.logger.error('forked task crashed', { taskId: task.id, errorCode: e instanceof Error ? e.message : String(e) });
+        });
+
+      app.store.audit({
+        actor: req.auth.userId ?? 'anonymous',
+        action: 'task.fork',
+        target: task.id,
+        details: { from: source.id, workspace: id, checkpointId: body.checkpointId ?? null },
+        ip: req.ip,
+      });
+
+      return { task, workspace: record, forkedFrom: { taskId: source.id, workspaceId: source.workspaceId }, rewound };
+    },
+  );
+
+  /** Snapshots taken before each step, newest last. */
+  server.get<{ Params: { id: string } }>('/api/tasks/:id/checkpoints', async (req) => ({
+    checkpoints: app.store.listCheckpoints(req.params.id),
+  }));
+
+  /**
+   * Take the workspace back to the state before a step ran.
+   *
+   * Refused while the task is still running: rewinding underneath a live agent
+   * would have it write into a tree that changed out from under it, and the
+   * result would be neither the old state nor the new one.
+   */
+  server.post<{ Params: { id: string }; Body: { checkpointId?: string } }>('/api/tasks/:id/rewind', async (req) => {
+    const task = app.store.getTask(req.params.id);
+    if (!task) throw new MeridianError('invalid_request', 'No such task');
+    if (task.status === 'running' || task.status === 'queued') {
+      throw new MeridianError('invalid_request', 'Cancel the task before rewinding it — an agent is still working in this workspace.');
+    }
+
+    const checkpointId = req.body?.checkpointId;
+    if (!checkpointId) throw new MeridianError('invalid_request', '"checkpointId" is required');
+    const record = app.store.getCheckpoint(checkpointId);
+    if (!record || record.taskId !== task.id) throw new MeridianError('invalid_request', 'No such checkpoint for this task');
+
+    const ws = requireWorkspace(app, task.workspaceId);
+    const result = await ws.rewind(record.snapshot);
+
+    // Later checkpoints describe a tree that no longer exists; keeping them
+    // would offer the user a rewind that silently does the wrong thing.
+    const dropped = app.store.deleteCheckpointsAfter(task.id, record.snapshot.at);
+
+    app.store.audit({
+      actor: req.auth.userId ?? 'anonymous',
+      action: 'task.rewind',
+      target: task.id,
+      details: { checkpointId, restored: result.restored.length, removed: result.removed.length, droppedCheckpoints: dropped },
+      ip: req.ip,
+    });
+    app.events.publish({ type: 'task', event: { type: 'diff', changes: ws.pendingChanges() } });
+
+    return { ...result, checkpoint: { id: record.snapshot.id, label: record.snapshot.label, at: record.snapshot.at }, droppedCheckpoints: dropped };
+  });
 
   /** Explicit feedback on a task, folded into the model's learned scores. */
   server.post<{ Params: { id: string }; Body: { feedback?: 'positive' | 'negative' } }>('/api/tasks/:id/feedback', async (req) => {

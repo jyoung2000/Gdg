@@ -17,7 +17,7 @@ import { AGENT_DEFINITIONS, STEP_LABEL } from './agents.js';
 import { AgentLoop, newStepId, type AgentEvent, type AgentRunResult } from './loop.js';
 import type { Sandbox } from './sandbox.js';
 import type { ToolRegistry } from './tools.js';
-import { unifiedDiff, type Workspace } from './workspace.js';
+import { unifiedDiff, type Workspace, type WorkspaceCheckpoint } from './workspace.js';
 
 export interface OrchestratorDeps {
   executor: Executor;
@@ -31,6 +31,13 @@ export interface OrchestratorDeps {
   persistStep?: (step: TaskStep) => void;
   persistTask?: (task: AgentTask) => void;
   persistToolCall?: (record: import('@meridian/shared').ToolCallRecord) => void;
+  /**
+   * Persist a workspace snapshot taken before a step ran.
+   *
+   * Optional because the agent runtime is usable without a database — but when
+   * it is wired up, a run becomes reversible one step at a time.
+   */
+  persistCheckpoint?: (taskId: string, stepId: string | null, checkpoint: WorkspaceCheckpoint) => void;
   now?: () => number;
 }
 
@@ -249,6 +256,20 @@ export class Orchestrator {
 
         steps[i] = { ...step, status: 'running', startedAt: this.now() };
         this.publishStep(steps[i]);
+
+        // Snapshot before the step, not after: the point of a checkpoint is the
+        // state to come back to if this step goes wrong.
+        if (this.deps.persistCheckpoint) {
+          try {
+            const checkpoint = await input.workspace.checkpoint(`Before ${STEP_LABEL[role]}`);
+            this.deps.persistCheckpoint(task.id, step.id, checkpoint);
+          } catch (e) {
+            // A checkpoint that cannot be taken must not stop the work; it means
+            // this step is not reversible, which the checkpoint list will show
+            // by simply not containing it.
+            log.warn('checkpoint failed', { stepId: step.id, errorCode: e instanceof Error ? e.message : String(e) });
+          }
+        }
 
         const result = await this.loop.run(
           {

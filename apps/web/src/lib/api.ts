@@ -239,6 +239,17 @@ export const api = {
     post<{ task: AgentTask }>('/api/tasks', body),
   cancelTask: (id: string) => post<{ cancelled: boolean }>(`/api/tasks/${id}/cancel`),
   taskFeedback: (id: string, feedback: 'positive' | 'negative') => post<{ applied: number }>(`/api/tasks/${id}/feedback`, { feedback }),
+  checkpoints: (id: string) =>
+    get<{ checkpoints: { id: string; label: string; at: number; skipped: string[]; fileCount: number; changeCount: number }[] }>(
+      `/api/tasks/${id}/checkpoints`,
+    ),
+  rewindTask: (id: string, checkpointId: string) =>
+    post<{ restored: string[]; removed: string[]; skipped: string[]; droppedCheckpoints: number; checkpoint: { label: string } }>(
+      `/api/tasks/${id}/rewind`,
+      { checkpointId },
+    ),
+  forkTask: (id: string, body: { request: string; checkpointId?: string; name?: string }) =>
+    post<{ task: AgentTask; workspace: Workspace; forkedFrom: { taskId: string } }>(`/api/tasks/${id}/fork`, body),
   parallel: (body: { workspaceId: string; lanes: { name: string; request: string }[]; mode?: RoutingMode; concurrency?: number }) =>
     post<{ runs: unknown[]; conflicts: { path: string; lanes: string[] }[]; usage: unknown }>('/api/tasks/parallel', body),
 
