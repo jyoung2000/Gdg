@@ -3,6 +3,7 @@ import { DEFAULT_PORT, MODE_DESCRIPTION_KEYS } from './shared.js';
 import { MODE_DESCRIPTION, PRIVACY_DESCRIPTION, MODE_WEIGHTS } from '@meridian/routing-sdk';
 import { AGENT_DEFINITIONS, AGENT_ROLES_ORDER } from '@meridian/agent-sdk';
 import { CAPABILITIES, MODALITIES, PRICING_KINDS, PRIVACY_MODES, ROUTING_MODES, TASK_TYPES, TRUST_LEVELS } from '@meridian/shared';
+import { requireAdmin } from './authz.js';
 import type { App } from '../services/app.js';
 
 /**
@@ -116,21 +117,33 @@ export async function registerSystemRoutes(server: FastifyInstance, app: App): P
   }));
 
   /** Gateway API keys. The plaintext is returned exactly once, on creation. */
-  server.get('/api/system/keys', async () => ({ keys: app.store.listApiKeys() }));
+  // Gateway keys are the instance's own credentials: listing them tells a
+  // caller who else has access, and minting one grants it.
+  server.get('/api/system/keys', async (req) => {
+    requireAdmin(req);
+    return { keys: app.store.listApiKeys() };
+  });
 
   server.post<{ Body: { name?: string } }>('/api/system/keys', async (req) => {
+    requireAdmin(req);
     const created = app.store.createApiKey(req.auth.userId, req.body?.name ?? 'Untitled key');
     app.store.audit({ actor: req.auth.userId ?? 'anonymous', action: 'api_key.create', target: created.id, details: { name: req.body?.name }, ip: req.ip });
     return { id: created.id, key: created.key, hint: created.hint, note: 'Copy this key now. It is not recoverable.' };
   });
 
   server.delete<{ Params: { id: string } }>('/api/system/keys/:id', async (req) => {
+    requireAdmin(req);
     const removed = app.store.deleteApiKey(req.params.id);
     app.store.audit({ actor: req.auth.userId ?? 'anonymous', action: 'api_key.delete', target: req.params.id, details: {}, ip: req.ip });
     return { removed };
   });
 
-  server.get('/api/system/audit', async (req) => ({ entries: app.store.listAudit(Number((req.query as { limit?: string }).limit ?? 200)) }));
+  // The audit log records what every user did, which is exactly why it is not
+  // readable by every user.
+  server.get('/api/system/audit', async (req) => {
+    requireAdmin(req);
+    return { entries: app.store.listAudit(Number((req.query as { limit?: string }).limit ?? 200)) };
+  });
 
   /* ---- Preferences ------------------------------------------------ */
 

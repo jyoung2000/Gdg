@@ -1,8 +1,9 @@
 import { cp, mkdir } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
-import type { FastifyInstance } from 'fastify';
-import { MeridianError, newId, type PrivacyMode, type RoutingMode, type Workspace as WorkspaceRecord } from '@meridian/shared';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { MeridianError, newId, type AgentTask, type PrivacyMode, type RoutingMode, type Workspace as WorkspaceRecord } from '@meridian/shared';
 import { Workspace, newTask, taskDiff, type Lane } from '@meridian/agent-sdk';
+import { requireScope } from './authz.js';
 import type { App } from '../services/app.js';
 import { intParam } from './shared.js';
 
@@ -17,7 +18,18 @@ import { intParam } from './shared.js';
 export async function registerWorkspaceRoutes(server: FastifyInstance, app: App): Promise<void> {
   /* ---------------- Workspaces ---------------- */
 
-  server.get('/api/workspaces', async () => ({ workspaces: app.store.listWorkspaces() }));
+  /**
+   * Only the workspaces this caller may reach.
+   *
+   * A workspace holds source code and can carry its own provider credential, so
+   * on a shared instance it is not a public listing. Unowned workspaces stay
+   * visible to everyone, which is what a single-user install has.
+   */
+  server.get('/api/workspaces', async (req) => {
+    requireScope(req, 'workspaces');
+    const reachable = app.workspaceIdsFor(req.auth.userId);
+    return { workspaces: app.store.listWorkspaces().filter((w) => reachable.has(w.id)) };
+  });
 
   server.post<{ Body: { name?: string; repoUrl?: string; branch?: string; privacyMode?: PrivacyMode; defaultMode?: RoutingMode } }>(
     '/api/workspaces',
@@ -32,6 +44,9 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
         id,
         name,
         path,
+        // Owned by whoever made it. On a single-user install that is the
+        // operator, and nothing changes.
+        userId: req.auth.userId,
         repoUrl: body.repoUrl ?? null,
         branch: body.branch ?? null,
         // A workspace holding a private repository defaults to the stricter
@@ -67,22 +82,24 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
   );
 
   server.get<{ Params: { id: string } }>('/api/workspaces/:id', async (req) => {
+    const ws = requireWorkspace(app, req, req.params.id);
     const record = app.store.getWorkspace(req.params.id);
     if (!record) throw new MeridianError('invalid_request', 'No such workspace');
     app.store.touchWorkspace(req.params.id);
-    const ws = app.workspaceFor(req.params.id)!;
     return { workspace: record, tree: await ws.tree('', 4), changes: ws.pendingChanges() };
   });
 
   server.patch<{ Params: { id: string }; Body: { name?: string; privacyMode?: PrivacyMode; defaultMode?: RoutingMode; branch?: string } }>(
     '/api/workspaces/:id',
     async (req) => {
+      requireWorkspace(app, req, req.params.id);
       app.store.updateWorkspace(req.params.id, req.body ?? {});
       return { workspace: app.store.getWorkspace(req.params.id) };
     },
   );
 
   server.delete<{ Params: { id: string } }>('/api/workspaces/:id', async (req) => {
+    requireWorkspace(app, req, req.params.id);
     // The database record goes; the directory is left on disk deliberately, so
     // removing a workspace from the UI can never destroy uncommitted work.
     const removed = app.store.deleteWorkspace(req.params.id);
@@ -93,19 +110,19 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
   /* ---------------- Files ---------------- */
 
   server.get<{ Params: { id: string }; Querystring: { path?: string; depth?: string } }>('/api/workspaces/:id/tree', async (req) => {
-    const ws = requireWorkspace(app, req.params.id);
+    const ws = requireWorkspace(app, req, req.params.id);
     return { tree: await ws.tree(req.query?.path ?? '', intParam(req.query?.depth, 4, 12)) };
   });
 
   server.get<{ Params: { id: string }; Querystring: { path?: string } }>('/api/workspaces/:id/file', async (req) => {
-    const ws = requireWorkspace(app, req.params.id);
+    const ws = requireWorkspace(app, req, req.params.id);
     const path = req.query?.path;
     if (!path) throw new MeridianError('invalid_request', '"path" is required');
     return { path, content: await ws.read(path) };
   });
 
   server.put<{ Params: { id: string }; Body: { path?: string; content?: string } }>('/api/workspaces/:id/file', async (req) => {
-    const ws = requireWorkspace(app, req.params.id);
+    const ws = requireWorkspace(app, req, req.params.id);
     const body = req.body ?? {};
     if (!body.path) throw new MeridianError('invalid_request', '"path" is required');
     return { change: await ws.write(body.path, body.content ?? '') };
@@ -114,7 +131,7 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
   server.get<{ Params: { id: string }; Querystring: { pattern?: string; glob?: string; ignoreCase?: string } }>(
     '/api/workspaces/:id/search',
     async (req) => {
-      const ws = requireWorkspace(app, req.params.id);
+      const ws = requireWorkspace(app, req, req.params.id);
       const q = req.query ?? {};
       if (!q.pattern) throw new MeridianError('invalid_request', '"pattern" is required');
       return {
@@ -126,7 +143,7 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
   /* ---------------- Diff review ---------------- */
 
   server.get<{ Params: { id: string } }>('/api/workspaces/:id/changes', async (req) => {
-    const ws = requireWorkspace(app, req.params.id);
+    const ws = requireWorkspace(app, req, req.params.id);
     const changes = ws.pendingChanges();
     return { changes, diff: taskDiff(changes) };
   });
@@ -134,7 +151,7 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
   server.post<{ Params: { id: string }; Body: { path?: string; action?: 'accept' | 'reject' } }>(
     '/api/workspaces/:id/changes',
     async (req) => {
-      const ws = requireWorkspace(app, req.params.id);
+      const ws = requireWorkspace(app, req, req.params.id);
       const { path, action } = req.body ?? {};
       if (action !== 'accept' && action !== 'reject') throw new MeridianError('invalid_request', '"action" must be accept or reject');
 
@@ -151,7 +168,7 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
   /* ---------------- Terminal ---------------- */
 
   server.post<{ Params: { id: string }; Body: { command?: string; timeoutMs?: number } }>('/api/workspaces/:id/exec', async (req) => {
-    const ws = requireWorkspace(app, req.params.id);
+    const ws = requireWorkspace(app, req, req.params.id);
     const command = req.body?.command;
     if (!command) throw new MeridianError('invalid_request', '"command" is required');
 
@@ -166,13 +183,18 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
   /* ---------------- Tasks ---------------- */
 
   server.get<{ Querystring: { workspaceId?: string; limit?: string } }>('/api/tasks', async (req) => {
-    const tasks = app.store.listTasks(req.query?.workspaceId, intParam(req.query?.limit, 50, 500));
+    requireScope(req, 'workspaces');
+    // A task carries the request the user typed and the code the agents wrote,
+    // so it is scoped to the workspaces the caller can reach.
+    const reachable = app.workspaceIdsFor(req.auth.userId);
+    const tasks = app.store
+      .listTasks(req.query?.workspaceId, intParam(req.query?.limit, 50, 500))
+      .filter((t) => reachable.has(t.workspaceId));
     return { tasks: tasks.map((t) => ({ ...t, running: app.orchestrator.isRunning(t.id) })) };
   });
 
   server.get<{ Params: { id: string } }>('/api/tasks/:id', async (req) => {
-    const task = app.store.getTask(req.params.id);
-    if (!task) throw new MeridianError('invalid_request', 'No such task');
+    const task = requireTask(app, req, req.params.id);
     return {
       task,
       steps: app.store.listSteps(task.id),
@@ -206,7 +228,7 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
     if (!body.workspaceId || !body.request) throw new MeridianError('invalid_request', '"workspaceId" and "request" are required');
     const record = app.store.getWorkspace(body.workspaceId);
     if (!record) throw new MeridianError('invalid_request', 'No such workspace');
-    const ws = requireWorkspace(app, body.workspaceId);
+    const ws = requireWorkspace(app, req, body.workspaceId);
 
     const prefs = app.preferencesFor(req.auth.userId);
     const mode = body.mode ?? record.defaultMode ?? prefs.routingMode;
@@ -239,9 +261,10 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
     return { task };
   });
 
-  server.post<{ Params: { id: string } }>('/api/tasks/:id/cancel', async (req) => ({
-    cancelled: app.orchestrator.cancel(req.params.id),
-  }));
+  server.post<{ Params: { id: string } }>('/api/tasks/:id/cancel', async (req) => {
+    requireTask(app, req, req.params.id);
+    return { cancelled: app.orchestrator.cancel(req.params.id) };
+  });
 
   /**
    * Branch a task: copy its workspace and run a different request against it.
@@ -256,8 +279,7 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
     async (req) => {
       const body = req.body ?? {};
       if (!body.request) throw new MeridianError('invalid_request', '"request" is required');
-      const source = app.store.getTask(req.params.id);
-      if (!source) throw new MeridianError('invalid_request', 'No such task');
+      const source = requireTask(app, req, req.params.id);
       const sourceRecord = app.store.getWorkspace(source.workspaceId);
       if (!sourceRecord) throw new MeridianError('invalid_request', 'The task\'s workspace no longer exists');
 
@@ -290,7 +312,7 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
       };
       app.store.createWorkspace(record);
 
-      const ws = requireWorkspace(app, id);
+      const ws = requireWorkspace(app, req, id);
       let rewound: { restored: string[]; removed: string[]; skipped: string[] } | null = null;
       if (checkpoint) rewound = await ws.rewind(checkpoint.snapshot);
 
@@ -332,9 +354,10 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
   );
 
   /** Snapshots taken before each step, newest last. */
-  server.get<{ Params: { id: string } }>('/api/tasks/:id/checkpoints', async (req) => ({
-    checkpoints: app.store.listCheckpoints(req.params.id),
-  }));
+  server.get<{ Params: { id: string } }>('/api/tasks/:id/checkpoints', async (req) => {
+    requireTask(app, req, req.params.id);
+    return { checkpoints: app.store.listCheckpoints(req.params.id) };
+  });
 
   /**
    * Take the workspace back to the state before a step ran.
@@ -344,8 +367,7 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
    * result would be neither the old state nor the new one.
    */
   server.post<{ Params: { id: string }; Body: { checkpointId?: string } }>('/api/tasks/:id/rewind', async (req) => {
-    const task = app.store.getTask(req.params.id);
-    if (!task) throw new MeridianError('invalid_request', 'No such task');
+    const task = requireTask(app, req, req.params.id);
     if (task.status === 'running' || task.status === 'queued') {
       throw new MeridianError('invalid_request', 'Cancel the task before rewinding it — an agent is still working in this workspace.');
     }
@@ -355,7 +377,7 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
     const record = app.store.getCheckpoint(checkpointId);
     if (!record || record.taskId !== task.id) throw new MeridianError('invalid_request', 'No such checkpoint for this task');
 
-    const ws = requireWorkspace(app, task.workspaceId);
+    const ws = requireWorkspace(app, req, task.workspaceId);
     const result = await ws.rewind(record.snapshot);
 
     // Later checkpoints describe a tree that no longer exists; keeping them
@@ -376,6 +398,7 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
 
   /** Explicit feedback on a task, folded into the model's learned scores. */
   server.post<{ Params: { id: string }; Body: { feedback?: 'positive' | 'negative' } }>('/api/tasks/:id/feedback', async (req) => {
+    requireTask(app, req, req.params.id);
     const feedback = req.body?.feedback;
     if (feedback !== 'positive' && feedback !== 'negative') throw new MeridianError('invalid_request', '"feedback" must be positive or negative');
     const rows = app.store.listUsage({ taskId: req.params.id, limit: 200 });
@@ -393,7 +416,7 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
       if (body.lanes.length > 6) throw new MeridianError('invalid_request', 'At most six lanes at a time');
       const record = app.store.getWorkspace(body.workspaceId);
       if (!record) throw new MeridianError('invalid_request', 'No such workspace');
-      const source = requireWorkspace(app, body.workspaceId);
+      const source = requireWorkspace(app, req, body.workspaceId);
       const prefs = app.preferencesFor(req.auth.userId);
 
       // Each lane gets its own copy of the workspace, so lanes cannot overwrite
@@ -420,7 +443,7 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
   server.post<{ Params: { id: string }; Body: { operation?: string; message?: string; branch?: string } }>(
     '/api/workspaces/:id/git',
     async (req) => {
-      const ws = requireWorkspace(app, req.params.id);
+      const ws = requireWorkspace(app, req, req.params.id);
       const body = req.body ?? {};
       // A fixed command set: the model-facing git tool and this route both
       // refuse to push, so an agent cannot publish anything on its own.
@@ -441,7 +464,37 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
   );
 }
 
-function requireWorkspace(app: App, id: string): Workspace {
+/**
+ * The live workspace, if this caller may reach it.
+ *
+ * Every route that touches a workspace goes through here, which is the only way
+ * a check like this stays applied: a new route that forgets it does not compile,
+ * because there is no other way to get the Workspace it needs.
+ *
+ * A workspace belonging to someone else is reported as absent rather than
+ * forbidden — "not yours" confirms it exists, which is an enumeration oracle.
+ */
+/**
+ * The task, if this caller may reach the workspace it belongs to.
+ *
+ * Task ids are opaque but not secret, and a task holds the user's request and
+ * the agents' output. A task in someone else's workspace reads as absent, for
+ * the same reason the workspace does.
+ */
+function requireTask(app: App, req: FastifyRequest, id: string): AgentTask {
+  requireScope(req, 'workspaces');
+  const task = app.store.getTask(id);
+  if (!task || !app.workspaceIdsFor(req.auth.userId).has(task.workspaceId)) {
+    throw new MeridianError('invalid_request', 'No such task');
+  }
+  return task;
+}
+
+function requireWorkspace(app: App, req: FastifyRequest, id: string): Workspace {
+  requireScope(req, 'workspaces');
+  if (!app.workspaceIdsFor(req.auth.userId).has(id)) {
+    throw new MeridianError('invalid_request', 'No such workspace');
+  }
   const ws = app.workspaceFor(id);
   if (!ws) throw new MeridianError('invalid_request', 'No such workspace');
   return ws;

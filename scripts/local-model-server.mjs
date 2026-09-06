@@ -44,6 +44,7 @@
 
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
+import { appendFileSync } from 'node:fs';
 
 /* ------------------------------------------------------------------ */
 /* Configuration                                                      */
@@ -71,6 +72,15 @@ const EMBED_DIMS = Number(flag('embed-dims', '384'));
  * prompt can produce, since a directive would reach every instance alike.
  */
 const FAIL_WITH = flag('fail-with', '') || null;
+/**
+ * Append one JSON line per chat request to this file: the tools that were
+ * offered, the turn, and what the policy decided.
+ *
+ * Written for verifying a real client. When a client gets text where a tool call
+ * was expected, the question is always "what did the provider actually see" —
+ * and the answer is otherwise invisible on both sides of the gateway.
+ */
+const LOG_REQUESTS = flag('log-requests', '') || null;
 
 const MODELS = [
   { id: 'meridian-sim-chat', context: 32768, caps: ['chat', 'tools'] },
@@ -94,6 +104,28 @@ function textOf(message) {
   const c = message?.content;
   if (typeof c === 'string') return c;
   if (Array.isArray(c)) return c.map((p) => (typeof p === 'string' ? p : (p?.text ?? ''))).join(' ');
+  return '';
+}
+
+/**
+ * The request the user actually made.
+ *
+ * A real client wraps it: Claude Code sends the prompt at the end of a user
+ * block that opens with two `<system-reminder>` sections, followed by a second
+ * user message of ten kilobytes of scaffolding. Reading "the last user message"
+ * gets the scaffolding; reading the first gets a reminder. Stripping the
+ * client's own furniture and taking the first thing left is what a model is
+ * told to do with those blocks, and it is what makes this server drivable by a
+ * real client rather than only by a test.
+ */
+function instructionOf(messages) {
+  for (const message of messages) {
+    if (message?.role !== 'user') continue;
+    const text = textOf(message)
+      .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, ' ')
+      .trim();
+    if (text) return text;
+  }
   return '';
 }
 
@@ -250,12 +282,20 @@ function targetPath(instruction) {
   return bare ? bare[1] : null;
 }
 
-/** Pull a path out of a `list_files` or `glob` result so the next read is real. */
+/**
+ * Pull a path out of a listing result so the next read is real.
+ *
+ * Absolute paths are recognised as well as relative ones: a client whose read
+ * tool requires an absolute path (Claude Code's `Read`, for one) is only useful
+ * to drive if the path taken from its own listing can be handed straight back.
+ */
 function pathFromToolOutput(text) {
   for (const line of String(text).split('\n')) {
     const trimmed = line.trim().replace(/^[-*\d.\s|]+/, '');
-    const m = trimmed.match(/^([\w-]+(?:\/[\w-]+)*\.\w{1,8})\b/);
-    if (m && !m[1].startsWith('.')) return m[1];
+    const absolute = trimmed.match(/^(\/[\w./-]+\.\w{1,8})\b/);
+    if (absolute) return absolute[1];
+    const relative = trimmed.match(/^([\w-]+(?:\/[\w-]+)*\.\w{1,8})\b/);
+    if (relative && !relative[1].startsWith('.')) return relative[1];
   }
   return null;
 }
@@ -267,6 +307,66 @@ function pathFromToolOutput(text) {
  * server terminates rather than burning its step budget — a runaway loop would
  * prove nothing about the loop being correct.
  */
+/**
+ * Which offered tool plays each role, whatever the client calls it.
+ *
+ * Meridian names its tools `read_file`, `list_files`, `run_command`; Claude Code
+ * names the same jobs `Read`, `Glob`, `Bash`; other clients differ again. Since
+ * this server exists to be driven by any of them, the policy picks tools by what
+ * they do rather than by an exact name — otherwise a client with a different
+ * vocabulary silently gets no tool calls at all, and a test that meant to prove
+ * tool round-tripping proves only that text came back.
+ */
+const TOOL_ROLES = {
+  list: [/^list_files$/i, /^ls$/i, /^list_?directory$/i],
+  glob: [/^glob$/i, /^find_?files?$/i],
+  grep: [/^grep$/i, /^search$/i, /^ripgrep$/i, /^search_?files?$/i],
+  read: [/^read_file$/i, /^read$/i, /^view$/i, /^cat$/i, /^open_?file$/i],
+  write: [/^write_file$/i, /^write$/i, /^create_?file$/i],
+  edit: [/^edit_file$/i, /^edit$/i, /^str_replace/i, /^apply_?patch$/i],
+  run: [/^run_command$/i, /^bash$/i, /^shell$/i, /^execute$/i, /^terminal$/i],
+  finish: [/^finish$/i, /^done$/i, /^submit$/i],
+};
+
+/** The offered tool that fills a role, or null when the client offers none. */
+function toolFor(role, toolNames) {
+  const patterns = TOOL_ROLES[role] ?? [];
+  for (const name of toolNames) {
+    if (patterns.some((p) => p.test(name))) return name;
+  }
+  return null;
+}
+
+/**
+ * Arguments for a role, shaped for the tool that was actually offered.
+ *
+ * Tools differ in more than their names: Claude Code's `Read` wants an absolute
+ * `file_path`, Meridian's `read_file` wants a workspace-relative `path`, and
+ * `Bash` wants a `command`. Sending the wrong shape produces a validation error
+ * on the client rather than a real round trip.
+ */
+function argsFor(role, toolName, value) {
+  const claudeStyle = /^[A-Z]/.test(toolName);
+  switch (role) {
+    case 'list':
+      return claudeStyle ? { path: value || '.' } : { path: value || '.' };
+    case 'glob':
+      return claudeStyle ? { pattern: value || '*' } : { pattern: value || '**/*' };
+    case 'grep':
+      return claudeStyle ? { pattern: value || 'export' } : { pattern: value || 'export' };
+    case 'read':
+      return claudeStyle ? { file_path: value } : { path: value };
+    case 'write':
+      return claudeStyle ? { file_path: value.path, content: value.content } : { path: value.path, content: value.content };
+    case 'run':
+      return { command: value };
+    case 'finish':
+      return { summary: value };
+    default:
+      return {};
+  }
+}
+
 function heuristicTurn({ turn, toolNames, instruction, lastToolText, filesWritten }) {
   const has = (n) => toolNames.includes(n);
   const wantsWrite = /\b(create|add|write|implement|generate|scaffold)\b/i.test(instruction);
@@ -276,30 +376,50 @@ function heuristicTurn({ turn, toolNames, instruction, lastToolText, filesWritte
     return { kind: 'text', text: answerText(instruction) };
   }
 
-  // Step 1 — orient. Every agent that can list, lists.
-  if (turn === 0 && has('list_files')) return { kind: 'tool', name: 'list_files', args: { path: '.' } };
-  if (turn === 0 && has('glob')) return { kind: 'tool', name: 'glob', args: { pattern: '**/*' } };
+  const pick = (role) => toolFor(role, toolNames);
+  const call = (role, value) => {
+    const name = pick(role);
+    return name ? { kind: 'tool', name, args: argsFor(role, name, value) } : null;
+  };
+
+  // Step 1 — orient. Whatever the client gave us that can enumerate files: a
+  // list tool, a glob tool, or failing both a shell. Emitting absolute paths so
+  // that a read tool requiring one can consume this output directly.
+  if (turn === 0) {
+    const orient =
+      call('list', '.') ??
+      call('glob', '*') ??
+      call('run', 'find "$PWD" -maxdepth 2 -type f -not -path "*/.*" | head -20');
+    if (orient) return orient;
+  }
 
   // Step 2 — act. Writing takes precedence when the instruction asked for it.
   if (turn === 1) {
-    if (wantsWrite && has('write_file') && target && !filesWritten.includes(target)) {
-      return { kind: 'tool', name: 'write_file', args: { path: target, content: fileContent(instruction, target) } };
+    if (wantsWrite && target && !filesWritten.includes(target)) {
+      const write = call('write', { path: target, content: fileContent(instruction, target) });
+      if (write) return write;
     }
     const readable = target ?? pathFromToolOutput(lastToolText ?? '');
-    if (readable && has('read_file')) return { kind: 'tool', name: 'read_file', args: { path: readable } };
-    if (has('grep')) return { kind: 'tool', name: 'grep', args: { pattern: keyword(instruction) } };
+    if (readable) {
+      const read = call('read', readable);
+      if (read) return read;
+    }
+    const search = call('grep', keyword(instruction));
+    if (search) return search;
+    const shell = call('run', `grep -rn ${JSON.stringify(keyword(instruction))} . | head -10`);
+    if (shell) return shell;
   }
 
   // Step 3 — verify a write by reading it back, which also proves the workspace
   // actually persisted it.
-  if (turn === 2 && filesWritten.length && has('read_file')) {
-    return { kind: 'tool', name: 'read_file', args: { path: filesWritten[filesWritten.length - 1] } };
+  if (turn === 2 && filesWritten.length) {
+    const verify = call('read', filesWritten[filesWritten.length - 1]);
+    if (verify) return verify;
   }
 
-  if (has('finish')) {
-    return { kind: 'tool', name: 'finish', args: { summary: summaryText(instruction, filesWritten) } };
-  }
-  return { kind: 'text', text: summaryText(instruction, filesWritten) };
+  // A client with no finish tool — Claude Code, for one — ends its turn on plain
+  // text, so that is the terminator when none is offered.
+  return call('finish', summaryText(instruction, filesWritten)) ?? { kind: 'text', text: summaryText(instruction, filesWritten) };
 }
 
 function keyword(instruction) {
@@ -347,8 +467,7 @@ function planTurn(body) {
   // policy would otherwise have chosen.
   const suppressed = body.tool_choice === 'none';
 
-  const lastUser = [...messages].reverse().find((m) => m.role === 'user');
-  const instruction = textOf(lastUser);
+  const instruction = instructionOf(messages);
 
   // A request carrying an image is answered by describing what arrived, which
   // is the only answer that can prove the mapping was faithful.
@@ -362,10 +481,12 @@ function planTurn(body) {
   const filesWritten = [];
   for (const m of messages) {
     for (const call of m.tool_calls ?? []) {
-      if (call?.function?.name !== 'write_file') continue;
+      const name = call?.function?.name;
+      if (!name || !TOOL_ROLES.write.some((p) => p.test(name))) continue;
       try {
         const args = JSON.parse(call.function.arguments || '{}');
-        if (args.path) filesWritten.push(args.path);
+        const path = args.path ?? args.file_path;
+        if (path) filesWritten.push(path);
       } catch {
         /* a malformed call we ourselves emitted is not worth crashing over */
       }
@@ -577,6 +698,25 @@ const server = createServer(async (req, res) => {
         sendError(res, turn.code);
         return;
       }
+      if (LOG_REQUESTS) {
+        try {
+          appendFileSync(
+            LOG_REQUESTS,
+            `${JSON.stringify({
+              model: body.model ?? null,
+              messages: (body.messages ?? []).map((m) => m.role),
+              tools: (body.tools ?? []).map((t) => t?.function?.name ?? t?.name).filter(Boolean),
+              instruction: instructionOf(body.messages ?? []).slice(0, 120),
+              toolChoice: body.tool_choice ?? null,
+              stream: body.stream === true,
+              decision: turn.kind === 'tool' ? `tool:${turn.name}` : turn.kind,
+            })}\n`,
+          );
+        } catch {
+          /* logging must never break the response */
+        }
+      }
+
       enter();
       try {
         // The configured latency is counted inside the tracked window: a caller

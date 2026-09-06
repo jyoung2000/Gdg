@@ -64,7 +64,13 @@ export class CredentialResolver {
   resolve(q: CredentialQuery, providerRequiresAuth: boolean): CredentialResolution {
     if (q.explicitCredentialId) {
       const explicit = this.store.getById(q.explicitCredentialId);
-      if (explicit && explicit.providerId === q.providerId && this.usable(explicit)) {
+      // Naming a credential is not the same as being entitled to it. An id is
+      // guessable and, once any surface accepts one from a caller, an
+      // unchecked lookup here is a cross-user key leak. So the same ownership
+      // rule that governs automatic selection governs an explicit choice:
+      // a user-scoped credential belongs to its user, a workspace-scoped one to
+      // its workspace, and nothing else may borrow either.
+      if (explicit && explicit.providerId === q.providerId && this.usable(explicit) && this.entitled(explicit, q)) {
         return { credential: explicit, reason: 'Credential named on the request', anonymous: false };
       }
       // An explicitly named credential that cannot be used is an error the
@@ -81,12 +87,7 @@ export class CredentialResolver {
 
     for (const scope of CREDENTIAL_SCOPE_ORDER) {
       if (scope === 'request' || !allowed.has(scope)) continue;
-      const forScope = candidates.filter((c) => {
-        if (c.scope !== scope) return false;
-        if (scope === 'user') return c.userId != null && c.userId === q.userId;
-        if (scope === 'workspace') return c.workspaceId != null && c.workspaceId === q.workspaceId;
-        return true;
-      });
+      const forScope = candidates.filter((c) => c.scope === scope && this.entitled(c, q));
       if (!forScope.length) continue;
       const picked = this.pick(forScope);
       if (!picked) continue;
@@ -103,6 +104,24 @@ export class CredentialResolver {
   /** True when at least one credential could serve this provider right now. */
   hasAny(providerId: string): boolean {
     return this.store.listForProvider(providerId).some((c) => this.usable(c));
+  }
+
+  /**
+   * Whether this caller may use this credential.
+   *
+   * The rule is ownership, not scope order: a user-scoped credential belongs to
+   * exactly one user and a workspace-scoped one to exactly one workspace.
+   * Anything broader — operator, system, managed — is shared by definition, and
+   * is the operator's decision to have made.
+   *
+   * A user-scoped credential with no user attached is unusable rather than
+   * universal. Treating a missing owner as "anyone" is how a scoping bug becomes
+   * a leak.
+   */
+  private entitled(credential: ResolvedCredential, q: CredentialQuery): boolean {
+    if (credential.scope === 'user') return credential.userId != null && credential.userId === q.userId;
+    if (credential.scope === 'workspace') return credential.workspaceId != null && credential.workspaceId === q.workspaceId;
+    return true;
   }
 
   private usable(c: ResolvedCredential): boolean {

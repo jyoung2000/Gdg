@@ -12,9 +12,20 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+      # "host" lets the build reach a registry through the host's own network
+      # where the default bridge cannot. Left at Docker's default otherwise.
+      network: "${MERIDIAN_BUILD_NETWORK:-default}"
+      args:
+        # Override where Docker Hub is unreachable. See docker/Dockerfile.
+        BASE_IMAGE: "${MERIDIAN_BASE_IMAGE:-node:22-bookworm-slim}"
+        RUNTIME_IMAGE: "${MERIDIAN_RUNTIME_IMAGE:-node:22-bookworm-slim}"
+        DOCKER_CLI_VERSION: "${MERIDIAN_DOCKER_CLI_VERSION:-29.8.0}"
     image: meridian:latest
     container_name: meridian
     restart: unless-stopped
+    # Docker's own init reaps the sandbox's grandchildren, so the image does not
+    # have to carry tini for that guarantee to hold.
+    init: true
     ports:
       - "${MERIDIAN_PORT:-4639}:4639"
     environment:
@@ -103,7 +114,18 @@ services:
       # Required only for MERIDIAN_SANDBOX=docker: the gateway starts a
       # throwaway container per command. Comment this out and set
       # MERIDIAN_SANDBOX=process if you would rather not share the socket.
+      #
+      # Sharing it is a real grant of privilege: anything that can talk to this
+      # socket can start a container with the host filesystem mounted, so it is
+      # equivalent to root on the host. Meridian only uses it to run the sandbox
+      # image with no network and a read-only root, but the grant is what it is.
       - /var/run/docker.sock:/var/run/docker.sock
+    # The gateway runs as a non-root user, so it needs the socket's group to use
+    # it. Find the id with: stat -c '%g' /var/run/docker.sock
+    # Without this, Docker sandboxing reports itself unavailable and the gateway
+    # falls back to the process sandbox — which it will say, loudly.
+    group_add:
+      - "${MERIDIAN_DOCKER_GID:-999}"
     extra_hosts:
       # Lets the container reach a local Ollama or vLLM on the host.
       - "host.docker.internal:host-gateway"
@@ -120,6 +142,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.sandbox
+      network: "${MERIDIAN_BUILD_NETWORK:-default}"
+      args:
+        SANDBOX_BASE_IMAGE: "${MERIDIAN_SANDBOX_BASE_IMAGE:-node:22-bookworm-slim}"
     image: meridian-sandbox:latest
     profiles: ["build-sandbox"]
     command: ["true"]

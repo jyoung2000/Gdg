@@ -162,14 +162,43 @@ export class DockerSandbox implements Sandbox {
    * sentence at startup.
    */
   async diagnose(): Promise<string | null> {
+    // Every failure in here is a diagnosis, never an exception. This runs during
+    // startup, and a sandbox that cannot be used must degrade the instance, not
+    // prevent it from booting — which is exactly what happened when the `docker`
+    // binary was absent and spawning it rejected instead of reporting.
+    try {
+      return await this.probe();
+    } catch (e) {
+      return `The Docker sandbox could not be checked (${e instanceof Error ? e.message : String(e)})`;
+    }
+  }
+
+  private async probe(): Promise<string | null> {
     const version = await runProcess('docker', ['version', '--format', '{{.Server.Version}}'], {
       cwd: process.cwd(),
       timeoutMs: 8000,
       env: baseEnv(),
       maxOutputBytes: 4096,
+    }).catch((e: unknown) => {
+      // ENOENT here means the image has no docker CLI at all, which is a
+      // different problem from a daemon that is not answering, and the operator
+      // needs to be told which one they have.
+      const message = e instanceof Error ? e.message : String(e);
+      return { exitCode: 127, stdout: '', stderr: message, timedOut: false, truncated: false, durationMs: 0 };
     });
+    if (version.exitCode === 127 && /ENOENT/.test(version.stderr)) {
+      return 'The `docker` command is not available to the gateway. Install the Docker CLI in the image, or set MERIDIAN_SANDBOX=process';
+    }
+    if (/permission denied/i.test(version.stderr)) {
+      // The socket is mounted but the gateway's user is not in its group. This
+      // is the usual outcome of running the gateway as a non-root user, and it
+      // is worth naming precisely: "not reachable" would send an operator
+      // looking for a daemon that is running perfectly well.
+      return 'The Docker socket is present but this process may not use it. Add the socket\'s group to the container (MERIDIAN_DOCKER_GID in the shipped Compose file)';
+    }
     if (version.exitCode !== 0) {
-      return 'Docker is not reachable from the gateway';
+      const detail = (version.stderr || version.stdout).trim().split('\n')[0];
+      return `Docker is not reachable from the gateway${detail ? ` (${detail})` : ''}`;
     }
 
     const image = await runProcess('docker', ['image', 'inspect', this.image, '--format', '{{.Id}}'], {
@@ -366,7 +395,12 @@ export async function resolveSandbox(
 ): Promise<{ sandbox: Sandbox; degraded: boolean; reason: string | null }> {
   const chosen = createSandbox(preferred, opts);
   if (preferred === 'docker') {
-    const detail = await (chosen as DockerSandbox).diagnose();
+    const detail = await (chosen as DockerSandbox)
+      .diagnose()
+      // Belt and braces: nothing about choosing a sandbox may stop the gateway
+      // from starting. The worst honest outcome is a degraded instance that says
+      // so, and that is strictly better than an instance that will not boot.
+      .catch((e: unknown) => `The Docker sandbox could not be checked (${e instanceof Error ? e.message : String(e)})`);
     if (detail === null) return { sandbox: chosen, degraded: false, reason: null };
     const fallback = new ProcessSandbox(opts.logger);
     const reason = `${detail.replace(/\.$/, '')}. Command execution fell back to the process sandbox, which is not a security boundary.`;

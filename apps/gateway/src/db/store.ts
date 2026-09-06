@@ -291,6 +291,14 @@ export class Store implements CredentialStore {
   }
 
   /** Public records only — the secret is stripped before it can leave the store. */
+  /** One credential's record, secret withheld. Used for ownership checks. */
+  getCredential(id: string): CredentialRecord | null {
+    const row = this.db.prepare('SELECT * FROM credentials WHERE id = ?').get(id) as Row | undefined;
+    if (!row) return null;
+    const { secret: _secret, ...rest } = this.toResolved(row);
+    return rest;
+  }
+
   listCredentials(): CredentialRecord[] {
     return (this.db.prepare('SELECT * FROM credentials ORDER BY provider_id, priority DESC').all() as Row[]).map((r) => {
       const { secret: _secret, ...rest } = this.toResolved(r);
@@ -593,8 +601,10 @@ export class Store implements CredentialStore {
 
   createWorkspace(w: Workspace): Workspace {
     this.db
-      .prepare('INSERT INTO workspaces (id, name, path, repo_url, branch, privacy_mode, default_mode, created_at, last_opened_at) VALUES (?,?,?,?,?,?,?,?,?)')
-      .run(w.id, w.name, w.path, w.repoUrl, w.branch, w.privacyMode, w.defaultMode, w.createdAt, w.lastOpenedAt);
+      .prepare(
+        'INSERT INTO workspaces (id, name, path, repo_url, branch, privacy_mode, default_mode, created_at, last_opened_at, user_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      )
+      .run(w.id, w.name, w.path, w.repoUrl, w.branch, w.privacyMode, w.defaultMode, w.createdAt, w.lastOpenedAt, w.userId ?? null);
     return w;
   }
 
@@ -727,10 +737,17 @@ export class Store implements CredentialStore {
       .run(u.id, u.at, u.requestId, u.userId, u.workspaceId, u.taskId, u.agentRole, u.providerId, u.modelId, u.credentialId, u.poolId, u.modality, u.taskType, u.promptTokens, u.completionTokens, u.cost, u.latencyMs, u.ttftMs, int(u.success), u.fallbackCount, u.errorCode);
   }
 
-  listUsage(opts: { since?: number; limit?: number; modelId?: string; taskId?: string } = {}): UsageRecord[] {
+  listUsage(opts: { since?: number; limit?: number; modelId?: string; taskId?: string; userId?: string | null } = {}): UsageRecord[] {
     const clauses: string[] = [];
     const args: unknown[] = [];
     if (opts.since != null) { clauses.push('at >= ?'); args.push(opts.since); }
+    if (opts.userId !== undefined) {
+      // Explicitly including rows with no user: those are the instance's own
+      // calls, not another person's, and hiding them would make a single-user
+      // install look empty.
+      clauses.push('(user_id = ? OR user_id IS NULL)');
+      args.push(opts.userId);
+    }
     if (opts.modelId) { clauses.push('model_id = ?'); args.push(opts.modelId); }
     if (opts.taskId) { clauses.push('task_id = ?'); args.push(opts.taskId); }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
@@ -761,23 +778,30 @@ export class Store implements CredentialStore {
   }
 
   /** Aggregates for the usage screen, computed in SQL rather than in memory. */
-  usageSummary(since: number): {
+  /**
+   * Usage totals since a moment, optionally for one user.
+   *
+   * `userId` undefined means the whole instance, which is what an administrator
+   * sees; a value narrows to that user's rows plus the instance's own unattributed
+   * calls, so a shared install does not show one person another's spend.
+   */
+  usageSummary(since: number, userId?: string | null): {
     totals: { requests: number; tokens: number; cost: number; failures: number; fallbacks: number };
     byModel: { modelId: string; providerId: string; requests: number; tokens: number; cost: number; avgLatency: number; successRate: number }[];
     byDay: { day: string; requests: number; tokens: number; cost: number }[];
     byProvider: { providerId: string; requests: number; cost: number; errorRate: number }[];
   } {
     const totals = this.db
-      .prepare('SELECT COUNT(*) AS requests, COALESCE(SUM(prompt_tokens+completion_tokens),0) AS tokens, COALESCE(SUM(cost),0) AS cost, SUM(CASE WHEN success=0 THEN 1 ELSE 0 END) AS failures, COALESCE(SUM(fallback_count),0) AS fallbacks FROM usage WHERE at >= ?')
-      .get(since) as Row;
+      .prepare('SELECT COUNT(*) AS requests, COALESCE(SUM(prompt_tokens+completion_tokens),0) AS tokens, COALESCE(SUM(cost),0) AS cost, SUM(CASE WHEN success=0 THEN 1 ELSE 0 END) AS failures, COALESCE(SUM(fallback_count),0) AS fallbacks FROM usage WHERE at >= ? AND (? IS NULL OR user_id = ? OR user_id IS NULL)')
+      .get(since, userId ?? null, userId ?? null) as Row;
     const byModel = (this.db
       .prepare(
         `SELECT model_id, provider_id, COUNT(*) AS requests, COALESCE(SUM(prompt_tokens+completion_tokens),0) AS tokens,
            COALESCE(SUM(cost),0) AS cost, AVG(latency_ms) AS avg_latency,
            AVG(CASE WHEN success=1 THEN 1.0 ELSE 0.0 END) AS success_rate
-         FROM usage WHERE at >= ? GROUP BY model_id, provider_id ORDER BY requests DESC LIMIT 50`,
+         FROM usage WHERE at >= ? AND (? IS NULL OR user_id = ? OR user_id IS NULL) GROUP BY model_id, provider_id ORDER BY requests DESC LIMIT 50`,
       )
-      .all(since) as Row[]).map((r) => ({
+      .all(since, userId ?? null, userId ?? null) as Row[]).map((r) => ({
       modelId: String(r.model_id),
       providerId: String(r.provider_id),
       requests: Number(r.requests),
@@ -790,16 +814,16 @@ export class Store implements CredentialStore {
       .prepare(
         `SELECT date(at/1000, 'unixepoch') AS day, COUNT(*) AS requests,
            COALESCE(SUM(prompt_tokens+completion_tokens),0) AS tokens, COALESCE(SUM(cost),0) AS cost
-         FROM usage WHERE at >= ? GROUP BY day ORDER BY day`,
+         FROM usage WHERE at >= ? AND (? IS NULL OR user_id = ? OR user_id IS NULL) GROUP BY day ORDER BY day`,
       )
-      .all(since) as Row[]).map((r) => ({ day: String(r.day), requests: Number(r.requests), tokens: Number(r.tokens), cost: Number(r.cost) }));
+      .all(since, userId ?? null, userId ?? null) as Row[]).map((r) => ({ day: String(r.day), requests: Number(r.requests), tokens: Number(r.tokens), cost: Number(r.cost) }));
     const byProvider = (this.db
       .prepare(
         `SELECT provider_id, COUNT(*) AS requests, COALESCE(SUM(cost),0) AS cost,
            AVG(CASE WHEN success=0 THEN 1.0 ELSE 0.0 END) AS error_rate
-         FROM usage WHERE at >= ? GROUP BY provider_id ORDER BY requests DESC`,
+         FROM usage WHERE at >= ? AND (? IS NULL OR user_id = ? OR user_id IS NULL) GROUP BY provider_id ORDER BY requests DESC`,
       )
-      .all(since) as Row[]).map((r) => ({ providerId: String(r.provider_id), requests: Number(r.requests), cost: Number(r.cost), errorRate: Number(r.error_rate ?? 0) }));
+      .all(since, userId ?? null, userId ?? null) as Row[]).map((r) => ({ providerId: String(r.provider_id), requests: Number(r.requests), cost: Number(r.cost), errorRate: Number(r.error_rate ?? 0) }));
 
     return {
       totals: {
@@ -991,6 +1015,7 @@ function toWorkspace(r: Row): Workspace {
     defaultMode: String(r.default_mode) as RoutingMode,
     createdAt: Number(r.created_at),
     lastOpenedAt: (r.last_opened_at as number) ?? null,
+    userId: (r.user_id as string) ?? null,
   };
 }
 

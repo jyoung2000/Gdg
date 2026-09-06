@@ -304,8 +304,11 @@ export class App {
     // Seed the operator account when the instance is empty: a fresh install
     // needs an identity to attach preferences and credentials to.
     if (this.store.countUsers() === 0) {
-      const email = this.config.adminEmail ?? 'operator@localhost';
-      const user = this.store.createUser(email, 'Operator', 'admin', this.config.adminPassword ?? undefined);
+      // An empty string is what a Compose file passes for an unset variable, and
+      // it is not an address. Treated as absent so the bootstrap account gets a
+      // usable identity rather than a blank one.
+      const email = this.config.adminEmail?.trim() || 'operator@localhost';
+      const user = this.store.createUser(email, 'Operator', 'admin', this.config.adminPassword?.trim() || undefined);
       this.logger.info('bootstrap operator created', { userId: user.id, email });
       if (!this.config.adminPassword) {
         this.warnings.push({
@@ -461,6 +464,22 @@ export class App {
   /* ---------------------------------------------------------------- */
   /* Helpers used by the routes                                       */
   /* ---------------------------------------------------------------- */
+
+  /**
+   * Which workspaces this caller may reach.
+   *
+   * Their own, plus every workspace with no owner. Unowned workspaces are the
+   * ones that existed before ownership did, and on a single-user install that is
+   * all of them — so this keeps that install working exactly as it did while
+   * giving a shared install a real boundary.
+   */
+  workspaceIdsFor(userId: string | null): Set<string> {
+    const ids = new Set<string>();
+    for (const w of this.store.listWorkspaces()) {
+      if (w.userId == null || (userId != null && w.userId === userId)) ids.add(w.id);
+    }
+    return ids;
+  }
 
   /** The live Workspace for a stored record, created on first use. */
   workspaceFor(workspaceId: string): Workspace | null {

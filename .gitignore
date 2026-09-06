@@ -16,3 +16,7 @@ apps/web/dist/
 
 # Screenshots written by the UI suite on every run.
 docs/evidence/screens/
+
+# Build-time CAs belong to the environment, not the repository.
+docker/ca/*.crt
+docker/ca/*.pem

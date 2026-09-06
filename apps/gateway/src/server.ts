@@ -18,7 +18,7 @@ import { registerEventRoutes } from './routes/events.js';
 declare module 'fastify' {
   interface FastifyRequest {
     /** Identity resolved from the API key or session, null when anonymous. */
-    auth: { userId: string | null; scopes: string[]; via: 'api-key' | 'anonymous' };
+    auth: { userId: string | null; role: import('@meridian/shared').Role; scopes: string[]; via: 'api-key' | 'anonymous' };
     requestId: string;
     /** Set when this request claimed an Idempotency-Key and still owes a result. */
     idempotency?: { key: string; userId: string; method: string; path: string };
@@ -134,7 +134,8 @@ export async function createServer(app: App): Promise<FastifyInstance> {
   /* ---- Authentication -------------------------------------------- */
 
   server.addHook('onRequest', async (req, reply) => {
-    req.auth = { userId: null, scopes: ['*'], via: 'anonymous' };
+    // Least privilege until something establishes otherwise.
+    req.auth = { userId: null, role: 'viewer', scopes: [], via: 'anonymous' };
 
     const header = req.headers.authorization ?? '';
     const xApiKey = req.headers['x-api-key'];
@@ -148,7 +149,10 @@ export async function createServer(app: App): Promise<FastifyInstance> {
     if (presented) {
       const verified = app.store.verifyApiKey(presented);
       if (verified) {
-        req.auth = { userId: verified.userId, scopes: verified.scopes, via: 'api-key' };
+        // The key carries the scopes; the user record carries the role. A key
+        // cannot promote its holder, and a role cannot widen a narrow key.
+        const user = verified.userId ? app.store.getUser(verified.userId) : null;
+        req.auth = { userId: verified.userId, role: user?.role ?? 'member', scopes: verified.scopes, via: 'api-key' };
         return;
       }
       if (app.config.authRequired) {
@@ -157,11 +161,13 @@ export async function createServer(app: App): Promise<FastifyInstance> {
       }
     }
 
-    // With auth off, the instance is single-user: requests act as the operator
-    // so preferences, credentials and usage still attribute correctly.
+    // With auth off, the instance is single-user: requests act as the operator,
+    // so preferences, credentials and usage still attribute correctly, and there
+    // is nobody to withhold administration from. Turning authentication on is
+    // what makes "somebody else" a concept at all.
     if (!app.config.authRequired) {
       const operator = app.store.listUsers()[0];
-      req.auth = { userId: operator?.id ?? null, scopes: ['*'], via: 'anonymous' };
+      req.auth = { userId: operator?.id ?? null, role: operator?.role ?? 'admin', scopes: ['*'], via: 'anonymous' };
       return;
     }
 

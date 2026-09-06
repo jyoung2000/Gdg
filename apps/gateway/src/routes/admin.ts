@@ -11,6 +11,7 @@ import {
   type TrustLevel,
 } from '@meridian/shared';
 import { BENCHMARK_SUITE, bestForLabel, recommendationScore, runBenchmark, stars, summarise } from '@meridian/model-sdk';
+import { mayUseCredential, requireAdmin, requireCredentialOwner, requireScope } from './authz.js';
 import type { App } from '../services/app.js';
 import { intParam } from './shared.js';
 
@@ -45,6 +46,9 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
   server.patch<{ Params: { id: string }; Body: { trust?: TrustLevel; baseUrl?: string; enabled?: boolean; dataUse?: unknown } }>(
     '/api/providers/:id',
     async (req) => {
+      // Trust level and base URL decide where every user's requests go and how
+      // sensitive a workspace may be for a provider. Instance-wide, so admin.
+      requireAdmin(req);
       const descriptor = app.providers.descriptor(req.params.id);
       if (!descriptor) throw new MeridianError('invalid_request', `No provider "${req.params.id}"`);
       const body = req.body ?? {};
@@ -96,9 +100,12 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
     return { ok: result.ok, latencyMs: result.latencyMs, detail: result.detail, supportState: app.providers.supportState(req.params.id) };
   });
 
-  server.post<{ Params: { id: string } }>('/api/providers/:id/reset-health', async (req) => ({
-    health: app.health.reset(req.params.id),
-  }));
+  server.post<{ Params: { id: string } }>('/api/providers/:id/reset-health', async (req) => {
+    // Clearing a breaker sends every user's traffic back at a provider that was
+    // failing, so it is not one user's call to make.
+    requireAdmin(req);
+    return { health: app.health.reset(req.params.id) };
+  });
 
   server.post('/api/providers/discover', async () => {
     const result = await app.discovery.runOnce();
@@ -108,25 +115,44 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
 
   /* ---------------- Credentials ---------------- */
 
-  server.get('/api/credentials', async () => ({
-    credentials: app.store.listCredentials(),
-    pools: app.store.listCredentialPools(),
-  }));
+  server.get('/api/credentials', async (req) => {
+    requireScope(req, 'credentials');
+    // A shared instance must not let one user enumerate another's keys, even
+    // without their secrets: the provider, the label and the id are enough to
+    // target them.
+    const workspaces = app.workspaceIdsFor(req.auth.userId);
+    return {
+      credentials: app.store.listCredentials().filter((c) => mayUseCredential(req, c, workspaces)),
+      pools: app.store.listCredentialPools(),
+    };
+  });
 
   server.post<{
     Body: { providerId?: string; secret?: string; label?: string; scope?: string; workspaceId?: string; poolId?: string; priority?: number; maxConcurrency?: number };
   }>('/api/credentials', async (req) => {
+    requireScope(req, 'credentials');
     const body = req.body ?? {};
     if (!body.providerId) throw new MeridianError('invalid_request', '"providerId" is required');
     if (!app.providers.descriptor(body.providerId)) throw new MeridianError('invalid_request', `No provider "${body.providerId}"`);
     const descriptor = app.providers.descriptor(body.providerId)!;
     if (descriptor.auth !== 'none' && !body.secret) throw new MeridianError('invalid_request', `${descriptor.name} requires a secret`);
 
+    const scope = (body.scope as 'user' | 'workspace' | 'admin' | 'system') ?? 'user';
+    // A user may add their own key, and a key for a workspace they can reach.
+    // Anything the whole instance would draw on is the operator's decision.
+    if (scope === 'admin' || scope === 'system') requireAdmin(req);
+    if (scope === 'workspace') {
+      const reachable = app.workspaceIdsFor(req.auth.userId);
+      if (!body.workspaceId || (req.auth.role !== 'admin' && !reachable.has(body.workspaceId))) {
+        throw new MeridianError('invalid_request', 'A workspace-scoped credential needs a workspace you can reach');
+      }
+    }
+
     const record = app.store.addCredential({
       providerId: body.providerId,
       secret: body.secret ?? null,
       // A credential entered through the UI is the user's own by default.
-      scope: (body.scope as 'user' | 'workspace' | 'admin' | 'system') ?? 'user',
+      scope,
       source: 'user-entered',
       label: body.label ?? `${descriptor.name} key`,
       userId: req.auth.userId,
@@ -149,6 +175,7 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
   });
 
   server.patch<{ Params: { id: string }; Body: { secret?: string; enabled?: boolean } }>('/api/credentials/:id', async (req) => {
+    requireCredentialOwner(req, app.store.getCredential(req.params.id), app.workspaceIdsFor(req.auth.userId));
     const body = req.body ?? {};
     if (body.secret) app.store.updateCredentialSecret(req.params.id, body.secret);
     if (body.enabled !== undefined) app.store.setCredentialEnabled(req.params.id, body.enabled);
@@ -158,6 +185,7 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
   });
 
   server.delete<{ Params: { id: string } }>('/api/credentials/:id', async (req) => {
+    requireCredentialOwner(req, app.store.getCredential(req.params.id), app.workspaceIdsFor(req.auth.userId));
     const removed = app.store.deleteCredential(req.params.id);
     app.refreshCredentialState();
     app.store.audit({ actor: req.auth.userId ?? 'anonymous', action: 'credential.delete', target: req.params.id, details: {}, ip: req.ip });
@@ -167,6 +195,8 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
   server.post<{ Body: { providerId?: string; name?: string; strategy?: 'priority' | 'round-robin' | 'least-used' | 'health' } }>(
     '/api/credentials/pools',
     async (req) => {
+      // A credential pool decides which keys the whole instance rotates through.
+      requireAdmin(req);
       const body = req.body ?? {};
       if (!body.providerId || !body.name) throw new MeridianError('invalid_request', '"providerId" and "name" are required');
       return { pool: app.store.addCredentialPool(body.providerId, body.name, body.strategy ?? 'priority') };
@@ -386,6 +416,8 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
   }));
 
   server.post<{ Body: Partial<InferencePool> }>('/api/pools', async (req) => {
+    // A pool decides which models the whole instance may draw on.
+    requireAdmin(req);
     const body = req.body ?? {};
     if (!body.name) throw new MeridianError('invalid_request', '"name" is required');
     const pool: InferencePool = {
@@ -407,6 +439,7 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
   });
 
   server.patch<{ Params: { id: string }; Body: Partial<InferencePool> & { members?: PoolMember[] } }>('/api/pools/:id', async (req) => {
+    requireAdmin(req);
     const existing = app.pools.get(req.params.id);
     if (!existing) throw new MeridianError('invalid_request', `No pool "${req.params.id}"`);
     const next: InferencePool = {
@@ -423,6 +456,7 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
   });
 
   server.delete<{ Params: { id: string } }>('/api/pools/:id', async (req) => {
+    requireAdmin(req);
     const removed = app.pools.remove(req.params.id) && app.store.deletePool(req.params.id);
     if (!removed) throw new MeridianError('invalid_request', 'Built-in pools cannot be deleted. Disable it instead.');
     return { removed };
@@ -468,11 +502,14 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
   server.get<{ Querystring: { days?: string; limit?: string } }>('/api/usage', async (req) => {
     const days = intParam(req.query?.days, 30, 365);
     const since = Date.now() - days * 86_400_000;
+    // Usage rows name models, workspaces, tasks and spend. An administrator sees
+    // the instance; everyone else sees their own.
+    const scope = req.auth.role === 'admin' ? undefined : req.auth.userId;
     return {
       since,
       days,
-      summary: app.store.usageSummary(since),
-      recent: app.store.listUsage({ since, limit: intParam(req.query?.limit, 100, 1000) }),
+      summary: app.store.usageSummary(since, scope),
+      recent: app.store.listUsage({ since, limit: intParam(req.query?.limit, 100, 1000), userId: scope }),
     };
   });
 

@@ -239,3 +239,49 @@ buffered ones.
 nonce threaded through every render for a directive that cannot execute script.
 It is a real if narrow weakening, and it is listed here rather than left for a
 reader to notice in the header.
+
+---
+
+## Who may do what
+
+Meridian has two deployments and both have to be right.
+
+**Single user, `MERIDIAN_AUTH_REQUIRED=false` (the default).** There is one
+operator, every request is theirs, and they are an administrator. Asking them to
+authenticate to themselves would be theatre.
+
+**Shared, authentication on.** Now "the caller" is a specific person, and every
+route that reads or changes something decides whose it is.
+
+| Thing | Who may read it | Who may change it |
+| --- | --- | --- |
+| A user-scoped credential | Its owner, and administrators | Its owner, and administrators |
+| A workspace-scoped credential | Anyone who can reach the workspace | Same |
+| An admin- or system-scoped credential | Everyone, as an entry with no secret | Administrators only |
+| A workspace, its files, its diff, its shell | Its owner, and administrators | Same |
+| A task, its steps, its checkpoints | Anyone who can reach its workspace | Same |
+| Usage rows | The user they belong to; administrators see the instance | — |
+| Gateway API keys, the audit log, provider trust, breakers, pools | Administrators only | Administrators only |
+
+Two details that matter more than they look:
+
+- **A credential named explicitly on a request is checked for ownership, not
+  merely for existence.** An id is guessable, and a lookup that only asked "does
+  this exist" would be a cross-user key leak the moment any surface accepted an
+  id from a caller.
+- **Reaching someone else's thing answers "no such thing", not "forbidden".**
+  Distinguishable answers let a caller enumerate what exists.
+
+**Scopes are enforced.** An API key issued with `['inference']` cannot list
+credentials or workspaces. A key that was honoured as unrestricted despite its
+scopes would be worse than no scoping, because the operator believes they
+limited it.
+
+**Workspaces created before ownership existed are shared**, and so are any
+created by an unauthenticated single-user install. That is deliberate: silently
+assigning them to whichever account happened to be first would be a worse
+answer. If you turn authentication on for an instance that has been running,
+those workspaces stay visible to everyone until you recreate them.
+
+`tests/e2e/multi-user.test.ts` is written from the attacker's side — two real
+users, two real API keys, and one of them trying every route.

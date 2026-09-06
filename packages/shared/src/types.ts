@@ -901,6 +901,11 @@ export interface ToolCallRecord {
 export interface Workspace {
   id: string;
   name: string;
+  /**
+   * The user this workspace belongs to, or null when it is shared by the whole
+   * instance. Workspaces created before ownership existed are shared.
+   */
+  userId?: string | null;
   /** Absolute path inside the gateway's workspace root. */
   path: string;
   /** Git remote when the workspace was cloned. */
