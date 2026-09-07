@@ -6,6 +6,13 @@ import { DEFAULT_PORT as PORT, type RoutingMode } from '@meridian/shared';
 
 export const DEFAULT_PORT = PORT;
 
+/* ------------------------------------------------------------------ */
+/* Project knowledge                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Budgets for how much of a project reaches the
+
 /**
  * The six modes surfaced as the primary control. The rest are the explicit
  * policies, shown behind "Advanced" — presenting fifteen equal choices would
@@ -82,5 +89,97 @@ export function withSkills(
     messages: [{ role: 'system', content: `The operator has configured the following skills for you.\n\n${prompt}` }, ...messages],
     applied: config.skills.length,
     tokens: config.skillTokens,
+  };
+}
+
+/** The file a project keeps its standing instructions in, at its folder root. */
+export const PROJECT_INSTRUCTIONS_FILE = 'MERIDIAN.md';
+/** How much project-file content to inline before it costs more than it helps. */
+const PROJECT_KNOWLEDGE_BUDGET = 24_000;
+const PROJECT_MAX_FILES = 60;
+const PROJECT_TEXT_EXTS = new Set([
+  'txt', 'md', 'markdown', 'json', 'jsonl', 'csv', 'tsv', 'yaml', 'yml', 'toml', 'ini', 'env',
+  'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'py', 'rb', 'go', 'rs', 'java', 'kt', 'c', 'h', 'cpp',
+  'hpp', 'cs', 'php', 'swift', 'sh', 'sql', 'html', 'css', 'scss', 'xml', 'vue', 'svelte',
+]);
+
+function isTextPath(path: string): boolean {
+  const dot = path.lastIndexOf('.');
+  return dot !== -1 && PROJECT_TEXT_EXTS.has(path.slice(dot + 1).toLowerCase());
+}
+
+/**
+ * Give the model the project it is working in: its standing instructions and
+ * the contents of the folder it shares.
+ *
+ * This is what makes a Meridian project behave like the ones people know from
+ * other assistants — a folder of files every message can reference, plus
+ * special instructions that always apply. It is deliberately real rather than a
+ * label: the model literally receives a manifest of the folder and the text of
+ * its files, up to a bounded budget, and the instructions come from a file that
+ * lives in the folder itself (`MERIDIAN.md`), so the knowledge travels with the
+ * project rather than hiding in a database.
+ *
+ * Nothing is fabricated: an empty or missing project contributes nothing, and
+ * files past the budget are named in the manifest but not inlined, so the model
+ * knows they exist and can ask to read them.
+ */
+export async function withProjectKnowledge(
+  app: App,
+  messages: ChatMessage[],
+  workspaceId: string | null | undefined,
+): Promise<{ messages: ChatMessage[]; applied: boolean; files: number; tokens: number }> {
+  if (!workspaceId) return { messages, applied: false, files: 0, tokens: 0 };
+  const record = app.store.getWorkspace(workspaceId);
+  const ws = app.workspaceFor(workspaceId);
+  if (!record || !ws) return { messages, applied: false, files: 0, tokens: 0 };
+
+  let instructions = '';
+  try {
+    instructions = (await ws.read(PROJECT_INSTRUCTIONS_FILE)).trim();
+  } catch {
+    // No instruction file is normal; the folder alone is still knowledge.
+  }
+
+  let files: string[] = [];
+  try {
+    files = (await ws.listFiles(5000)).filter((f) => f !== PROJECT_INSTRUCTIONS_FILE).sort();
+  } catch {
+    files = [];
+  }
+
+  if (!instructions && files.length === 0) return { messages, applied: false, files: 0, tokens: 0 };
+
+  const shown = files.slice(0, PROJECT_MAX_FILES);
+  const manifest = shown.join('\n') + (files.length > shown.length ? `\n… and ${files.length - shown.length} more` : '');
+
+  // Inline text files, cheapest-to-read first, until the budget is spent. The
+  // rest stay in the manifest as names the model can ask about.
+  const blocks: string[] = [];
+  let budget = PROJECT_KNOWLEDGE_BUDGET;
+  for (const path of shown) {
+    if (budget <= 0) break;
+    if (!isTextPath(path)) continue;
+    try {
+      const body = (await ws.read(path)).slice(0, budget);
+      budget -= body.length;
+      blocks.push(`File \`${path}\`:\n\n\`\`\`\n${body}\n\`\`\``);
+    } catch {
+      // A file that cannot be read is simply left in the manifest.
+    }
+  }
+
+  const header = `You are working inside the project "${(record.name as string) ?? workspaceId}". Everything below is shared project context that applies to this whole conversation.`;
+  const parts = [header];
+  if (instructions) parts.push(`Project instructions:\n\n${instructions}`);
+  parts.push(`Project files (${files.length}):\n${manifest}`);
+  if (blocks.length) parts.push(`Contents of the project's files:\n\n${blocks.join('\n\n')}`);
+
+  const block = parts.join('\n\n');
+  return {
+    messages: [{ role: 'system', content: block }, ...messages],
+    applied: true,
+    files: files.length,
+    tokens: Math.ceil(block.length / 4),
   };
 }

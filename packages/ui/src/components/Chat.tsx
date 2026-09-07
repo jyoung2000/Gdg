@@ -161,6 +161,15 @@ export interface ComposerProps {
   onSubmit: () => void;
   onStop?: () => void;
   onAttach?: (files: File[]) => void;
+  /**
+   * Controlled attachments. When provided, the composer renders exactly this
+   * list and reports every change through `onAttachmentsChange`, so the parent
+   * can clear the tray after sending and reflect removals — an attachment the
+   * parent cannot see leave is an attachment that gets sent after the user
+   * deleted it.
+   */
+  attachments?: File[];
+  onAttachmentsChange?: (files: File[]) => void;
   running?: boolean;
   disabled?: boolean;
   placeholder?: string;
@@ -184,6 +193,8 @@ export function Composer({
   onSubmit,
   onStop,
   onAttach,
+  attachments: controlled,
+  onAttachmentsChange,
   running = false,
   disabled = false,
   placeholder = 'Describe what you want…',
@@ -194,7 +205,12 @@ export function Composer({
   const textarea = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
-  const [attachments, setAttachments] = useState<File[]>([]);
+  const [internal, setInternal] = useState<File[]>([]);
+  const attachments = controlled ?? internal;
+  const changeAttachments = (next: File[]): void => {
+    setInternal(next);
+    onAttachmentsChange?.(next);
+  };
 
   useLayoutEffect(() => {
     const el = textarea.current;
@@ -205,14 +221,13 @@ export function Composer({
     el.style.overflowY = el.scrollHeight > MAX_COMPOSER_HEIGHT ? 'auto' : 'hidden';
   }, [value]);
 
-  const addFiles = useCallback(
-    (files: File[]) => {
-      if (!files.length) return;
-      setAttachments((a) => [...a, ...files]);
-      onAttach?.(files);
-    },
-    [onAttach],
-  );
+  // Not memoised: it closes over the current attachment list, and a stale
+  // closure here would silently drop files added in quick succession.
+  const addFiles = (files: File[]): void => {
+    if (!files.length) return;
+    changeAttachments([...attachments, ...files]);
+    onAttach?.(files);
+  };
 
   return (
     <div
@@ -239,7 +254,7 @@ export function Composer({
                 label={`Remove ${f.name}`}
                 icon={<IconClose />}
                 size="sm"
-                onClick={() => setAttachments((a) => a.filter((_, idx) => idx !== i))}
+                onClick={() => changeAttachments(attachments.filter((_, idx) => idx !== i))}
               />
             </span>
           ))}
