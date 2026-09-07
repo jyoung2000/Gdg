@@ -117,6 +117,17 @@ export function matchModel(
     reasons.push('MCP needs tool calling, which this model does not report');
   }
 
+  // A model that missed has to say what it missed on. Without this, an
+  // ineligible result is an unexplained absence, which is the thing the UI
+  // promises never to show.
+  for (const miss of missing) {
+    reasons.push(
+      miss.state === 'unsupported'
+        ? `${miss.capability} is recorded as unsupported`
+        : `${miss.capability} is not reported for this model`,
+    );
+  }
+
   const capabilityAverage = requirement.capabilities.length ? capabilityScore / requirement.capabilities.length : 1;
   // Availability and locality nudge the ranking; they never manufacture
   // eligibility, which is decided entirely above.
@@ -164,23 +175,29 @@ export function parseRequirement(query: string): CapabilityRequirement {
   const q = query.toLowerCase();
   const capabilities = new Set<Capability>();
 
+  // People write "tools", "images", "analyzing" — a bare \b after each stem
+  // would miss every plural and gerund, which is most real phrasing. Each stem
+  // therefore tolerates the common inflections and nothing else, so "plan"
+  // still does not match "planet".
+  const stems = (...words: string[]): RegExp => new RegExp(`\\b(?:${words.join('|')})(?:s|es|ed|ing)?\\b`);
+
   const rules: { test: RegExp; capability: Capability }[] = [
-    { test: /\b(image|picture|photo|screenshot|vision|see|look at|visual|diagram|chart)\b/, capability: 'vision' },
-    { test: /\b(tool|function call|mcp|agent|automation)\b/, capability: 'tools' },
-    { test: /\b(reason|think|plan|analy[sz]e|complex|math|proof)\b/, capability: 'reasoning' },
-    { test: /\b(json|structured|schema)\b/, capability: 'structured-output' },
-    { test: /\b(stream)\b/, capability: 'streaming' },
-    { test: /\b(embed|similarity|vector|semantic search)\b/, capability: 'embedding' },
-    { test: /\b(generate|draw|create).{0,20}\b(image|picture|art)\b/, capability: 'image-generation' },
-    { test: /\b(video)\b/, capability: 'video-generation' },
-    { test: /\b(speak|speech|voice|tts|narrat)\b/, capability: 'speech-synthesis' },
-    { test: /\b(transcri|whisper|audio to text)\b/, capability: 'transcription' },
-    { test: /\b(long context|large context|whole (repo|codebase|book))\b/, capability: 'long-context' },
+    { test: stems('image', 'picture', 'photo', 'screenshot', 'vision', 'visual', 'diagram', 'chart', 'see', 'look at'), capability: 'vision' },
+    { test: stems('tool', 'function call', 'mcp', 'agent', 'automation'), capability: 'tools' },
+    { test: /\b(?:reason|think|plan|complex|math|proof|analy[sz])(?:s|es|ed|ing|ing)?\b/, capability: 'reasoning' },
+    { test: stems('json', 'structured', 'schema'), capability: 'structured-output' },
+    { test: stems('stream'), capability: 'streaming' },
+    { test: stems('embed', 'embedding', 'similarity', 'vector', 'semantic search'), capability: 'embedding' },
+    { test: /\b(?:generate|draw|create)\w*\b.{0,20}\b(?:image|picture|art)(?:s)?\b/, capability: 'image-generation' },
+    { test: stems('video'), capability: 'video-generation' },
+    { test: stems('speak', 'speech', 'voice', 'tts', 'narrate'), capability: 'speech-synthesis' },
+    { test: /\b(?:transcri\w*|whisper|audio to text)\b/, capability: 'transcription' },
+    { test: /\b(?:long context|large context|whole (?:repo|codebase|book))\b/, capability: 'long-context' },
   ];
   for (const rule of rules) if (rule.test.test(q)) capabilities.add(rule.capability);
 
   // Browsing is not a model capability; it is tool use plus Meridian's browser.
-  if (/\b(browse|web|internet|website|scrape|research)\b/.test(q)) capabilities.add('tools');
+  if (stems('browse', 'web', 'internet', 'website', 'scrape', 'research').test(q)) capabilities.add('tools');
 
   const localOnly = /\b(local|offline|on my machine|private|self-hosted)\b/.test(q);
   const requiresMcp = /\bmcp\b/.test(q);
