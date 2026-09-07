@@ -11,6 +11,15 @@ import {
   priceBookCachePath,
   syncPriceBook,
   toPricing,
+  MNFST_METADATA,
+  UZAIR_METADATA,
+  freeQuotaOf,
+  mnfstSchema,
+  namedModels,
+  parseRateLimitText,
+  parseTokenCount,
+  uzairIntelligence,
+  uzairProviderSchema,
   ageAdjusted,
   confidenceRank,
   sourceRank,
@@ -275,5 +284,91 @@ describe('confidence and source precedence', () => {
     assert.equal(ageAdjusted('LIKELY', '2026-08-19', now), 'LIKELY');
     assert.equal(ageAdjusted('LIKELY', '2025-01-01', now), 'STALE');
     assert.equal(ageAdjusted('VERIFIED', null, now), 'UNVERIFIED', 'no date is no evidence');
+  });
+});
+
+describe('community registries', () => {
+  it('parses the context strings these lists actually use', () => {
+    assert.equal(parseTokenCount('128K'), 128000);
+    assert.equal(parseTokenCount('1M'), 1000000);
+    assert.equal(parseTokenCount('8192'), 8192);
+    assert.equal(parseTokenCount('32k'), 32000);
+  });
+
+  it('returns null rather than guessing at a context it cannot read', () => {
+    // A wrong context window is worse than an absent one: a request sized
+    // against it fails at the provider with an error nobody can explain.
+    assert.equal(parseTokenCount('unlimited'), null);
+    assert.equal(parseTokenCount('varies by model'), null);
+    assert.equal(parseTokenCount(''), null);
+    assert.equal(parseTokenCount(null), null);
+    assert.equal(parseTokenCount('0'), null);
+  });
+
+  it('pulls structured limits out of a rate-limit sentence', () => {
+    assert.deepEqual(parseRateLimitText('15 RPM, 20K TPD'), {
+      requestsPerMinute: 15,
+      tokensPerDay: 20000,
+    });
+    assert.deepEqual(parseRateLimitText('5 RPM / 100 RPD'), {
+      requestsPerMinute: 5,
+      requestsPerDay: 100,
+    });
+  });
+
+  it('yields nothing at all from a sentence it cannot parse', () => {
+    // Empty, not zeroes. A zero allowance would read as "exhausted".
+    assert.deepEqual(parseRateLimitText('generous free tier'), {});
+    assert.deepEqual(parseRateLimitText(undefined), {});
+  });
+
+  it('turns structured limits into the freeQuota field nothing had populated', () => {
+    const p = uzairProviderSchema.parse({
+      id: 'x',
+      name: 'X',
+      freeTier: { type: 'perpetual', limits: { rpm: 20, rpd: 20, tpd: 200000 } },
+    });
+    assert.deepEqual(freeQuotaOf(p), {
+      requestsPerMinute: 20,
+      requestsPerDay: 20,
+      tokensPerDay: 200000,
+    });
+  });
+
+  it('reports no quota rather than an empty one when limits are absent', () => {
+    const p = uzairProviderSchema.parse({ id: 'x', name: 'X', freeTier: { type: 'perpetual' } });
+    assert.equal(freeQuotaOf(p), null);
+  });
+
+  it('does not invent terms a community list does not track', () => {
+    // This source says nothing about cards, phones or commercial use. Those
+    // must stay unknown rather than acquire a cheerful default, or the
+    // "no card required" filter becomes a promise Meridian cannot keep.
+    const intel = uzairIntelligence(
+      uzairProviderSchema.parse({ id: 'x', name: 'X', auth: { envVar: 'X_KEY' }, freeTier: { type: 'perpetual' } }),
+      0,
+    );
+    assert.equal(intel.requirements.card, 'unknown');
+    assert.equal(intel.requirements.phone, 'unknown');
+    assert.equal(intel.commercialUse, 'unknown');
+    assert.equal(intel.requirements.apiKey, 'yes', 'a published env var does mean a key is needed');
+    // And a community list is never better than low confidence on its own.
+    assert.equal(intel.provenance.confidence, 'low');
+  });
+
+  it('drops a model the source could not name', () => {
+    const d = mnfstSchema.parse({
+      providers: [{ name: 'P', models: [{ id: 'real' }, { id: null }] }],
+    });
+    assert.deepEqual(namedModels(d.providers[0]!).map((m) => m.id), ['real']);
+  });
+
+  it('ranks community catalogues below the verified dataset', () => {
+    assert.ok(sourceRank('verified-dataset') > sourceRank('community-catalog'));
+    assert.equal(MNFST_METADATA.sourceClass, 'community-catalog');
+    assert.equal(UZAIR_METADATA.sourceClass, 'community-catalog');
+    // And neither claims to know about pricing.
+    assert.equal(MNFST_METADATA.contributes.includes('pricing'), false);
+    assert.equal(UZAIR_METADATA.contributes.includes('pricing'), false);
   });
 });
