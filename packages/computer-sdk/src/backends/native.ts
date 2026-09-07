@@ -79,6 +79,15 @@ export class NativeComputerBackend implements ComputerAgentBackend {
    * while the UI truthfully says no session is running.
    */
   private users = 0;
+  /**
+   * Every helper this backend has spawned that has not exited.
+   *
+   * Tracking the set rather than only the current child is what makes shutdown
+   * total: a probe and a session open can interleave such that a second helper
+   * is spawned while `child` still points at the first, and killing only the
+   * tracked one leaves a process holding the display behind.
+   */
+  private readonly children = new Set<ChildProcess>();
 
   constructor(opts: NativeBackendOptions = {}) {
     this.opts = opts;
@@ -190,6 +199,7 @@ export class NativeComputerBackend implements ComputerAgentBackend {
         shell: false,
       });
       this.child = child;
+      this.children.add(child);
       this.closed = false;
 
       let stderr = '';
@@ -201,6 +211,7 @@ export class NativeComputerBackend implements ComputerAgentBackend {
         reject(e);
       });
       child.on('exit', (code, signal) => {
+        this.children.delete(child);
         const error = new MeridianError('server_error', `The X helper exited (${signal ?? code})${stderr ? `: ${stderr.slice(-300)}` : ''}`);
         this.failAll(error);
         this.ready = null;
@@ -372,18 +383,21 @@ export class NativeComputerBackend implements ComputerAgentBackend {
   }
 
   private async shutdown(): Promise<void> {
-    if (!this.child) return;
+    if (this.children.size === 0) return;
     this.closed = true;
     this.failAll(new MeridianError('cancelled', 'Backend closed'));
     this.rl?.close();
-    const child = this.child;
     this.child = null;
     this.ready = null;
-    if (child) {
+    for (const child of [...this.children]) {
+      this.children.delete(child);
       child.stdin?.end();
       child.kill('SIGTERM');
       const killer = setTimeout(() => child.kill('SIGKILL'), 2000);
       killer.unref?.();
+      // The handle keeps the event loop alive until the process is reaped;
+      // nothing is waiting on this one, so it must not hold the gateway open.
+      child.unref?.();
     }
   }
 }

@@ -1,5 +1,5 @@
 import { evaluate, validateAction } from './policy.js';
-import type { BackendRegistry } from './backend.js';
+import type { BackendRegistry, ComputerAgentBackend } from './backend.js';
 import { SAFE_PERMISSIONS, type ComputerAction } from './types.js';
 
 /**
@@ -97,8 +97,24 @@ export async function runDiagnostics(registry: BackendRegistry, backendId?: stri
     return { backendId: chosen.id, checks, ok: false };
   }
 
+  // Opened for the duration of the checks and released in the `finally` below.
+  // A diagnostic that leaves the backend open would leave a process able to
+  // drive the machine running behind a UI that says nothing is.
   await chosen.open().catch(() => undefined);
+  try {
+    await runChecks(chosen, timed);
+  } finally {
+    await chosen.close().catch(() => undefined);
+  }
 
+  return { backendId: chosen.id, checks, ok: checks.every((c) => c.ok) };
+}
+
+/** The checks that need the backend open, so the caller can bracket them. */
+async function runChecks(
+  chosen: ComputerAgentBackend,
+  timed: (name: string, fn: () => Promise<string>) => Promise<void>,
+): Promise<void> {
   await timed('Screen geometry', async () => {
     const screen = await chosen.screen();
     if (!screen.width || !screen.height) throw new Error('the backend reported a zero-sized screen');
@@ -130,8 +146,6 @@ export async function runDiagnostics(registry: BackendRegistry, backendId?: stri
       clearTimeout(timer);
     }
   });
-
-  return { backendId: chosen.id, checks, ok: checks.every((c) => c.ok) };
 }
 
 async function firstAvailable(registry: BackendRegistry) {

@@ -18,7 +18,7 @@ import {
   type TableColumn,
 } from '@meridian/ui';
 import { formatRelative } from '@meridian/shared';
-import { api } from '../lib/api.js';
+import { api, type ComputerBackendView, type ComputerSessionView } from '../lib/api.js';
 import { useStore } from '../lib/store.js';
 
 type Section =
@@ -27,6 +27,7 @@ type Section =
   | 'ai'
   | 'routing'
   | 'agents'
+  | 'computer'
   | 'workspace'
   | 'security'
   | 'privacy'
@@ -39,12 +40,78 @@ const SECTIONS: { id: Section; label: string; description: string }[] = [
   { id: 'ai', label: 'AI', description: 'Preferred models and providers' },
   { id: 'routing', label: 'Routing', description: 'How Meridian chooses a model' },
   { id: 'agents', label: 'Agents', description: 'The specialist roster' },
+  { id: 'computer', label: 'Computer control', description: 'Whether an AI may operate this machine' },
   { id: 'workspace', label: 'Workspace', description: 'Defaults for new workspaces' },
   { id: 'security', label: 'Security', description: 'Sandboxing and execution' },
   { id: 'privacy', label: 'Privacy', description: 'Where your code may be sent' },
   { id: 'keys', label: 'API keys', description: 'Gateway access for other tools' },
   { id: 'advanced', label: 'Advanced', description: 'Diagnostics and reset' },
 ];
+
+/**
+ * Whether an AI may operate this machine.
+ *
+ * There is no switch here, and that is the design: computer control is not a
+ * mode that can be left on. It exists only while a session exists, so this
+ * section reports what is true right now and sends the user to the one place
+ * that can start or stop one.
+ */
+function ComputerSection(): React.JSX.Element {
+  const setScreen = useStore((s) => s.setScreen);
+  const [backends, setBackends] = useState<ComputerBackendView[]>([]);
+  const [live, setLive] = useState<ComputerSessionView[]>([]);
+
+  useEffect(() => {
+    void api.computerBackends().then((r) => setBackends(r.backends)).catch(() => undefined);
+    void api.computerSessions().then((r) => setLive(r.live)).catch(() => undefined);
+  }, []);
+
+  const running = live.filter((s) => !['completed', 'failed', 'stopped'].includes(s.state));
+
+  return (
+    <>
+      <Fieldset title="Right now">
+        <FormRow
+          label={running.length ? 'An AI is controlling this computer' : 'No AI is controlling this computer'}
+          description={
+            running.length
+              ? `${running.length} session(s) running. Open the Computer screen to watch, pause or stop them.`
+              : 'Computer control is off. It turns on only when you start a session, and off again when it ends.'
+          }
+        >
+          <Button variant={running.length ? 'primary' : 'secondary'} onClick={() => setScreen('computer')}>
+            {running.length ? 'Open and stop' : 'Open Computer'}
+          </Button>
+        </FormRow>
+      </Fieldset>
+
+      <Fieldset
+        title="Where an AI could act"
+        footnote="Probed live. A backend that is unavailable says why, and what would make it work."
+      >
+        {backends.map((b) => (
+          <FormRow key={b.id} label={b.name} description={b.health.available ? b.description : (b.health.detail ?? 'Unavailable')}>
+            <StatusChip
+              status={b.health.available ? 'ready' : 'offline'}
+              label={b.health.available ? (b.health.version ?? 'Ready') : 'Unavailable'}
+              size="sm"
+            />
+          </FormRow>
+        ))}
+        {backends.length === 0 ? <span className="mrd-secondary">Checking…</span> : null}
+      </Fieldset>
+
+      <Fieldset title="What a session may do" footnote="Permissions are chosen per session, and Meridian enforces them itself.">
+        <FormRow label="Nothing is granted in advance" description="Every session starts from the safe preset: see the screen, point, type, open applications — and nothing that reaches your files, a shell, or the network.">
+          <span className="mrd-caption">Set per session</span>
+        </FormRow>
+        <FormRow label="Destructive actions always ask" description="Whatever approval mode a session uses, an action classified destructive stops and waits for you. It cannot be approved for a whole task.">
+          <span className="mrd-caption">Not configurable</span>
+        </FormRow>
+      </Fieldset>
+    </>
+  );
+}
 
 /**
  * Settings, laid out as a desktop settings application: a list of categories on
@@ -82,6 +149,7 @@ export function SettingsScreen(): React.JSX.Element {
           {section === 'ai' && <AiSection />}
           {section === 'routing' && <RoutingSection />}
           {section === 'agents' && <AgentsSection />}
+          {section === 'computer' && <ComputerSection />}
           {section === 'workspace' && <WorkspaceSection />}
           {section === 'security' && <SecuritySection />}
           {section === 'privacy' && <PrivacySection />}

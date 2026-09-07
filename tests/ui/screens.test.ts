@@ -24,10 +24,29 @@ import { startSimServer, type SimServer } from '../e2e/helpers/sim-server.js';
  * absent: a silently skipped UI test reads exactly like a passing one.
  */
 
+/**
+ * Every screen in the shell's router.
+ *
+ * Kept exhaustive on purpose: a screen missing from this list is a screen
+ * nobody ever opens in a browser, and the first person to find out it throws on
+ * first paint should not be a user.
+ */
 const SCREENS = [
-  'home', 'workspace', 'chat', 'tasks', 'agents',
-  'generations', 'models', 'providers', 'pools', 'usage', 'settings',
+  'home', 'workspace', 'chat', 'tasks', 'agents', 'browser', 'computer',
+  'versioncontrol', 'generations', 'ai', 'skills', 'models', 'providers',
+  'pools', 'mcp', 'devops', 'usage', 'settings',
 ] as const;
+
+/**
+ * Nav labels that are not simply the screen id.
+ *
+ * The sidebar is written for people, so a couple of screens read differently
+ * from the route that reaches them; the test navigates the way a user does, so
+ * it has to know the visible name.
+ */
+const NAV_LABEL: Partial<Record<(typeof SCREENS)[number], string>> = {
+  versioncontrol: 'Version Control',
+};
 
 const VIEWPORTS = [
   { name: 'phone', width: 390, height: 844 },
@@ -119,7 +138,8 @@ describe('Web client', async () => {
       // a user takes and the one that can leave a screen half-mounted.
       const toggle = page.locator('.app__nav-toggle');
       if (await toggle.isVisible().catch(() => false)) await toggle.click();
-      await page.getByRole('button', { name: new RegExp(`^${screen}$`, 'i') }).first().click();
+      const label = NAV_LABEL[screen as (typeof SCREENS)[number]] ?? screen;
+      await page.getByRole('button', { name: new RegExp(`^${label}$`, 'i') }).first().click();
     }
     await page.waitForTimeout(400);
     return errors;

@@ -558,7 +558,9 @@ export class App {
     // Stop every computer session first: an orphaned backend process holding
     // a display or a browser is the worst thing to leave behind.
     await this.computer.stopAll().catch(() => undefined);
-    await this.control.browser.closeAll().catch(() => undefined);
+    // shutdown, not closeAll: the browser processes go too, or the gateway
+    // leaves one behind on every restart.
+    await this.control.browser.shutdown().catch(() => undefined);
     await this.control.mcp.disconnectAll().catch(() => undefined);
     await this.control.docker.cleanupSession().catch(() => undefined);
     this.events.close();

@@ -331,6 +331,19 @@ export class BrowserManager {
     await Promise.all(Array.from(this.sessions.keys()).map((id) => this.closeSession(id)));
   }
 
+  /**
+   * Release everything, including the browser processes themselves.
+   *
+   * `closeAll` ends the sessions but leaves the shared browser running, which
+   * is right between sessions and wrong at shutdown: a gateway that exits
+   * leaving a Chromium behind accumulates one per restart. Called on shutdown;
+   * a later session simply launches a new browser.
+   */
+  async shutdown(): Promise<void> {
+    await this.closeAll();
+    await Promise.all(Object.values(this.providers).map((p) => p?.close().catch(() => undefined)));
+  }
+
   // ---- actions -------------------------------------------------------------
 
   async navigate(id: string, url: string, timeoutMs?: number): Promise<PageSnapshot> {

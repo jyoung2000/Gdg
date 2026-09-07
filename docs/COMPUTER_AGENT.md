@@ -335,7 +335,15 @@ by process listing before and after.
 **A health probe leaves nothing running.** Probing the native backend's health
 spawns a helper, reads the screen geometry and shuts it down again; the process
 count before and after a probe is identical. An earlier version left one running
-for the life of the gateway.
+for the life of the gateway, and so did every diagnostics run.
+
+**A full test run leaves nothing behind.** After the E2E suite completes the
+process exits with code 0 and no helper processes remain. That is checked by
+observation rather than forced with `--test-force-exit`: the runner hanging
+after every test had passed was the symptom that exposed three separate leaks —
+diagnostics never releasing the backend, the gateway never closing its browser,
+and helper shutdown killing only the currently-tracked child when a probe and a
+session open had interleaved.
 
 **Repetition.** A model proposing the same move three times in a row stopped the
 session at step 2 of 8 with "Stopped after proposing the same move action 3

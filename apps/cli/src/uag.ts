@@ -241,6 +241,10 @@ ${c.dim('COMMANDS')}
   dockerdev <status|detect|verify> [path]       Docker dev orchestration
   vc <status|branches|branch|switch|commit|push|pull|log> --workspace <id>
                          Version control for a workspace (git; PRs via gh)
+  computer <backends|plan|diagnose|list|watch|stop> …
+                         Computer agent. Off unless you start a session.
+  computer run "<task>" [--backend <id>] [--model <id>] [--allow k,k] [--approve <mode>]
+                         Start a session. Prints the id; watch or stop it by id.
   configure              Set the gateway URL and API key
   help                   Show this help
 
@@ -837,6 +841,104 @@ async function main(): Promise<number> {
           return 0;
         default:
           err('Usage: uag vc <status|branches|branch|switch|commit|push|pull|log|pr>');
+          return 1;
+      }
+    }
+
+    /* ---------------- computer ---------------- */
+
+    /**
+     * The computer agent from a terminal.
+     *
+     * `run` deliberately prints what the session was granted before it prints
+     * the id: someone starting an agent from a script should see the same
+     * statement of permissions the UI shows, not just a handle.
+     */
+    case 'computer': {
+      const sub = positional[1] ?? 'backends';
+      switch (sub) {
+        case 'backends':
+          out(JSON.stringify(await client.request('/api/computer/backends'), null, 2));
+          return 0;
+        case 'plan':
+          out(
+            JSON.stringify(
+              await client.request('/api/computer/plan', {
+                method: 'POST',
+                body: { modelId: str(flags.model) ?? null, backendId: str(flags.backend) ?? null, privacyPreference: str(flags.privacy) },
+              }),
+              null,
+              2,
+            ),
+          );
+          return 0;
+        case 'diagnose':
+          out(JSON.stringify(await client.request('/api/computer/diagnostics', { method: 'POST', body: { backendId: str(flags.backend) } }), null, 2));
+          return 0;
+        case 'list':
+          out(JSON.stringify(await client.request('/api/computer/sessions'), null, 2));
+          return 0;
+        case 'run': {
+          const task = positional.slice(2).join(' ');
+          if (!task) {
+            err('Usage: uag computer run "<what the agent should do>"');
+            return 1;
+          }
+          // Nothing is granted implicitly here either: without --allow the
+          // gateway applies its safe preset, and the reply says what that was.
+          const allow = str(flags.allow);
+          const permissions = allow
+            ? Object.fromEntries(
+                allow
+                  .split(',')
+                  .map((k) => k.trim())
+                  .filter(Boolean)
+                  .map((k) => [k, true]),
+              )
+            : undefined;
+          const res = (await client.request('/api/computer/sessions', {
+            method: 'POST',
+            body: {
+              task,
+              backendId: str(flags.backend) ?? null,
+              modelId: str(flags.model) ?? null,
+              approvalMode: str(flags.approve) ?? 'risky_actions',
+              privacyPreference: str(flags.privacy),
+              maxSteps: flags.steps ? Number(flags.steps) : undefined,
+              permissions,
+            },
+          })) as { session: { id: string; activeModelId: string | null; activeBackendId: string; config: { permissions: Record<string, boolean>; approvalMode: string; routingReason: string } } };
+          const s = res.session;
+          const granted = Object.keys(s.config.permissions).filter((k) => s.config.permissions[k]);
+          err(`${c.bold('An AI is now controlling this computer.')}`);
+          err(`  model      ${s.activeModelId ?? 'none'}  (${s.config.routingReason})`);
+          err(`  surface    ${s.activeBackendId}`);
+          err(`  allowed    ${granted.join(', ') || 'nothing'}`);
+          err(`  approvals  ${s.config.approvalMode}`);
+          err(`  stop it    uag computer stop ${s.id}`);
+          out(s.id);
+          return 0;
+        }
+        case 'watch': {
+          const id = positional[2];
+          if (!id) {
+            err('Usage: uag computer watch <session-id>');
+            return 1;
+          }
+          out(JSON.stringify(await client.request(`/api/computer/sessions/${id}`), null, 2));
+          return 0;
+        }
+        case 'stop': {
+          const id = positional[2];
+          if (!id) {
+            err('Usage: uag computer stop <session-id>');
+            return 1;
+          }
+          out(JSON.stringify(await client.request(`/api/computer/sessions/${id}/stop`, { method: 'POST', body: {} }), null, 2));
+          return 0;
+        }
+        default:
+          err('Usage: uag computer <backends|plan|diagnose|list|run|watch|stop>');
           return 1;
       }
     }
