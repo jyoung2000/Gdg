@@ -29,6 +29,7 @@ const SCREENS: { id: string; label: string; nav?: string }[] = [
   { id: 'computer', label: 'Computer' },
   { id: 'versioncontrol', label: 'Version Control', nav: 'Version Control' },
   { id: 'generations', label: 'Generations' },
+  { id: 'discover', label: 'Discover' },
   { id: 'ai', label: 'AI' },
   { id: 'skills', label: 'Skills' },
   { id: 'models', label: 'Models' },
