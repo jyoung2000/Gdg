@@ -576,6 +576,13 @@ export const useStore = create<State>((set, get) => ({
       case 'notice':
         get().toast({ level: event.level === 'error' ? 'error' : event.level, message: event.message });
         break;
+      case 'model-change':
+      case 'discovery':
+        // Discovery found, changed or retired models. Refreshing here is what
+        // keeps the composer's model menu automatic: a newly discovered free
+        // model appears in it without anyone visiting the Models screen.
+        void get().refreshModels();
+        break;
       default:
         break;
     }

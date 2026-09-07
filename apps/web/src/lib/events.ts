@@ -8,7 +8,8 @@ export type ServerEvent =
   | { type: 'health'; health: ProviderHealth }
   | { type: 'generation'; job: GenerationJob }
   | { type: 'discovery'; providerId: string; added: number; removed: number; total: number }
-  | { type: 'notice'; level: 'info' | 'warn' | 'error'; message: string };
+  | { type: 'notice'; level: 'info' | 'warn' | 'error'; message: string }
+  | { type: 'model-change'; change: { modelId: string; kind: string } };
 
 export type TaskEvent =
   | { type: 'task-update'; task: import('@meridian/shared').AgentTask }

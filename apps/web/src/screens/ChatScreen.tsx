@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Button,
   ChatMessage,
@@ -7,6 +7,7 @@ import {
   Dialog,
   EmptyState,
   ModePicker,
+  Meter,
   Panel,
   RoutingExplanation,
   SegmentedControl,
@@ -19,6 +20,7 @@ import {
 } from '@meridian/ui';
 import { formatCost, type RoutingMode, type RoutingReason } from '@meridian/shared';
 import { api, streamChat } from '../lib/api.js';
+import { bestPicks } from '../lib/picks.js';
 import { useStore } from '../lib/store.js';
 import { Screen } from './Screen.js';
 
@@ -84,6 +86,45 @@ export function ChatScreen(): React.JSX.Element {
       // A browser that refuses storage still gets a working control this session.
     }
   }, []);
+  /**
+   * Which model answers. "auto" is the router's choice; anything else pins a
+   * model from the curated menu. Remembered, but never trusted blindly: a
+   * remembered model that discovery no longer lists falls back to auto rather
+   * than pinning something that cannot answer.
+   */
+  const [modelChoice, setModelChoice] = useState<string>(() => {
+    try {
+      return localStorage.getItem('meridian.chat.model') ?? 'auto';
+    } catch {
+      return 'auto';
+    }
+  });
+  const chooseModel = useCallback((next: string): void => {
+    setModelChoice(next);
+    try {
+      localStorage.setItem('meridian.chat.model', next);
+    } catch {
+      // Storage refusal only costs the memory, not the control.
+    }
+  }, []);
+
+  const models = useStore((s) => s.models);
+  const pools = useStore((s) => s.pools);
+  const refreshModels = useStore((s) => s.refreshModels);
+  const refreshPools = useStore((s) => s.refreshPools);
+
+  useEffect(() => {
+    // The menu and the limit display both come from live data; fetch on entry
+    // and let discovery events keep them fresh from then on.
+    void refreshModels();
+    void refreshPools();
+  }, [refreshModels, refreshPools]);
+
+  /** The best free and low-cost models, straight out of live discovery. */
+  const picks = useMemo(() => bestPicks(models), [models]);
+
+  // A pinned model that discovery no longer lists must not be pinned.
+  const effectiveModel = modelChoice !== 'auto' && !models.some((m) => m.id === modelChoice) ? 'auto' : modelChoice;
   const abortRef = useRef<AbortController | null>(null);
   const seq = useRef(0);
   const toast = useStore((s) => s.toast);
@@ -125,6 +166,7 @@ export function ChatScreen(): React.JSX.Element {
     await streamChat(
       {
         messages: history,
+        model: effectiveModel,
         meridian: { mode: routingMode },
         // Sent only when chosen; the gateway drops it for models that do not
         // reason, so a plain chat model is never handed a parameter it rejects.
@@ -142,7 +184,7 @@ export function ChatScreen(): React.JSX.Element {
 
     setRunning(false);
     abortRef.current = null;
-  }, [agentMode, effort, messages, routingMode, running, value]);
+  }, [agentMode, effectiveModel, effort, messages, routingMode, running, value]);
 
   const modes = vocabulary?.routingModes.filter((m) => m.primary) ?? [];
 
@@ -227,6 +269,26 @@ export function ChatScreen(): React.JSX.Element {
                 {agentMode === 'chat' ? (
                   <Select
                     size="sm"
+                    aria-label="Which model answers. Auto lets Meridian route; the rest are the best free and low-cost models it has discovered."
+                    title="Model. Auto routes; the list is the best free and low-cost models, kept up to date by discovery."
+                    value={effectiveModel}
+                    onChange={(e) => chooseModel(e.target.value)}
+                  >
+                    <option value="auto">Model: Auto</option>
+                    {picks.length > 0 ? (
+                      <optgroup label="Best free &amp; low-cost — found automatically">
+                        {picks.map((p) => (
+                          <option key={p.model.id} value={p.model.id}>
+                            {p.model.displayName ?? p.model.providerModelId} · {p.priceLabel}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : null}
+                  </Select>
+                ) : null}
+                {agentMode === 'chat' ? (
+                  <Select
+                    size="sm"
                     aria-label="Reasoning effort — how hard a thinking model should work. Ignored by models that do not reason."
                     title="Reasoning effort. Applies to reasoning-capable models; ignored by others."
                     value={effort}
@@ -241,16 +303,7 @@ export function ChatScreen(): React.JSX.Element {
                 ) : null}
               </Stack>
             }
-            rightSlot={
-              <Stack direction="row" gap={2} align="center">
-                <StatusChip status="unknown" label={routingMode} size="sm" />
-                {messages.some((m) => m.cost) && (
-                  <span className="mrd-caption mrd-numeric">
-                    {formatCost(messages.reduce((sum, m) => sum + (m.cost ?? 0), 0))}
-                  </span>
-                )}
-              </Stack>
-            }
+            rightSlot={<UsagePill conversationCost={messages.reduce((sum, m) => sum + (m.cost ?? 0), 0)} />}
           />
         </div>
       </div>
@@ -304,5 +357,56 @@ export function ChatScreen(): React.JSX.Element {
         </Stack>
       </Dialog>
     </Screen>
+  );
+}
+
+/**
+ * The composer's live usage and limit readout.
+ *
+ * Three numbers a person actually wants while chatting: what this conversation
+ * has cost, what today has cost across the instance, and how close today is to
+ * the routing pool's daily cap — the limit the router genuinely enforces, not a
+ * decorative one. A pool without a budget is honestly unlimited and shown as
+ * such. Clicking opens the full Usage screen.
+ */
+function UsagePill({ conversationCost }: { conversationCost: number }): React.JSX.Element {
+  const usage = useStore((s) => s.liveUsage);
+  const pools = useStore((s) => s.pools);
+  const setScreen = useStore((s) => s.setScreen);
+
+  const pool = pools[0] ?? null;
+  const budget = pool?.budgetLimit ?? null;
+  const spent = pool?.usage.spentToday ?? 0;
+  const pct = budget && budget > 0 ? Math.min(100, (spent / budget) * 100) : null;
+
+  const title = [
+    `This conversation: ${formatCost(conversationCost)}`,
+    `Today: ${formatCost(usage.cost)} · ${usage.requests} request(s) · ${usage.tokens.toLocaleString()} tokens`,
+    budget ? `Daily cap (${pool?.name}): ${formatCost(spent)} of ${formatCost(budget)}` : 'No daily cap on the current pool',
+    'Open Usage for the full breakdown',
+  ].join('\n');
+
+  return (
+    <button
+      type="button"
+      className="chat__usage mrd-focus-ring"
+      title={title}
+      aria-label={title}
+      onClick={() => setScreen('usage')}
+    >
+      <span className="mrd-caption mrd-numeric">{conversationCost > 0 ? formatCost(conversationCost) : 'Free so far'}</span>
+      {pct !== null ? (
+        <>
+          <span className="chat__usage-meter">
+            <Meter value={pct} max={100} threshold={80} label="Today against the daily cap" size="sm" />
+          </span>
+          <span className="mrd-caption mrd-numeric mrd-secondary">
+            {formatCost(spent)}/{formatCost(budget!)}
+          </span>
+        </>
+      ) : (
+        <span className="mrd-caption mrd-secondary">no cap</span>
+      )}
+    </button>
   );
 }

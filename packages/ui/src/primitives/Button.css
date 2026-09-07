@@ -4,8 +4,8 @@
   justify-content: center;
   gap: var(--space-2);
   height: var(--control-height);
-  padding: 0 var(--space-3);
-  border-radius: var(--radius-md);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-pill);
   font-size: var(--text-body-size);
   font-weight: 500;
   letter-spacing: -0.003em;
@@ -31,9 +31,9 @@
 
 .mrd-button--sm {
   height: var(--control-height-sm);
-  padding: 0 var(--space-2);
+  padding: 0 var(--space-3);
   font-size: var(--text-secondary-size);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
 }
 .mrd-button--lg {
   height: var(--control-height-lg);
@@ -145,7 +145,7 @@
   width: var(--control-height);
   height: var(--control-height);
   flex: 0 0 auto;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-pill);
   color: var(--color-text-secondary);
   transition:
     background-color var(--duration-fast) var(--ease-out),
@@ -158,7 +158,7 @@
 .mrd-icon-button--sm {
   width: var(--control-height-sm);
   height: var(--control-height-sm);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
 }
 .mrd-icon-button--sm svg {
   width: 13px;

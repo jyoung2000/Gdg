@@ -335,8 +335,10 @@
   width: 100%;
   min-width: 0;
   height: var(--control-height-lg);
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
+  /* The full-height rounded row: selection reads as a soft pill, the way a
+     platform sidebar treats its items. */
+  border-radius: var(--radius-lg);
   color: var(--color-text-secondary);
   text-align: left;
   transition:

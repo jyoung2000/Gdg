@@ -44,12 +44,12 @@
 
   /* The accent is used sparingly: selection, focus, the single primary
      action in a view, and status. Everything else is neutral. */
-  --color-accent: #2f6ae8;
-  --color-accent-hover: #2a5fd0;
-  --color-accent-active: #2454b8;
-  --color-accent-subtle: rgba(47, 106, 232, 0.1);
-  --color-accent-subtle-hover: rgba(47, 106, 232, 0.16);
-  --color-accent-border: rgba(47, 106, 232, 0.35);
+  --color-accent: #0071e3;
+  --color-accent-hover: #0077ed;
+  --color-accent-active: #0062c4;
+  --color-accent-subtle: rgba(0, 113, 227, 0.1);
+  --color-accent-subtle-hover: rgba(0, 113, 227, 0.16);
+  --color-accent-border: rgba(0, 113, 227, 0.35);
 
   --color-success: #177a4c;
   --color-success-subtle: rgba(23, 122, 76, 0.12);
@@ -84,15 +84,15 @@
 
   /* A dense professional tool wants a 13px base. Sizes below that are for
      metadata; sizes above are for the few places that carry a page's identity. */
-  --text-display-size: 30px;
-  --text-display-line: 36px;
-  --text-display-weight: 600;
-  --text-display-tracking: -0.021em;
+  --text-display-size: 34px;
+  --text-display-line: 41px;
+  --text-display-weight: 700;
+  --text-display-tracking: -0.026em;
 
-  --text-title-size: 21px;
-  --text-title-line: 27px;
-  --text-title-weight: 600;
-  --text-title-tracking: -0.016em;
+  --text-title-size: 23px;
+  --text-title-line: 29px;
+  --text-title-weight: 650;
+  --text-title-tracking: -0.019em;
 
   --text-section-size: 15px;
   --text-section-line: 21px;
@@ -137,14 +137,16 @@
   --space-11: 80px;
 
   /* ---------------------------------------------------------------- */
-  /* Radius — restrained. Pills are reserved for status and tags.       */
+  /* Radius — generous, platform-grade curves: controls sit at 10px,    */
+  /* surfaces at 14–18px, sheets larger still. Pills carry small        */
+  /* stand-alone controls as well as status and tags.                   */
   /* ---------------------------------------------------------------- */
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 10px;
-  --radius-xl: 12px;
-  --radius-2xl: 16px;
-  --radius-3xl: 20px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-2xl: 22px;
+  --radius-3xl: 28px;
   --radius-pill: 999px;
 
   /* ---------------------------------------------------------------- */
@@ -152,10 +154,10 @@
   /* Level 0 app background, 1 panels, 2 raised, 3 menus, 4 modals.     */
   /* ---------------------------------------------------------------- */
   --shadow-0: none;
-  --shadow-1: 0 1px 2px rgba(28, 27, 25, 0.05);
-  --shadow-2: 0 1px 3px rgba(28, 27, 25, 0.07), 0 4px 12px rgba(28, 27, 25, 0.05);
-  --shadow-3: 0 2px 8px rgba(28, 27, 25, 0.09), 0 12px 28px rgba(28, 27, 25, 0.1);
-  --shadow-4: 0 8px 24px rgba(28, 27, 25, 0.12), 0 32px 64px rgba(28, 27, 25, 0.16);
+  --shadow-1: 0 1px 2px rgba(28, 27, 25, 0.04), 0 2px 8px rgba(28, 27, 25, 0.03);
+  --shadow-2: 0 1px 3px rgba(28, 27, 25, 0.05), 0 8px 24px rgba(28, 27, 25, 0.06);
+  --shadow-3: 0 2px 8px rgba(28, 27, 25, 0.07), 0 16px 40px rgba(28, 27, 25, 0.1);
+  --shadow-4: 0 8px 24px rgba(28, 27, 25, 0.1), 0 40px 80px rgba(28, 27, 25, 0.16);
   --shadow-focus: 0 0 0 3px var(--color-accent-subtle);
   --shadow-inset-hairline: inset 0 0 0 1px var(--color-border);
 
@@ -182,16 +184,16 @@
   /* ---------------------------------------------------------------- */
   /* Layout                                                            */
   /* ---------------------------------------------------------------- */
-  --toolbar-height: 44px;
-  --statusbar-height: 26px;
-  --sidebar-width: 216px;
-  --sidebar-width-collapsed: 52px;
+  --toolbar-height: 50px;
+  --statusbar-height: 28px;
+  --sidebar-width: 224px;
+  --sidebar-width-collapsed: 56px;
   --inspector-width: 340px;
   --drawer-height: 260px;
-  --control-height-sm: 22px;
-  --control-height: 28px;
-  --control-height-lg: 34px;
-  --row-height: 26px;
+  --control-height-sm: 26px;
+  --control-height: 32px;
+  --control-height-lg: 40px;
+  --row-height: 30px;
 
   --z-base: 0;
   --z-sticky: 10;
@@ -214,7 +216,7 @@
   --syntax-string: #1a7f4f;
   --syntax-number: #9a5518;
   --syntax-comment: #726f6a;
-  --syntax-function: #2f6ae8;
+  --syntax-function: #0071e3;
   --syntax-type: #0f7490;
   --syntax-property: #a03a6b;
   --syntax-operator: #6a6862;
@@ -253,12 +255,12 @@
     --color-text-inverse: #171718;
     --color-text-on-accent: #ffffff;
 
-    --color-accent: #5b8dff;
-    --color-accent-hover: #7aa2ff;
-    --color-accent-active: #4a7cf0;
-    --color-accent-subtle: rgba(91, 141, 255, 0.16);
-    --color-accent-subtle-hover: rgba(91, 141, 255, 0.24);
-    --color-accent-border: rgba(91, 141, 255, 0.42);
+    --color-accent: #0a84ff;
+    --color-accent-hover: #3395ff;
+    --color-accent-active: #0071e0;
+    --color-accent-subtle: rgba(10, 132, 255, 0.16);
+    --color-accent-subtle-hover: rgba(10, 132, 255, 0.24);
+    --color-accent-border: rgba(10, 132, 255, 0.42);
 
     --color-success: #3fbc80;
     --color-success-subtle: rgba(63, 188, 128, 0.16);
@@ -319,12 +321,12 @@
   --color-text-inverse: #171718;
   --color-text-on-accent: #ffffff;
 
-  --color-accent: #5b8dff;
-  --color-accent-hover: #7aa2ff;
-  --color-accent-active: #4a7cf0;
-  --color-accent-subtle: rgba(91, 141, 255, 0.16);
-  --color-accent-subtle-hover: rgba(91, 141, 255, 0.24);
-  --color-accent-border: rgba(91, 141, 255, 0.42);
+  --color-accent: #0a84ff;
+  --color-accent-hover: #3395ff;
+  --color-accent-active: #0071e0;
+  --color-accent-subtle: rgba(10, 132, 255, 0.16);
+  --color-accent-subtle-hover: rgba(10, 132, 255, 0.24);
+  --color-accent-border: rgba(10, 132, 255, 0.42);
 
   --color-success: #3fbc80;
   --color-success-subtle: rgba(63, 188, 128, 0.16);
