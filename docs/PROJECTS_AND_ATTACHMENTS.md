@@ -48,17 +48,28 @@ Two things make a project:
 
 ### Using projects
 
-In the chat header, a **project selector** lists your projects and opens a
-**Manage projects** dialog. There you can:
+There are two ways in, backed by the **same** manager component so they behave
+identically:
+
+- A **Projects** tab in the left sidebar (Workspace section) — a full screen for
+  browsing, creating and curating projects, the way other assistants make
+  projects a first-class destination.
+- A **project selector** in the chat header that opens the same manager in a
+  **Manage projects** dialog, so you never have to leave the conversation.
+
+In either place you can:
 
 - **Create** a project (it makes a workspace folder).
 - **Write its instructions** — saved as `MERIDIAN.md`.
 - **Add text files** to its folder.
 - See what the project contains.
+- **Use in chat** — activate the project as the conversation's context.
 
-Pick a project and every message in the conversation carries its context. Pick
-"No project" and nothing is injected. The choice is remembered, and falls back
-to none if that workspace is later deleted.
+Pick a project and every message in the conversation carries its context. Clear
+the active project and nothing is injected. The choice is remembered (in
+`localStorage` under `meridian.chat.project`, read by both the tab and the chat),
+and falls back to none if that workspace is later deleted. Activating a project
+from the Projects tab drops you into the chat with it already applied.
 
 ### How it reaches the model
 

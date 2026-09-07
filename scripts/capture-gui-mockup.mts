@@ -22,6 +22,7 @@ const SCREENS: { id: string; label: string; nav?: string }[] = [
   { id: 'home', label: 'Home' },
   { id: 'workspace', label: 'Workspace' },
   { id: 'chat', label: 'Chat' },
+  { id: 'projects', label: 'Projects' },
   { id: 'tasks', label: 'Tasks' },
   { id: 'agents', label: 'Agents' },
   { id: 'browser', label: 'Browser' },
@@ -58,8 +59,10 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const captured: { id: string; label: string; html: string }[] = [];
 
 for (const screen of SCREENS) {
-  await page.goto(base, { waitUntil: 'networkidle' });
-  await page.waitForTimeout(300);
+  // 'load', not 'networkidle': the app holds an open SSE event stream, so the
+  // network never goes idle and networkidle would hang until timeout.
+  await page.goto(base, { waitUntil: 'load' });
+  await page.waitForTimeout(700);
   if (screen.id !== 'home') {
     const toggle = page.locator('.app__nav-toggle');
     if (await toggle.isVisible().catch(() => false)) await toggle.click();

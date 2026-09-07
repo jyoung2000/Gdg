@@ -668,7 +668,11 @@ export interface StackProps extends HTMLAttributes<HTMLDivElement> {
 }
 
 export const Stack = forwardRef<HTMLDivElement, StackProps>(function Stack(
-  { direction = 'row', gap, align, justify, wrap = false, inline = false, className, style, children, ...rest },
+  // Defaults to a vertical column — the universal meaning of "stack", and what
+  // every caller that omits `direction` intends. A horizontal group asks for it
+  // with direction="row". (This default was row historically, which silently
+  // laid vertical card lists out as squashed rows; column is the correct base.)
+  { direction = 'column', gap, align, justify, wrap = false, inline = false, className, style, children, ...rest },
   ref,
 ) {
   // The gap is a token reference rather than a value, so it stays on the scale

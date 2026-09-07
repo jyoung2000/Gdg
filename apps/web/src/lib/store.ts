@@ -16,6 +16,7 @@ export type ScreenId =
   | 'home'
   | 'workspace'
   | 'chat'
+  | 'projects'
   | 'tasks'
   | 'agents'
   | 'browser'

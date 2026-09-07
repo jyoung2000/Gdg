@@ -11,15 +11,15 @@ xdg-open docs/mockup/meridian-gui-mockup.html   # or just drag it into a browser
 ## What it is — and what it is not
 
 It is **1:1 by construction, not by hand**. A real browser loaded the real
-built client against a running gateway, and each of the 18 screens was captured
+built client against a running gateway, and each of the 19 screens was captured
 as its **actual rendered DOM**. The styling is the app's **own compiled
 stylesheet, inlined verbatim**. So what you see is what the app renders, down to
-the pixel — including the reasoning-effort control in the chat composer and the
-Computer screen.
+the pixel — including the reasoning-effort control in the chat composer, the
+Projects screen, and the Computer screen.
 
 It is **static and inert**. Nothing talks to a server: buttons, inputs, tabs
-inside a screen and links do nothing. The only live control is the dark bar at
-the top, which switches between the 18 captured screens. This is a design
+inside a screen and links do nothing. The only live control is the app's own
+left sidebar, which switches between the 19 captured screens. This is a design
 surface, not a running app — for the running app, build and serve the client
 (`node scripts/build.mjs`, then run the gateway).
 
@@ -56,6 +56,8 @@ whatever `dist/web/index.html` currently references under `assets/`.
 
 ## Previews
 
-`preview-chat.png`, `preview-models.png`, `preview-computer.png` and
-`preview-settings.png` are screenshots of the mockup as rendered from `file://`,
-kept so the look is reviewable without opening a browser.
+`preview-chat.png`, `preview-projects.png`, `preview-models.png`,
+`preview-computer.png` and `preview-settings.png` are screenshots of the mockup
+as rendered from `file://`, kept so the look is reviewable without opening a
+browser. Regenerate them with `node scripts/shoot-previews.mjs` after
+regenerating the mockup.
