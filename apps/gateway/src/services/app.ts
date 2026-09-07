@@ -31,6 +31,7 @@ import { SecretBox } from '../db/crypto.js';
 import { Store, defaultPreferences } from '../db/store.js';
 import { Discovery } from './discovery.js';
 import { EventBus, type ServerEvent } from './events.js';
+import { browserTools, createControlPlane, type ControlPlane } from './control.js';
 
 export interface Warning {
   level: 'info' | 'warn';
@@ -56,6 +57,7 @@ interface AppParts {
   sandboxDegradedReason: string | null;
   events: EventBus;
   discovery: Discovery;
+  control: ControlPlane;
   warnings: Warning[];
 }
 
@@ -86,6 +88,7 @@ export class App {
   readonly sandboxDegradedReason: string | null;
   readonly events: EventBus;
   readonly discovery: Discovery;
+  readonly control: ControlPlane;
   readonly warnings: Warning[];
 
   /** Live workspaces, keyed by workspace id, so change state survives requests. */
@@ -113,6 +116,7 @@ export class App {
     this.sandboxDegradedReason = parts.sandboxDegradedReason;
     this.events = parts.events;
     this.discovery = parts.discovery;
+    this.control = parts.control;
     this.warnings = parts.warnings;
   }
 
@@ -261,7 +265,13 @@ export class App {
     });
     if (degraded && reason) warnings.push({ level: 'warn', message: reason });
 
-    const tools = createToolRegistry({ webAccess: config.sandboxNetwork });
+    const control = createControlPlane({ config, store, executor, events, logger });
+    await control.mcp.load();
+
+    // The shared registry plus the real-browser tools: any agent definition
+    // that names browse/browser_act/web_extract can now actually drive a page.
+    const baseTools = createToolRegistry({ webAccess: config.sandboxNetwork });
+    const tools = new Map([...baseTools, ...browserTools(control).map((t) => [t.definition.name, t] as const)]);
 
     const media = new MediaEngine({
       executor,
@@ -308,6 +318,7 @@ export class App {
       sandboxDegradedReason: degraded ? reason : null,
       events,
       discovery,
+      control,
       warnings,
     });
   }
@@ -483,6 +494,9 @@ export class App {
   async stop(): Promise<void> {
     for (const t of this.timers) clearInterval(t);
     this.timers.length = 0;
+    await this.control.browser.closeAll().catch(() => undefined);
+    await this.control.mcp.disconnectAll().catch(() => undefined);
+    await this.control.docker.cleanupSession().catch(() => undefined);
     this.events.close();
     this.store.db.close();
   }

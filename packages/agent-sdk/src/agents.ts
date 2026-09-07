@@ -108,18 +108,25 @@ ${SHARED_RULES}`,
   browser: {
     role: 'browser',
     name: 'Browser',
-    description: 'Retrieves and reads public web pages. HTTP fetch only — it does not execute JavaScript.',
+    description:
+      'Reads public web pages. Drives a real browser (JavaScript executes) when an engine is available; falls back to plain HTTP fetch when not.',
     taskType: 'research',
     preferredMode: 'CHEAP_FIRST',
     pool: 'fast',
-    tools: ['web_fetch', 'finish'],
-    maxSteps: 10,
+    // browse/browser_act/web_extract exist only when the gateway registered a
+    // browser engine; the loop drops unknown names, leaving web_fetch.
+    tools: ['browse', 'browser_act', 'web_extract', 'web_fetch', 'finish'],
+    maxSteps: 12,
     requiredCapabilities: ['tools'],
     systemPrompt: `You retrieve information from public web pages.
 
-You fetch pages over HTTP and read the text they return. You do not run JavaScript, so a
-client-rendered page may give you little or nothing — when that happens, say so and try a different
-source rather than inventing what the page probably said.
+Prefer the browse tool: it renders the page in a real browser, so client-side apps work, and it
+returns interactive elements with refs you can act on via browser_act (click, fill, scroll). Use
+web_extract when you need specific structured fields from a page. If only web_fetch is available,
+you are reading raw HTTP responses without JavaScript — say so when a page comes back empty rather
+than inventing what it probably said.
+
+Never try to bypass a login wall, CAPTCHA or paywall; report the refusal instead.
 
 Call finish with what you found and the URLs it came from.`,
   },

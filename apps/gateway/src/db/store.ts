@@ -997,6 +997,124 @@ export class Store implements CredentialStore {
     const result = this.db.prepare('DELETE FROM idempotency WHERE created_at < ?').run(Date.now() - olderThanMs);
     return result.changes;
   }
+
+  /* ---------------------------------------------------------------- */
+  /* MCP control plane                                                */
+  /* ---------------------------------------------------------------- */
+
+  // Specs are JSON blobs by design: their shape belongs to mcp-sdk, and secret
+  // values are never inside them — only vault handles are.
+
+  listMcpServers(): unknown[] {
+    return (this.db.prepare('SELECT spec FROM mcp_servers ORDER BY created_at').all() as { spec: string }[]).map((r) =>
+      JSON.parse(r.spec),
+    );
+  }
+
+  saveMcpServer(id: string, spec: unknown, createdAt: number, updatedAt: number): void {
+    this.db
+      .prepare(
+        'INSERT INTO mcp_servers (id, spec, created_at, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET spec = excluded.spec, updated_at = excluded.updated_at',
+      )
+      .run(id, JSON.stringify(spec), createdAt, updatedAt);
+  }
+
+  deleteMcpServer(id: string): void {
+    this.db.prepare('DELETE FROM mcp_servers WHERE id = ?').run(id);
+  }
+
+  sealMcpSecret(handle: string, value: string): void {
+    this.db
+      .prepare('INSERT OR REPLACE INTO mcp_secrets (handle, ciphertext, created_at) VALUES (?, ?, ?)')
+      .run(handle, this.box.seal(value), Date.now());
+  }
+
+  openMcpSecret(handle: string): string | null {
+    const row = this.db.prepare('SELECT ciphertext FROM mcp_secrets WHERE handle = ?').get(handle) as { ciphertext: string } | undefined;
+    return row ? this.box.open(row.ciphertext) : null;
+  }
+
+  discardMcpSecret(handle: string): void {
+    this.db.prepare('DELETE FROM mcp_secrets WHERE handle = ?').run(handle);
+  }
+
+  listMcpPolicies(): unknown[] {
+    return (this.db.prepare('SELECT policy FROM mcp_policies').all() as { policy: string }[]).map((r) => JSON.parse(r.policy));
+  }
+
+  saveMcpPolicy(id: string, policy: unknown): void {
+    this.db.prepare('INSERT OR REPLACE INTO mcp_policies (id, policy) VALUES (?, ?)').run(id, JSON.stringify(policy));
+  }
+
+  deleteMcpPolicy(id: string): void {
+    this.db.prepare('DELETE FROM mcp_policies WHERE id = ?').run(id);
+  }
+
+  listMcpPresets(): unknown[] {
+    return (this.db.prepare('SELECT preset FROM mcp_presets').all() as { preset: string }[]).map((r) => JSON.parse(r.preset));
+  }
+
+  saveMcpPreset(id: string, preset: unknown): void {
+    this.db.prepare('INSERT OR REPLACE INTO mcp_presets (id, preset) VALUES (?, ?)').run(id, JSON.stringify(preset));
+  }
+
+  deleteMcpPreset(id: string): void {
+    this.db.prepare('DELETE FROM mcp_presets WHERE id = ?').run(id);
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Browser profiles and research provenance                         */
+  /* ---------------------------------------------------------------- */
+
+  // Profile state is cookies and origin storage: sealed at rest, and opened
+  // only to hand to a launching browser context.
+
+  loadBrowserProfile(name: string): { state: string; createdAt: number; lastUsedAt: number | null } | null {
+    const row = this.db.prepare('SELECT state_sealed, created_at, last_used_at FROM browser_profiles WHERE name = ?').get(name) as
+      | { state_sealed: string; created_at: number; last_used_at: number | null }
+      | undefined;
+    if (!row) return null;
+    const state = this.box.open(row.state_sealed);
+    if (state == null) return null;
+    return { state, createdAt: row.created_at, lastUsedAt: row.last_used_at };
+  }
+
+  saveBrowserProfile(name: string, state: string, meta: { createdAt: number; lastUsedAt: number }): void {
+    this.db
+      .prepare(
+        'INSERT INTO browser_profiles (name, state_sealed, created_at, last_used_at) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET state_sealed = excluded.state_sealed, last_used_at = excluded.last_used_at',
+      )
+      .run(name, this.box.seal(state), meta.createdAt, meta.lastUsedAt);
+  }
+
+  listBrowserProfiles(): { name: string; state: string; createdAt: number; lastUsedAt: number | null }[] {
+    const rows = this.db.prepare('SELECT name, state_sealed, created_at, last_used_at FROM browser_profiles').all() as {
+      name: string;
+      state_sealed: string;
+      created_at: number;
+      last_used_at: number | null;
+    }[];
+    const out: { name: string; state: string; createdAt: number; lastUsedAt: number | null }[] = [];
+    for (const r of rows) {
+      const state = this.box.open(r.state_sealed);
+      if (state != null) out.push({ name: r.name, state, createdAt: r.created_at, lastUsedAt: r.last_used_at });
+    }
+    return out;
+  }
+
+  deleteBrowserProfile(name: string): void {
+    this.db.prepare('DELETE FROM browser_profiles WHERE name = ?').run(name);
+  }
+
+  saveResearchRecord(id: string, record: unknown, at: number): void {
+    this.db.prepare('INSERT OR REPLACE INTO research_records (id, record, at) VALUES (?, ?, ?)').run(id, JSON.stringify(record), at);
+  }
+
+  listResearchRecords(limit = 100): unknown[] {
+    return (
+      this.db.prepare('SELECT record FROM research_records ORDER BY at DESC LIMIT ?').all(Math.min(limit, 500)) as { record: string }[]
+    ).map((r) => JSON.parse(r.record));
+  }
 }
 
 /* ------------------------------------------------------------------ */

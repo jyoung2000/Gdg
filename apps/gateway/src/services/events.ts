@@ -15,7 +15,8 @@ export type ServerEvent =
   | { type: 'health'; health: ProviderHealth }
   | { type: 'generation'; job: GenerationJob }
   | { type: 'discovery'; providerId: string; added: number; removed: number; total: number }
-  | { type: 'notice'; level: 'info' | 'warn' | 'error'; message: string };
+  | { type: 'notice'; level: 'info' | 'warn' | 'error'; message: string }
+  | { type: 'browser'; sessionId: string; entry: { at: number; kind: string; message: string } };
 
 export type Subscriber = (event: ServerEvent) => void;
 

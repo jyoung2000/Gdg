@@ -14,6 +14,11 @@ import { registerWorkspaceRoutes } from './routes/workspaces.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerSystemRoutes } from './routes/system.js';
 import { registerEventRoutes } from './routes/events.js';
+import { registerBrowserRoutes } from './routes/browser.js';
+import { registerMcpRoutes } from './routes/mcp.js';
+import { registerMcpServerEndpoint } from './routes/mcp-server.js';
+import { registerDockerRoutes } from './routes/docker.js';
+import { registerGitRoutes } from './routes/git.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -307,6 +312,11 @@ export async function createServer(app: App): Promise<FastifyInstance> {
   await registerWorkspaceRoutes(server, app);
   await registerMediaRoutes(server, app);
   await registerEventRoutes(server, app);
+  await registerBrowserRoutes(server, app);
+  await registerMcpRoutes(server, app);
+  await registerMcpServerEndpoint(server, app);
+  await registerDockerRoutes(server, app);
+  await registerGitRoutes(server, app);
 
   /* ---- Static assets and the web client --------------------------- */
 
@@ -334,7 +344,8 @@ export async function createServer(app: App): Promise<FastifyInstance> {
   // One not-found handler: an unmatched API path is an error, and anything else
   // is a client-side route that must return the SPA shell so a deep link works
   // on a hard refresh.
-  const apiPath = (url: string): boolean => url.startsWith('/v1') || url.startsWith('/anthropic') || url.startsWith('/api') || url.startsWith('/media');
+  const apiPath = (url: string): boolean =>
+    url.startsWith('/v1') || url.startsWith('/anthropic') || url.startsWith('/api') || url.startsWith('/media') || url.startsWith('/mcp');
   server.setNotFoundHandler((req, reply) => {
     if (!webRoot || req.method !== 'GET' || apiPath(req.url)) {
       reply.code(404).send({ error: { code: 'invalid_request', message: `No route for ${req.method} ${req.url}`, provider: null, model: null } });
@@ -366,6 +377,8 @@ function isPublicPath(url: string): boolean {
   // they are where money is spent and where prompts travel. `!startsWith('/api')`
   // used to leave both of them anonymous on an instance that asked for auth.
   if (path.startsWith('/v1') || path.startsWith('/anthropic')) return false;
+  // Meridian's own MCP endpoint routes inference; it authenticates like /v1.
+  if (path === '/mcp' || path.startsWith('/mcp/')) return false;
   if (path.startsWith('/api')) return false;
   // What remains is the web client's shell and static assets.
   return true;

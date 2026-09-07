@@ -59,6 +59,15 @@ importers:
       '@meridian/agent-sdk':
         specifier: workspace:*
         version: link:../../packages/agent-sdk
+      '@meridian/browser-sdk':
+        specifier: workspace:*
+        version: link:../../packages/browser-sdk
+      '@meridian/docker-sdk':
+        specifier: workspace:*
+        version: link:../../packages/docker-sdk
+      '@meridian/mcp-sdk':
+        specifier: workspace:*
+        version: link:../../packages/mcp-sdk
       '@meridian/media-sdk':
         specifier: workspace:*
         version: link:../../packages/media-sdk
