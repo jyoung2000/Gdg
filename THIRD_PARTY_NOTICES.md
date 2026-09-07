@@ -63,6 +63,51 @@ rather than included in it.
 
 ---
 
+## LiteLLM — data, redistributed
+
+- **Upstream:** https://github.com/BerriAI/litellm
+- **Licence:** MIT, **except** the repository's `enterprise/` directory, which
+  its root `LICENSE` carves out under a separate licence of its own. Note that
+  `litellm/proxy/enterprise` is a **symlink into that proprietary directory**,
+  so a path that looks like it lives under the MIT tree may not — anyone
+  extending this integration must check where a path really resolves before
+  taking anything from it.
+- **What Meridian uses:** exactly one file —
+  `model_prices_and_context_window.json` — which sits at the repository root,
+  squarely inside the MIT-licensed portion. It is fetched at runtime as a rate
+  card and cached on disk (`packages/model-sdk/src/sources/litellm-pricing.ts`,
+  `price-book-sync.ts`). No LiteLLM code, no proxy, and nothing from
+  `enterprise/` (directly or through the symlink) is used or vendored.
+- **Attribution surfaced in-product:** `GET /api/catalog/prices` returns the
+  source, licence and attribution string, and every price the book fills in
+  carries a note naming the source and how the match was made.
+
+The upstream MIT notice applies to that file and is reproduced by reference:
+Copyright (c) 2023 Berri AI, under the same MIT terms quoted in full above.
+
+---
+
+## awesome-free-llm-apis (mnfst and uzair004) — data, redistributed
+
+- **Upstreams:** https://github.com/mnfst/awesome-free-llm-apis and
+  https://github.com/uzair004/awesome-free-llm-apis (unrelated projects that
+  share a name).
+- **Licence:** both are **CC0 1.0 Universal** — a public-domain dedication, so
+  redistribution and use need no further permission. Verified against each
+  repository's licence file.
+- **What Meridian uses:** their machine-readable registries of free-tier LLM
+  APIs, fetched at runtime (`packages/model-sdk/src/sources/community-registries.ts`).
+  mnfst contributes model listings and parsed rate-limit strings; uzair004
+  contributes structured free-tier limits (`rpm`/`rpd`/`tpd`), access terms and
+  rate-limit header names.
+- **How the claims are treated:** as sourced community claims, never as
+  Meridian's own verification. mnfst entries enter at `UNVERIFIED` confidence;
+  uzair004 entries carry a `lastVerified` date and can reach `LIKELY`, decaying
+  to `STALE` with age. Card/phone/commercial-use questions the data does not
+  answer stay `unknown`.
+
+---
+
 ## Architectural influences — concepts only, reimplemented
 
 The projects below were read to understand how they solve problems Meridian

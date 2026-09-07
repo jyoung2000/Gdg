@@ -55,6 +55,39 @@ Nine explicit policies sit behind "Advanced": `FREE_FIRST`, `CHEAP_FIRST`,
 `FREE`, `LOCAL` and `LOCAL_FIRST` are **hard** constraints, not preferences: a
 paid model is removed in phase one, never merely outranked.
 
+## Model aliases
+
+Any OpenAI-compatible client can ask for a routing intent instead of a model
+name. Send one of these as `model` and the router picks the concrete route at
+request time; the response's `meridian` block names what was actually used.
+
+| Alias | Resolves to |
+| --- | --- |
+| `meridian/auto` | Balanced choice — quality, cost, speed, availability. Also answers to bare `auto`, `meridian` and `default` |
+| `meridian/free` | Best route that cannot charge. Never trial credit |
+| `meridian/cheapest` | Lowest expected cost among routes that can serve the request |
+| `meridian/best-value` | Best balance of quality, reliability and cost |
+| `meridian/frontier` | Highest measured quality, cost notwithstanding |
+| `meridian/fastest` | Lowest measured latency among healthy routes |
+| `meridian/local` | Only models on this machine. Nothing leaves it |
+| `meridian/free-coder` | Best free model for writing and changing code |
+| `meridian/free-reasoning` | Best free model for multi-step reasoning |
+| `meridian/free-vision` | Best free model that can actually see an image |
+| `meridian/free-image` | Best free route for generating an image |
+
+Three properties keep aliases honest:
+
+- **They cannot spend.** An alias sets the routing mode and constraints only —
+  never `allowPaid`, a budget, or a pinned provider. `meridian/free` and the
+  `free-*` aliases are hard free-only constraints, and cost gates apply to an
+  alias request exactly as to a named model.
+- **They fail loudly.** An unknown `meridian/…` name is an error listing the
+  aliases that exist, not a silent fall-through to `auto`.
+- **They are listed.** `GET /v1/models` returns them first, marked
+  `meridian.alias: true`, so a client can discover them the same way it
+  discovers models. Explicit `meridian` request extensions override whatever
+  an alias implies.
+
 ## The fallback chain
 
 The chain deliberately prefers a **different provider** first. If the first

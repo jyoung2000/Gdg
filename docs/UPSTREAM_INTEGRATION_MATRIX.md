@@ -179,6 +179,48 @@ provider that is down.
 
 ---
 
+## Round 2 — pricing, registries and routing conventions
+
+A second pass added more upstreams. Same rules: integration is claimed only
+where something real ships, and an upstream that could not be inspected is
+recorded as exactly that.
+
+| Upstream | Licence | Outcome |
+| --- | --- | --- |
+| [LiteLLM](https://github.com/BerriAI/litellm) | MIT except `enterprise/` | **Integrated (data).** `model_prices_and_context_window.json` synced as a rate card — ~3,800 entries. No code taken |
+| [mnfst/awesome-free-llm-apis](https://github.com/mnfst/awesome-free-llm-apis) | CC0-1.0 | **Integrated (data).** Model listings + parsed rate-limit strings, at `UNVERIFIED` confidence |
+| [uzair004/awesome-free-llm-apis](https://github.com/uzair004/awesome-free-llm-apis) | CC0-1.0 | **Integrated (data).** Structured free-tier limits (`rpm`/`rpd`/`tpd`), access terms, rate-limit header names |
+| [Kilo-Org/kilocode](https://github.com/Kilo-Org/kilocode) | inspected | **Concepts.** Alias-style model selection informed `meridian/*` aliases; its session affinity is recorded below as a gap, not claimed |
+| [RooCodeInc/Roo-Code](https://github.com/RooCodeInc/Roo-Code) | inspected | **Concepts.** Per-mode/per-role model preferences; Meridian's per-role `taskType` + `preferredMode` already covered the shape |
+| [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) | — | **NOT inspected.** The inspection run failed before reading the repository; no findings exist and none are invented |
+| [block/goose](https://github.com/block/goose) | — | **NOT inspected.** Same — recorded as an honest gap |
+
+**LiteLLM specifics.** The licence carve-out matters: everything under
+`enterprise/` is excluded from the MIT grant, and `litellm/proxy/enterprise` is
+a symlink into that directory. Meridian takes exactly one root-level file, as a
+runtime-fetched rate card with an anti-shrink guard
+(`packages/model-sdk/src/sources/litellm-pricing.ts`, `price-book-sync.ts`);
+matching is same-provider-only so one company's rates are never attached to
+another's bill. Details in [PRICING_AND_QUOTA.md](PRICING_AND_QUOTA.md).
+
+**What round 2 shipped in code** (Meridian's own, no upstream code copied):
+the price book and its sync; the `DiscoverySource` metadata/confidence/
+precedence contract; the two community-registry importers; dynamic
+`meridian/*` aliases resolved at the OpenAI surface; an explicit-preference
+tier in the router; and honest p95 (`null` below 21 samples rather than a
+max masquerading as a percentile).
+
+**Round-2 gaps, recorded rather than claimed:**
+
+- **Session affinity** (Kilo has it): pinning a conversation to the provider
+  that served its earlier turns. Meridian routes each call independently.
+- **hermes-agent and goose** were not read; any overlap or divergence with
+  them is unknown.
+- **freeinference.dev** publishes a registry this environment's egress
+  allowlist cannot reach; no importer was written against an unseen schema.
+
+---
+
 ## What this exercise actually added
 
 1. A live, self-updating catalog of free and trial providers, with provenance

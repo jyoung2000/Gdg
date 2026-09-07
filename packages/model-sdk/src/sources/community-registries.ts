@@ -232,8 +232,8 @@ export const MNFST_METADATA: SourceMetadata = {
   id: MNFST_SOURCE_ID,
   displayName: 'awesome-free-llm-apis (mnfst)',
   url: 'https://github.com/mnfst/awesome-free-llm-apis',
-  license: 'see upstream repository',
-  attribution: 'Model listings from github.com/mnfst/awesome-free-llm-apis.',
+  license: 'CC0-1.0',
+  attribution: 'Model listings from github.com/mnfst/awesome-free-llm-apis (CC0 1.0).',
   sourceClass: 'community-catalog',
   // A community list with a lastUpdated stamp and no per-entry verification.
   baseConfidence: 'UNVERIFIED',
@@ -244,8 +244,8 @@ export const UZAIR_METADATA: SourceMetadata = {
   id: UZAIR_SOURCE_ID,
   displayName: 'awesome-free-llm-apis (uzair004)',
   url: 'https://github.com/uzair004/awesome-free-llm-apis',
-  license: 'see upstream repository',
-  attribution: 'Free-tier limits from github.com/uzair004/awesome-free-llm-apis.',
+  license: 'CC0-1.0',
+  attribution: 'Free-tier limits from github.com/uzair004/awesome-free-llm-apis (CC0 1.0).',
   sourceClass: 'community-catalog',
   // Entries carry lastVerified and verifiedBy, so a dated one can reach LIKELY;
   // ageAdjusted() drops it back to STALE once the date is old enough.
