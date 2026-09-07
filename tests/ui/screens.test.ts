@@ -33,7 +33,7 @@ import { startSimServer, type SimServer } from '../e2e/helpers/sim-server.js';
  */
 const SCREENS = [
   'home', 'workspace', 'chat', 'projects', 'tasks', 'agents', 'browser', 'computer',
-  'versioncontrol', 'generations', 'ai', 'skills', 'models', 'providers',
+  'versioncontrol', 'generations', 'discover', 'ai', 'skills', 'models', 'providers',
   'pools', 'mcp', 'devops', 'usage', 'settings',
 ] as const;
 

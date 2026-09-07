@@ -22,6 +22,7 @@ import {
   IconBookmark,
   IconBox,
   IconCommand,
+  IconCompass,
   IconCpu,
   IconFolder,
   IconFolderOpen,
@@ -54,6 +55,7 @@ import { HomeScreen } from '../screens/HomeScreen.js';
 import { WorkspaceScreen } from '../screens/WorkspaceScreen.js';
 import { ChatScreen } from '../screens/ChatScreen.js';
 import { ProjectsScreen } from '../screens/ProjectsScreen.js';
+import { DiscoverScreen } from '../screens/DiscoverScreen.js';
 import { TasksScreen } from '../screens/TasksScreen.js';
 import { AgentsScreen } from '../screens/AgentsScreen.js';
 import { ModelsScreen } from '../screens/ModelsScreen.js';
@@ -92,6 +94,7 @@ const NAV: { id: ScreenId; label: string; icon: React.JSX.Element; section: 'wor
   { id: 'computer', label: 'Computer', icon: <IconMonitor />, section: 'work' },
   { id: 'versioncontrol', label: 'Version Control', icon: <IconGitBranch />, section: 'work' },
   { id: 'generations', label: 'Generations', icon: <IconImage />, section: 'work' },
+  { id: 'discover', label: 'Discover', icon: <IconCompass />, section: 'infrastructure' },
   { id: 'ai', label: 'AI', icon: <IconCpu />, section: 'infrastructure' },
   { id: 'skills', label: 'Skills', icon: <IconBookmark />, section: 'infrastructure' },
   { id: 'models', label: 'Models', icon: <IconSliders />, section: 'infrastructure' },
@@ -113,6 +116,7 @@ const SCREENS: Record<ScreenId, () => React.JSX.Element> = {
   browser: BrowserScreen,
   computer: ComputerScreen,
   versioncontrol: VersionControlScreen,
+  discover: DiscoverScreen,
   ai: AIControlScreen,
   skills: SkillsScreen,
   models: ModelsScreen,

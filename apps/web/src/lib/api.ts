@@ -61,6 +61,95 @@ export interface ProviderView extends ProviderDescriptor {
   paidModels: number;
 }
 
+/** Access and economics for one provider, from the synced catalog. */
+export interface ProviderIntelligenceView {
+  providerId: string;
+  freeAccess: string;
+  freeTierSummary: string | null;
+  rateLimitSummary: string | null;
+  caveat: string | null;
+  bestFor: string | null;
+  expires: string | null;
+  requirements: { apiKey: Tri; account: Tri; card: Tri; phone: Tri };
+  commercialUse: Tri;
+  openAiCompatible: Tri;
+  openAiBaseUrl: string | null;
+  freeModelIds: string[];
+  modalities: string[];
+  provenance: {
+    source: string;
+    sourceUrl: string | null;
+    sourceVersion: string | null;
+    sourceVerified: boolean;
+    lastVerified: string | null;
+    confidence: 'high' | 'medium' | 'low';
+  };
+}
+
+/** Three-valued, because "not confirmed" is a real answer. */
+export type Tri = 'yes' | 'no' | 'unknown';
+
+export interface CatalogStatus {
+  source: string;
+  status: string;
+  version: string | null;
+  generated: string | null;
+  fromCache: boolean;
+  fetchedAt: number | null;
+  cacheAgeDays: number | null;
+  registered: number;
+  enriched: number;
+  entries: number;
+  unroutable: Record<string, number>;
+  error: string | null;
+  license: string;
+  attribution: string;
+}
+
+export interface CatalogChange {
+  kind: string;
+  providerId: string;
+  providerName: string;
+  before: string | null;
+  after: string | null;
+  significant: boolean;
+}
+
+export interface RouteOptionView {
+  modelId: string;
+  providerId: string;
+  providerModelId: string;
+  displayName: string;
+  free: boolean;
+  blendedPerMTok: number | null;
+  contextLength: number | null;
+  local: boolean;
+  latencyMs: number | null;
+  p95LatencyMs: number | null;
+  reliability: number | null;
+  health: string;
+  supportState: string;
+  freeAccess: string | null;
+  configured: boolean;
+}
+
+export interface RouteGroupView {
+  key: string;
+  displayName: string;
+  options: RouteOptionView[];
+  cheapest: RouteOptionView | null;
+  freeRoute: RouteOptionView | null;
+  fastest: RouteOptionView | null;
+  localRoute: RouteOptionView | null;
+}
+
+export interface RadarEntryView {
+  option: RouteOptionView;
+  score: number;
+  factors: { quality: number; reliability: number; availability: number; speed: number };
+  note: string;
+}
+
 export interface ModelView extends ModelDescriptor {
   free: boolean;
   scores: ModelScores | null;
@@ -155,6 +244,14 @@ const patch = <T>(path: string, body: unknown): Promise<T> => request<T>(path, {
 const put = <T>(path: string, body: unknown): Promise<T> => request<T>(path, { method: 'PUT', body: JSON.stringify(body) });
 const del = <T>(path: string): Promise<T> => request<T>(path, { method: 'DELETE' });
 
+/** Build `?a=1&b=2` from the entries that actually have a value. */
+function queryString(params: Record<string, string | undefined>): string {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined) q.set(k, v);
+  const s = q.toString();
+  return s ? `?${s}` : '';
+}
+
 export const api = {
   /* System */
   info: () => get<SystemInfo>('/api/system/info'),
@@ -210,6 +307,34 @@ export const api = {
   createReservation: (body: { poolId: string; hours?: number; label?: string; maxConcurrency?: number; budget?: number | null; models?: string[] }) =>
     post<{ reservation: Reservation }>('/api/reservations', body),
   deleteReservation: (id: string) => del<{ removed: boolean }>(`/api/reservations/${id}`),
+
+  /* Model intelligence: synced catalog, routes, free radar */
+  catalogStatus: () => get<{ status: CatalogStatus }>('/api/catalog/status'),
+  syncCatalog: () => post<{ status: CatalogStatus }>('/api/catalog/sync', {}),
+  catalogIntelligence: (q: { free?: boolean; noCard?: boolean; commercial?: boolean } = {}) =>
+    get<{ providers: ProviderIntelligenceView[]; total: number }>(
+      `/api/catalog/intelligence${queryString({
+        free: q.free ? 'true' : undefined,
+        noCard: q.noCard ? 'true' : undefined,
+        commercial: q.commercial ? 'true' : undefined,
+      })}`,
+    ),
+  catalogChanges: () => get<{ changes: CatalogChange[] }>('/api/catalog/changes'),
+  routes: (q: { multiOnly?: boolean; q?: string; limit?: number } = {}) =>
+    get<{ groups: RouteGroupView[]; total: number }>(
+      `/api/routes${queryString({
+        multiOnly: q.multiOnly ? 'true' : undefined,
+        q: q.q || undefined,
+        limit: q.limit ? String(q.limit) : undefined,
+      })}`,
+    ),
+  freeRadar: (q: { limit?: number; includeUnconfigured?: boolean } = {}) =>
+    get<{ entries: RadarEntryView[]; configuredProviders: number }>(
+      `/api/radar/free${queryString({
+        limit: q.limit ? String(q.limit) : undefined,
+        includeUnconfigured: q.includeUnconfigured ? 'true' : undefined,
+      })}`,
+    ),
 
   /* Workspaces */
   workspaces: () => get<{ workspaces: Workspace[] }>('/api/workspaces'),

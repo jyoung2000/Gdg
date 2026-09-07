@@ -11,7 +11,18 @@ import {
   type RoutingMode,
   type TrustLevel,
 } from '@meridian/shared';
-import { BENCHMARK_SUITE, bestForLabel, recommendationScore, runBenchmark, stars, summarise } from '@meridian/model-sdk';
+import {
+  BENCHMARK_SUITE,
+  bestForLabel,
+  freeRadar,
+  groupRoutes,
+  multiRouteGroups,
+  recommendationScore,
+  runBenchmark,
+  stars,
+  summarise,
+  type RouteContext,
+} from '@meridian/model-sdk';
 import { mayUseCredential, requireAdmin, requireCredentialOwner, requireScope } from './authz.js';
 import type { App } from '../services/app.js';
 import { intParam } from './shared.js';
@@ -97,6 +108,68 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
       if (req.query.noCard === 'true') rows = rows.filter((r) => r.requirements.card === 'no');
       if (req.query.commercial === 'true') rows = rows.filter((r) => r.commercialUse === 'yes');
       return { providers: rows, total: rows.length };
+    },
+  );
+
+  /* ---------------- Routes ---------------- */
+
+  /**
+   * The same model, grouped by every way of reaching it.
+   *
+   * This is what makes "cheapest" a routing decision rather than a property of
+   * a model name: one group, several providers, each with its own price, speed
+   * and free allowance.
+   */
+  server.get<{ Querystring: { multiOnly?: string; limit?: string; q?: string } }>(
+    '/api/routes',
+    async (req) => {
+      let groups = groupRoutes(app.models.all(), routeContext(app));
+      if (req.query.multiOnly === 'true') groups = multiRouteGroups(groups);
+      if (req.query.q) {
+        const needle = req.query.q.toLowerCase();
+        groups = groups.filter(
+          (g) => g.key.includes(needle) || g.displayName.toLowerCase().includes(needle),
+        );
+      }
+      const limit = intParam(req.query.limit, 100, 500);
+      return { groups: groups.slice(0, limit), total: groups.length };
+    },
+  );
+
+  /** Every route for one model group. */
+  server.get<{ Params: { key: string } }>('/api/routes/:key', async (req) => {
+    const group = groupRoutes(app.models.all(), routeContext(app)).find((g) => g.key === req.params.key);
+    if (!group) throw new MeridianError('invalid_request', `No route group "${req.params.key}"`);
+    return { group };
+  });
+
+  /**
+   * The best models available for nothing, right now.
+   *
+   * `includeUnconfigured` shows what would become available with a key, which
+   * is the honest way to answer "what am I missing" without pretending those
+   * routes are usable today — each entry says so in its note.
+   */
+  server.get<{ Querystring: { limit?: string; includeUnconfigured?: string; task?: string } }>(
+    '/api/radar/free',
+    async (req) => {
+      const groups = groupRoutes(app.models.all(), routeContext(app));
+      // Chat is the honest default: an unspecified task is a general one.
+      const taskType = (req.query.task as AIRequest['taskType']) ?? 'chat';
+      const entries = freeRadar(groups, {
+        limit: intParam(req.query.limit, 20, 100),
+        includeUnconfigured: req.query.includeUnconfigured === 'true',
+        quality: (modelId) => {
+          const v = app.models.view(modelId);
+          return recommendationScore(v?.scores ?? null, v?.performance ?? null, taskType);
+        },
+      });
+      return {
+        entries,
+        // Said plainly rather than implied: an empty radar with no credentials
+        // is a configuration state, not an absence of free models.
+        configuredProviders: app.providers.list().filter((d) => app.credentials.hasAny(d.id)).length,
+      };
     },
   );
 
@@ -598,4 +671,24 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
       cooldownSec: app.health.cooldownRemaining(d.id),
     })),
   }));
+}
+
+/**
+ * Everything the route grouper needs to describe one option, read from the
+ * live app rather than from a snapshot, so a route's health and configuration
+ * state are current at the moment it is asked for.
+ */
+function routeContext(app: App): RouteContext {
+  return {
+    view: (modelId) => app.models.view(modelId),
+    health: (providerId) => app.health.get(providerId),
+    supportState: (providerId) => app.providers.supportState(providerId),
+    configured: (providerId) => {
+      const d = app.providers.descriptor(providerId);
+      // An endpoint that needs no auth is usable without a credential.
+      return d ? d.auth === 'none' || app.credentials.hasAny(providerId) : false;
+    },
+    freeAccess: (providerId) => app.catalogSync.for(providerId)?.freeAccess ?? null,
+    local: (providerId) => app.providers.descriptor(providerId)?.local ?? false,
+  };
 }
