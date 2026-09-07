@@ -21,6 +21,8 @@ export type ScreenId =
   | 'browser'
   | 'versioncontrol'
   | 'generations'
+  | 'ai'
+  | 'skills'
   | 'models'
   | 'providers'
   | 'pools'

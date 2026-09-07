@@ -19,6 +19,7 @@ import {
   IconActivity,
   IconBarChart,
   IconBolt,
+  IconBookmark,
   IconBox,
   IconCommand,
   IconCpu,
@@ -37,6 +38,7 @@ import {
   IconServer,
   IconSettings,
   IconSidebar,
+  IconSliders,
   IconTerminal,
 } from '@meridian/ui';
 import { api } from '../lib/api.js';
@@ -61,6 +63,8 @@ import { BrowserScreen } from '../screens/BrowserScreen.js';
 import { VersionControlScreen } from '../screens/VersionControlScreen.js';
 import { McpScreen } from '../screens/McpScreen.js';
 import { DevOpsScreen } from '../screens/DevOpsScreen.js';
+import { AIControlScreen } from '../screens/AIControlScreen.js';
+import { SkillsScreen } from '../screens/SkillsScreen.js';
 
 /** The identity mark: a meridian line crossing a circle. */
 function Mark({ className }: { className?: string }): React.JSX.Element {
@@ -82,7 +86,9 @@ const NAV: { id: ScreenId; label: string; icon: React.JSX.Element; section: 'wor
   { id: 'browser', label: 'Browser', icon: <IconGlobe />, section: 'work' },
   { id: 'versioncontrol', label: 'Version Control', icon: <IconGitBranch />, section: 'work' },
   { id: 'generations', label: 'Generations', icon: <IconImage />, section: 'work' },
-  { id: 'models', label: 'Models', icon: <IconCpu />, section: 'infrastructure' },
+  { id: 'ai', label: 'AI', icon: <IconCpu />, section: 'infrastructure' },
+  { id: 'skills', label: 'Skills', icon: <IconBookmark />, section: 'infrastructure' },
+  { id: 'models', label: 'Models', icon: <IconSliders />, section: 'infrastructure' },
   { id: 'providers', label: 'Providers', icon: <IconServer />, section: 'infrastructure' },
   { id: 'pools', label: 'Pools', icon: <IconLayers />, section: 'infrastructure' },
   { id: 'mcp', label: 'MCP', icon: <IconBolt />, section: 'infrastructure' },
@@ -99,6 +105,8 @@ const SCREENS: Record<ScreenId, () => React.JSX.Element> = {
   agents: AgentsScreen,
   browser: BrowserScreen,
   versioncontrol: VersionControlScreen,
+  ai: AIControlScreen,
+  skills: SkillsScreen,
   models: ModelsScreen,
   providers: ProvidersScreen,
   pools: PoolsScreen,

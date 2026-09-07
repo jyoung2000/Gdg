@@ -310,6 +310,41 @@ export const api = {
   dockerVerifyJob: (id: string) => get<{ job: DockerVerifyJobView }>(`/api/docker/verify/${id}`),
   dockerVerifyJobs: () => get<{ jobs: { id: string; path: string; status: string; startedAt: number; finishedAt: number | null }[] }>('/api/docker/verify'),
 
+  /* AI control plane */
+  skills: () => get<{ skills: SkillView[] }>('/api/skills'),
+  createSkill: (body: { slug: string; name: string; content: string; description?: string; tags?: string[]; requiresCapabilities?: string[] }) =>
+    post<{ skill: SkillView }>('/api/skills', body),
+  updateSkill: (id: string, body: Record<string, unknown>) => patch<{ skill: SkillView }>(`/api/skills/${id}`, body),
+  deleteSkill: (id: string) => del<{ deleted: boolean }>(`/api/skills/${id}`),
+  importSkills: (skills: { slug: string; name: string; content: string; description?: string }[]) =>
+    post<{ imported: number }>('/api/skills/import', { skills }),
+  exportSkills: () => get<{ skills: unknown[] }>('/api/skills/export'),
+
+  assignments: (kind?: 'skill' | 'mcp') => get<{ assignments: AssignmentView[] }>(`/api/assignments${kind ? `?kind=${kind}` : ''}`),
+  setAssignment: (body: { kind: 'skill' | 'mcp'; targetId: string; scope: string; scopeId?: string | null; mode: 'include' | 'exclude' | 'inherit' }) =>
+    put<{ assignment?: AssignmentView; cleared?: boolean }>('/api/assignments', body),
+
+  aiProfiles: () => get<{ profiles: AIProfileView[] }>('/api/ais'),
+  createAIProfile: (body: Record<string, unknown>) => post<{ profile: AIProfileView }>('/api/ais', body),
+  updateAIProfile: (id: string, body: Record<string, unknown>) => patch<{ profile: AIProfileView }>(`/api/ais/${id}`, body),
+  deleteAIProfile: (id: string) => del<{ deleted: boolean }>(`/api/ais/${id}`),
+
+  effectiveConfig: (q: { profileId?: string; modelId?: string; providerId?: string; workspaceId?: string }) => {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(q)) if (v) params.set(k, v);
+    return get<{ config: EffectiveConfigView; explanations: EffectiveExplanations }>(`/api/runtime/effective-config?${params}`);
+  },
+  capabilitySearch: (body: { query?: string; capabilities?: string[]; localOnly?: boolean; availableOnly?: boolean; limit?: number }) =>
+    post<{ requirement: Record<string, unknown>; matches: CapabilityMatchView[]; total: number }>('/api/runtime/capability-search', body),
+
+  modelCapabilities: (modelId: string) => get<ModelCapabilitiesView>(`/api/models/${encodeURIComponent(modelId)}/capabilities`),
+  confirmCapability: (modelId: string, capability: string, supported: boolean) =>
+    post<{ model: unknown }>(`/api/models/${encodeURIComponent(modelId)}/capabilities`, { capability, supported }),
+  discoverModels: (force = false) => post<{ providers: number; models: number; skipped: string[] }>('/api/models/discover', { force }),
+  modelChanges: (limit = 50) => get<{ changes: ModelChangeView[] }>(`/api/models/changes?limit=${limit}`),
+  discoveryStatus: () => get<{ schedules: DiscoveryScheduleView[]; intervalMs: number }>('/api/models/discovery-status'),
+  connections: () => get<{ connections: ConnectionView[] }>('/api/connections'),
+
   /* Git / version control */
   ghInfo: () => get<{ gh: { installed: boolean; version: string | null; authenticated: boolean; detail: string | null } }>('/api/git/gh'),
   gitStatus: (workspaceId: string) => get<{ status: GitStatusView }>(`/api/git/${workspaceId}/status`),
@@ -590,4 +625,120 @@ export async function streamChat(
   } finally {
     await reader.cancel().catch(() => undefined);
   }
+}
+
+/* ---- control-plane view types ---- */
+
+export interface SkillView {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  content: string;
+  tags: string[];
+  requiresCapabilities: string[];
+  estimatedTokens: number;
+  enabled: boolean;
+  version: number;
+  source: string;
+  createdAt: number;
+  updatedAt: number;
+}
+export interface AssignmentView {
+  id: string;
+  kind: 'skill' | 'mcp';
+  targetId: string;
+  scope: string;
+  scopeId: string | null;
+  mode: 'include' | 'exclude';
+}
+export interface AIProfileView {
+  id: string;
+  name: string;
+  description: string;
+  modelId: string | null;
+  providerId: string | null;
+  routingMode: string | null;
+  requiredCapabilities: string[];
+  privacyPreference: string;
+  enabled: boolean;
+}
+export interface ResolutionReasonView {
+  targetId: string;
+  enabled: boolean;
+  decidedBy: string;
+  scopeId: string | null;
+  mode: string;
+  considered: { scope: string; scopeId: string | null; mode: string }[];
+  blocked: string | null;
+}
+export interface EffectiveConfigView {
+  profileId: string | null;
+  modelId: string | null;
+  providerId: string | null;
+  skills: { skill: SkillView; reason: ResolutionReasonView }[];
+  excludedSkills: ResolutionReasonView[];
+  mcpServers: { serverId: string; name: string; reason: ResolutionReasonView }[];
+  excludedMcpServers: ResolutionReasonView[];
+  skillTokens: number;
+  contextLength: number | null;
+  contextPressure: number | null;
+  warnings: string[];
+}
+export interface EffectiveExplanations {
+  skills: Record<string, string>;
+  excludedSkills: Record<string, string>;
+  mcpServers: Record<string, string>;
+  excludedMcpServers: Record<string, string>;
+}
+export interface CapabilityMatchView {
+  modelId: string;
+  providerId: string;
+  displayName: string;
+  score: number;
+  evidence: { capability: string; state: string; source: string }[];
+  missing: { capability: string; state: string }[];
+  reasons: string[];
+  eligible: boolean;
+}
+export interface ModelCapabilitiesView {
+  modelId: string;
+  providerId: string;
+  displayName: string;
+  contextLength: number | null;
+  maxOutputTokens: number | null;
+  modalities: string[];
+  pricing: { kind: string };
+  discoveredAt: number | null;
+  lastVerifiedAt: number | null;
+  availability: { available: boolean; local: boolean; detail: string | null };
+  capabilities: { capability: string; state: string; source: string }[];
+}
+export interface ModelChangeView {
+  id: string;
+  modelId: string;
+  at: number;
+  kind: string;
+  changes: { field: string; from: string | null; to: string | null }[];
+}
+export interface DiscoveryScheduleView {
+  providerId: string;
+  lastAttemptAt: number | null;
+  lastSuccessAt: number | null;
+  consecutiveFailures: number;
+  nextEligibleAt: number;
+  lastError: string | null;
+}
+export interface ConnectionView {
+  providerId: string;
+  name: string;
+  connected: boolean;
+  method: string;
+  credentialSource: string | null;
+  hint: string | null;
+  models: number;
+  health: string;
+  lastVerifiedAt: number | null;
+  grants: string;
+  detail: string | null;
 }
