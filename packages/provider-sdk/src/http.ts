@@ -30,6 +30,29 @@ export function parseRetryAfter(headers: Headers, now: number): number | null {
  * adapter's — keeping them in one place is what makes the retry budget real.
  */
 export async function httpRequest(url: string, opts: HttpOptions): Promise<Response> {
+  return coreRequest(url, opts, null) as Promise<Response>;
+}
+
+/**
+ * How much of a JSON body will be buffered before the connection is cut.
+ *
+ * Large is deliberate — image generations arrive as base64 inside JSON — but
+ * bounded is the point: a provider (or an interposed box) that streams garbage
+ * forever must cost a failed request, not the gateway's memory.
+ */
+const MAX_JSON_BODY_BYTES = 64 * 1024 * 1024;
+
+async function coreRequest(url: string, opts: HttpOptions, consume: 'text' | null): Promise<Response | { body: string }> {
+  // An already-cancelled caller gets no request at all. AbortSignal fires its
+  // event only on the transition, so a listener added after the fact never
+  // fires and the dispatch below would proceed un-cancellable.
+  if (opts.signal?.aborted) {
+    throw new MeridianError('cancelled', 'Request cancelled before dispatch', {
+      providerId: opts.providerId,
+      modelId: opts.modelId ?? null,
+    });
+  }
+
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(new Error(`timeout after ${opts.timeoutMs}ms`)), opts.timeoutMs);
   if (typeof timer.unref === 'function') timer.unref();
@@ -56,7 +79,14 @@ export async function httpRequest(url: string, opts: HttpOptions): Promise<Respo
         details: { status: res.status, body: text.slice(0, 800) },
       });
     }
-    return res;
+    if (consume === null) return res;
+
+    // The body is read while the deadline and the caller's cancel still apply.
+    // Returning the Response and reading it in the caller looked equivalent,
+    // but the finally below had already cleared the timer and unhooked the
+    // parent signal — so a provider that sent headers and then trickled the
+    // body held the connection forever, immune to both timeout and cancel.
+    return { body: await readBodyCapped(res, MAX_JSON_BODY_BYTES, opts) };
   } catch (e) {
     if (e instanceof MeridianError) throw e;
     if (opts.signal?.aborted) {
@@ -96,8 +126,45 @@ function describeHttpError(status: number, body: string): string {
 }
 
 export async function httpJson<T>(url: string, opts: HttpOptions): Promise<T> {
-  const res = await httpRequest(url, opts);
-  return (await res.json()) as T;
+  const { body } = (await coreRequest(url, opts, 'text')) as { body: string };
+  try {
+    return JSON.parse(body) as T;
+  } catch {
+    // A 2xx wrapped around something that is not JSON is a provider-side
+    // malfunction (or an interposed proxy page). Left unclassified it escaped
+    // as a raw SyntaxError, was labelled `internal`, and aborted the whole
+    // fallback chain for what is exactly the failure the chain exists for.
+    throw new MeridianError('server_error', `Provider returned a 2xx response whose body is not JSON`, {
+      providerId: opts.providerId,
+      modelId: opts.modelId ?? null,
+      details: { body: body.slice(0, 300) },
+    });
+  }
+}
+
+async function readBodyCapped(res: Response, maxBytes: number, opts: HttpOptions): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) return '';
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new MeridianError('server_error', `Response body exceeded ${Math.round(maxBytes / 1_048_576)}MB`, {
+          providerId: opts.providerId,
+          modelId: opts.modelId ?? null,
+        });
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 export interface StreamOptions {

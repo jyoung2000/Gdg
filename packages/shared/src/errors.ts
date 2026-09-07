@@ -114,6 +114,11 @@ export class MeridianError extends Error {
   }
 }
 
+/** Narrow an arbitrary string to the taxonomy, for codes arriving off the wire. */
+export function isErrorCode(code: unknown): code is ErrorCode {
+  return typeof code === 'string' && (ERROR_CODES as readonly string[]).includes(code);
+}
+
 export function isMeridianError(e: unknown): e is MeridianError {
   return e instanceof MeridianError;
 }
@@ -142,7 +147,14 @@ export function classifyUnknown(e: unknown, providerId?: string, modelId?: strin
 
 /** Map an HTTP status from a provider onto our taxonomy. */
 export function classifyStatus(status: number, body: string): ErrorCode {
-  if (status === 429) return 'rate_limited';
+  if (status === 429) {
+    // Providers deliver both conditions as 429, and they call for opposite
+    // treatment: a rate limit clears on its own, an exhausted quota does not —
+    // retrying it burns the fallback budget on a target that cannot recover.
+    const lower = body.toLowerCase();
+    if (/(quota|billing|credit|insufficient[_ ]funds|payment|exceeded your current)/.test(lower)) return 'quota_exhausted';
+    return 'rate_limited';
+  }
   if (status === 401 || status === 403) return 'authentication_failed';
   if (status === 404) return 'model_unavailable';
   if (status === 408 || status === 504) return 'timeout';

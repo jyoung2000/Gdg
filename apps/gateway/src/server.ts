@@ -355,12 +355,20 @@ function clientKey(req: FastifyRequest): string {
 }
 
 function isPublicPath(url: string): boolean {
-  return (
-    url === '/api/system/info' ||
-    url === '/api/system/health' ||
-    url.startsWith('/media/') ||
-    !url.startsWith('/api')
-  );
+  const path = url.split('?')[0];
+  // Probes and the first-run experience.
+  if (path === '/api/system/info' || path === '/api/system/health' || path === '/api/system/ready') return true;
+  // Generated assets are capability URLs: unguessable job-id filenames, loaded
+  // by <img> tags that cannot carry an Authorization header. Documented in
+  // docs/SECURITY.md rather than pretended otherwise.
+  if (path.startsWith('/media/')) return true;
+  // The inference surfaces are exactly what "require an API key" is for —
+  // they are where money is spent and where prompts travel. `!startsWith('/api')`
+  // used to leave both of them anonymous on an instance that asked for auth.
+  if (path.startsWith('/v1') || path.startsWith('/anthropic')) return false;
+  if (path.startsWith('/api')) return false;
+  // What remains is the web client's shell and static assets.
+  return true;
 }
 
 export type { FastifyInstance, FastifyReply, FastifyRequest };

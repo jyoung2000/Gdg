@@ -47,7 +47,11 @@ export type TaskEvent =
   | { type: 'agent'; event: AgentEvent }
   | { type: 'diff'; changes: import('@meridian/shared').FileChange[] };
 
+export type PipelineKind = 'auto' | 'research' | 'debug' | 'tests' | 'code';
+
 export interface RunTaskInput {
+  /** Explicit pipeline choice; omitted means infer from the request text. */
+  pipeline?: PipelineKind;
   task: AgentTask;
   workspace: Workspace;
   mode?: RoutingMode;
@@ -112,7 +116,23 @@ export class Orchestrator {
    * enough that spending a model call to classify every request would cost more
    * than the occasional misfire. The user can always override the pipeline.
    */
-  planPipeline(request: string): Pipeline {
+  planPipeline(request: string, kind?: PipelineKind): Pipeline {
+    // An explicit ask beats every heuristic. The heuristics exist for requests
+    // that do not say what they are; a caller who says "research this" must not
+    // be routed into the mutating implement/test pipeline because their
+    // question happened to contain the word "add".
+    if (kind && kind !== 'auto') {
+      switch (kind) {
+        case 'research':
+          return { steps: ['file-finder', 'researcher'], rationale: 'Research was requested explicitly, so nothing here mutates the workspace.' };
+        case 'debug':
+          return { steps: ['file-finder', 'debugger', 'tester', 'reviewer'], rationale: 'Debugging was requested explicitly.' };
+        case 'tests':
+          return { steps: ['file-finder', 'tester', 'reviewer'], rationale: 'Tests were requested explicitly.' };
+        case 'code':
+          return { steps: ['file-finder', 'planner', 'implementer', 'tester', 'reviewer'], rationale: 'The full coding pipeline was requested explicitly.' };
+      }
+    }
     const text = request.toLowerCase();
     const isQuestion =
       /^(what|where|how|why|which|who|when|does|do|is|are|can|should|explain|describe|show me|tell me|find)\b/.test(text.trim()) ||
@@ -206,7 +226,7 @@ export class Orchestrator {
     const signal = input.signal ? anySignal([input.signal, ac.signal]) : ac.signal;
     this.running.set(input.task.id, ac);
 
-    const pipeline = this.planPipeline(input.task.request);
+    const pipeline = this.planPipeline(input.task.request, input.pipeline);
     const log = this.deps.logger.child({ taskId: input.task.id, workspaceId: input.task.workspaceId });
 
     let task: AgentTask = { ...input.task, status: 'running', startedAt: this.now() };

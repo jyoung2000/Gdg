@@ -19,6 +19,8 @@ export class ProviderRegistry {
   private readonly credentialed = new Set<string>();
   /** Capabilities confirmed against the live API, keyed by provider id. */
   private readonly verified = new Map<string, AdapterCapabilities>();
+  private readonly verifiedAtMs = new Map<string, number>();
+  private readonly disabled = new Set<string>();
 
   /** Register an adapter implementation under an `adapter` key. */
   registerAdapter(key: string, factory: AdapterFactory): void {
@@ -59,6 +61,36 @@ export class ProviderRegistry {
     return [...this.descriptors.values()].sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  /**
+   * Operator kill-switch. A disabled provider stays registered — its models,
+   * credential state and history remain inspectable — but routing must never
+   * select it. Deleting it instead would forget everything the operator knows
+   * about it just to express "not right now".
+   */
+  setEnabled(providerId: string, enabled: boolean): void {
+    if (enabled) this.disabled.delete(providerId);
+    else this.disabled.add(providerId);
+  }
+
+  isEnabled(providerId: string): boolean {
+    return !this.disabled.has(providerId);
+  }
+
+  /** When a live call last confirmed this provider, across restarts. */
+  setVerifiedAt(providerId: string, at: number): void {
+    this.verifiedAtMs.set(providerId, at);
+  }
+
+  /**
+   * The recorded time of the last live verification, or null. Deliberately a
+   * timestamp and not a capability upgrade: a date proves it was verified once,
+   * not that today's API still behaves the same, so supportState stays
+   * `experimental` until this process has seen a live call succeed.
+   */
+  verifiedAt(providerId: string): number | null {
+    return this.verifiedAtMs.get(providerId) ?? null;
+  }
+
   /** Record that a provider has a usable credential (or needs none). */
   setCredentialed(providerId: string, has: boolean): void {
     if (has) this.credentialed.add(providerId);
@@ -74,6 +106,7 @@ export class ProviderRegistry {
   /** Record capabilities confirmed by a successful live call. */
   setVerified(providerId: string, caps: AdapterCapabilities): void {
     this.verified.set(providerId, caps);
+    this.verifiedAtMs.set(providerId, Date.now());
   }
 
   verifiedCapabilities(providerId: string): AdapterCapabilities | null {
@@ -92,6 +125,7 @@ export class ProviderRegistry {
   supportState(providerId: string): SupportState {
     const descriptor = this.descriptors.get(providerId);
     if (!descriptor || !this.factories.has(descriptor.adapter)) return 'unavailable';
+    if (this.disabled.has(providerId)) return 'disabled';
     if (!this.isCredentialed(providerId)) return 'not_configured';
     return this.verified.has(providerId) ? 'supported' : 'experimental';
   }

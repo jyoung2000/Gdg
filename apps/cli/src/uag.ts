@@ -120,7 +120,11 @@ class Client {
   }
 
   /** Stream a chat completion, printing tokens as they arrive. */
-  async stream(body: Record<string, unknown>, onMeta: (meta: Record<string, unknown>) => void): Promise<void> {
+  async stream(
+    body: Record<string, unknown>,
+    onMeta: (meta: Record<string, unknown>) => void,
+    onDelta?: (delta: string) => void,
+  ): Promise<void> {
     const res = await fetch(`${this.config.baseUrl.replace(/\/+$/, '')}/v1/chat/completions`, {
       method: 'POST',
       headers: this.headers({ accept: 'text/event-stream' }),
@@ -153,7 +157,10 @@ class Client {
         if (evt?.meridian) onMeta(evt.meridian);
         if (evt?.usage) onMeta({ usage: evt.usage });
         const delta = evt?.choices?.[0]?.delta?.content;
-        if (delta) process.stdout.write(delta);
+        if (delta) {
+          if (onDelta) onDelta(delta);
+          else process.stdout.write(delta);
+        }
       }
     }
   }
@@ -196,6 +203,11 @@ function parseArgs(argv: string[]): Args {
 }
 
 const str = (v: string | boolean | undefined): string | undefined => (typeof v === 'string' ? v : undefined);
+/** The routing-mode flag, uppercased so `--mode fast` means FAST rather than silently AUTO. */
+const modeFlag = (flags: Record<string, string | boolean | undefined>): string | undefined => {
+  const raw = str(flags.mode);
+  return raw ? raw.toUpperCase() : undefined;
+};
 
 /* ------------------------------------------------------------------ */
 /* Commands                                                           */
@@ -247,7 +259,7 @@ ${c.dim('EXAMPLES')}
 
 function routingFlags(flags: Args['flags']): Record<string, unknown> {
   const meridian: Record<string, unknown> = {};
-  if (str(flags.mode)) meridian.mode = str(flags.mode)!.toUpperCase();
+  if (modeFlag(flags)) meridian.mode = modeFlag(flags);
   if (str(flags.pool)) meridian.pool = str(flags.pool);
   if (str(flags.provider)) meridian.provider = str(flags.provider);
   if (flags.free) meridian.free_only = true;
@@ -474,6 +486,9 @@ async function main(): Promise<number> {
         return 1;
       }
       let meta: Record<string, unknown> = {};
+      // --json wants one parseable object, so the stream is collected rather
+      // than teed to the terminal as it arrives.
+      const collected: string[] = [];
       await client.stream(
         {
           model: str(flags.model) ?? 'auto',
@@ -483,7 +498,12 @@ async function main(): Promise<number> {
         (m) => {
           meta = { ...meta, ...m };
         },
+        json ? (delta) => collected.push(delta) : undefined,
       );
+      if (json) {
+        out(JSON.stringify({ content: collected.join(''), ...meta }, null, 2));
+        return 0;
+      }
       out();
       const routing = meta.routing as { summary?: string } | undefined;
       const usage = meta.usage as { total_tokens?: number } | undefined;
@@ -515,7 +535,7 @@ async function main(): Promise<number> {
       const { estimate, pipeline } = await client.request<{
         estimate: { calls: number; models: number; cost: number; seconds: number; freeAvailable: boolean; strategy: string };
         pipeline: { steps: string[]; rationale: string };
-      }>('/api/tasks/estimate', { method: 'POST', body: { workspaceId, request, mode: str(flags.mode), allowPaid: Boolean(flags.paid) } });
+      }>('/api/tasks/estimate', { method: 'POST', body: { workspaceId, request, mode: modeFlag(flags), allowPaid: Boolean(flags.paid) } });
 
       out();
       out(`  ${c.bold('Plan')}  ${pipeline.steps.join(' → ')}`);
@@ -539,7 +559,7 @@ async function main(): Promise<number> {
 
       const { task } = await client.request<{ task: { id: string; title: string } }>('/api/tasks', {
         method: 'POST',
-        body: { workspaceId, request, mode: str(flags.mode), allowPaid: Boolean(flags.paid), budget: str(flags.budget) ? Number(str(flags.budget)) : undefined },
+        body: { workspaceId, request, mode: modeFlag(flags), allowPaid: Boolean(flags.paid), budget: str(flags.budget) ? Number(str(flags.budget)) : undefined },
       });
       out(`  ${c.cyan('▸')} ${task.title}  ${c.dim(task.id)}`);
       out();
@@ -557,7 +577,7 @@ async function main(): Promise<number> {
       }
       const { task } = await client.request<{ task: { id: string } }>('/api/tasks', {
         method: 'POST',
-        body: { workspaceId, request: question, mode: str(flags.mode) },
+        body: { workspaceId, request: question, mode: modeFlag(flags), pipeline: 'research' },
       });
       return followTask(client, task.id, json);
     }
@@ -580,7 +600,7 @@ async function main(): Promise<number> {
               model: str(flags.model),
               provider: str(flags.provider),
               pool: str(flags.pool),
-              mode: str(flags.mode),
+              mode: modeFlag(flags),
               aspectRatio: str(flags.aspect),
               seed: str(flags.seed) ? Number(str(flags.seed)) : undefined,
               allowPaid: Boolean(flags.paid),

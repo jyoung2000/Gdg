@@ -61,7 +61,8 @@ export class CredentialResolver {
     this.now = now;
   }
 
-  resolve(q: CredentialQuery, providerRequiresAuth: boolean): CredentialResolution {
+  resolve(q: CredentialQuery, providerRequiresAuth: boolean, opts: { commit?: boolean } = {}): CredentialResolution {
+    const commit = opts.commit !== false;
     if (q.explicitCredentialId) {
       const explicit = this.store.getById(q.explicitCredentialId);
       // Naming a credential is not the same as being entitled to it. An id is
@@ -71,6 +72,7 @@ export class CredentialResolver {
       // a user-scoped credential belongs to its user, a workspace-scoped one to
       // its workspace, and nothing else may borrow either.
       if (explicit && explicit.providerId === q.providerId && this.usable(explicit) && this.entitled(explicit, q)) {
+        if (commit) this.store.markUsed(explicit.id, this.now());
         return { credential: explicit, reason: 'Credential named on the request', anonymous: false };
       }
       // An explicitly named credential that cannot be used is an error the
@@ -89,9 +91,12 @@ export class CredentialResolver {
       if (scope === 'request' || !allowed.has(scope)) continue;
       const forScope = candidates.filter((c) => c.scope === scope && this.entitled(c, q));
       if (!forScope.length) continue;
-      const picked = this.pick(forScope);
+      const picked = this.pick(forScope, commit);
       if (!picked) continue;
-      this.store.markUsed(picked.id, this.now());
+      // Routing previews and dry runs resolve too; only a resolution that will
+      // actually be sent should advance rotation cursors and last-used marks,
+      // or every "why this model?" panel skews the very rotation it describes.
+      if (commit) this.store.markUsed(picked.id, this.now());
       return { credential: picked, reason: SCOPE_REASON[scope], anonymous: false };
     }
 
@@ -104,6 +109,18 @@ export class CredentialResolver {
   /** True when at least one credential could serve this provider right now. */
   hasAny(providerId: string): boolean {
     return this.store.listForProvider(providerId).some((c) => this.usable(c));
+  }
+
+  /**
+   * True when at least one credential THIS caller may use could serve the
+   * provider. The distinction matters on a shared instance: another user's key
+   * existing is not capacity this caller has, and routing as though it were
+   * produces authentication failures the caller cannot explain or fix.
+   */
+  hasAnyFor(providerId: string, userId: string | null, workspaceId: string | null): boolean {
+    return this.store
+      .listForProvider(providerId)
+      .some((c) => this.usable(c) && this.entitled(c, { providerId, userId, workspaceId }));
   }
 
   /**
@@ -142,7 +159,7 @@ export class CredentialResolver {
    * construction so a key can never be presented to a provider it does not
    * belong to.
    */
-  private pick(candidates: ResolvedCredential[]): ResolvedCredential | null {
+  private pick(candidates: ResolvedCredential[], commit = true): ResolvedCredential | null {
     if (!candidates.length) return null;
     if (candidates.length === 1) return candidates[0];
 
@@ -153,7 +170,7 @@ export class CredentialResolver {
       case 'round-robin': {
         const key = poolId ?? candidates[0].providerId;
         const idx = (this.cursors.get(key) ?? 0) % candidates.length;
-        this.cursors.set(key, idx + 1);
+        if (commit) this.cursors.set(key, idx + 1);
         return candidates[idx];
       }
       case 'least-used': {
@@ -199,6 +216,8 @@ const SCOPE_REASON: Record<CredentialScope, string> = {
 export class MemoryCredentialStore implements CredentialStore {
   private readonly rows = new Map<string, ResolvedCredential>();
   private readonly pools = new Map<string, CredentialPool>();
+  /** Observed by tests that assert when rotation actually advances. */
+  onMarkUsed?: (credentialId: string, at: number) => void;
 
   constructor(rows: ResolvedCredential[] = [], pools: CredentialPool[] = []) {
     for (const r of rows) this.rows.set(r.id, r);
@@ -226,6 +245,7 @@ export class MemoryCredentialStore implements CredentialStore {
   }
 
   markUsed(credentialId: string, at: number): void {
+    this.onMarkUsed?.(credentialId, at);
     const row = this.rows.get(credentialId);
     if (row) this.rows.set(credentialId, { ...row, lastUsedAt: at });
   }

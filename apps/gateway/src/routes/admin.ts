@@ -53,11 +53,15 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
       if (!descriptor) throw new MeridianError('invalid_request', `No provider "${req.params.id}"`);
       const body = req.body ?? {};
 
+      // A PATCH is a merge. Writing `body.field ?? null` stored a NULL over
+      // every override the request did not mention, so toggling `enabled`
+      // silently erased an operator's trust and URL customisations.
+      const existing = app.store.listProviderOverrides().find((o) => o.id === req.params.id);
       app.store.saveProviderOverride(req.params.id, {
-        trust: body.trust ?? null,
-        baseUrl: body.baseUrl ?? null,
-        enabled: body.enabled,
-        dataUse: body.dataUse,
+        trust: body.trust ?? existing?.trust ?? null,
+        baseUrl: body.baseUrl ?? existing?.baseUrl ?? null,
+        enabled: body.enabled ?? existing?.enabled,
+        dataUse: body.dataUse ?? existing?.dataUse,
       });
       // The registry holds the effective descriptor, so an override has to be
       // applied there too or it would not take effect until a restart.
@@ -67,6 +71,7 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
         baseUrl: body.baseUrl ?? descriptor.baseUrl,
         dataUse: (body.dataUse as typeof descriptor.dataUse) ?? descriptor.dataUse,
       });
+      if (body.enabled !== undefined) app.providers.setEnabled(req.params.id, body.enabled);
       app.store.audit({ actor: req.auth.userId ?? 'anonymous', action: 'provider.update', target: req.params.id, details: { ...body }, ip: req.ip });
       return { ok: true, provider: app.providers.descriptor(req.params.id) };
     },
@@ -262,7 +267,10 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
           model: model.id,
           provider: model.providerId,
           userId: req.auth.userId,
-          allowPaid: !isFree(model.pricing),
+          // Benchmarking a paid model still spends the caller's money, so the
+          // caller's own paid permission decides — deriving it from the model's
+          // pricing turned "this model costs money" into "you agreed to pay".
+          allowPaid: app.preferencesFor(req.auth.userId).allowPaid,
         },
         completion,
         { requestId: req.requestId, retryBudget: 1 },
@@ -331,7 +339,10 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
                 model: model.id,
                 provider: model.providerId,
                 userId: req.auth.userId,
-                allowPaid: !isFree(model.pricing),
+                // Benchmarking a paid model still spends the caller's money, so the
+          // caller's own paid permission decides — deriving it from the model's
+          // pricing turned "this model costs money" into "you agreed to pay".
+          allowPaid: app.preferencesFor(req.auth.userId).allowPaid,
               },
               { messages: [{ role: 'user', content: body.prompt! }], maxTokens: body.maxTokens ?? 1024, temperature: 0.2 },
               { requestId: req.requestId, retryBudget: 1 },

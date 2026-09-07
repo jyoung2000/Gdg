@@ -9,7 +9,8 @@ import {
   type RoutingMode,
   type ToolDefinition,
 } from '@meridian/shared';
-import { beginSse } from './shared.js';
+import { beginSse, normalizeMode } from './shared.js';
+import { requireScope } from './authz.js';
 import type { App } from '../services/app.js';
 
 interface OAIMessage {
@@ -98,6 +99,7 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
   /* ---- Chat completions ------------------------------------------ */
 
   server.post<{ Body: OAIChatBody }>('/v1/chat/completions', { bodyLimit: app.config.maxBodyBytes }, async (req, reply) => {
+    requireScope(req, 'inference');
     const body = req.body ?? {};
     const messages = toChatMessages(body.messages ?? []);
     if (!messages.length) throw new MeridianError('invalid_request', '"messages" must contain at least one message');
@@ -156,6 +158,7 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
   /* ---- Responses API --------------------------------------------- */
 
   server.post<{ Body: OAIChatBody & { input?: string | OAIMessage[]; instructions?: string; max_output_tokens?: number } }>('/v1/responses', { bodyLimit: app.config.maxBodyBytes }, async (req) => {
+    requireScope(req, 'inference');
     const body = req.body ?? {};
     const messages: ChatMessage[] = [];
     if (body.instructions) messages.push({ role: 'system', content: body.instructions });
@@ -195,6 +198,7 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
   /* ---- Embeddings ------------------------------------------------- */
 
   server.post<{ Body: { model?: string; input?: string | string[]; meridian?: OAIChatBody['meridian'] } }>('/v1/embeddings', { bodyLimit: app.config.maxBodyBytes }, async (req) => {
+    requireScope(req, 'inference');
     const body = req.body ?? {};
     const input = typeof body.input === 'string' ? [body.input] : (body.input ?? []);
     if (!input.length) throw new MeridianError('invalid_request', '"input" is required');
@@ -218,14 +222,21 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
   server.post<{
     Body: { model?: string; prompt?: string; n?: number; size?: string; negative_prompt?: string; seed?: number; meridian?: OAIChatBody['meridian'] };
   }>('/v1/images/generations', { bodyLimit: app.config.maxBodyBytes }, async (req) => {
+    requireScope(req, 'inference');
     const body = req.body ?? {};
     if (!body.prompt) throw new MeridianError('invalid_request', '"prompt" is required');
     const [width, height] = parseSize(body.size);
 
+    // Generation can run minutes; a caller that disconnected must stop paying
+    // for it. The job engine has cancellation; these synchronous compat routes
+    // get the same courtesy from the socket.
+    const ac = new AbortController();
+    req.raw.on('close', () => ac.abort(new Error('client disconnected')));
+
     const res = await app.executor.image(
       buildAIRequest(body, [], req.auth.userId, 'image', 'image-generation'),
       { prompt: body.prompt, negativePrompt: body.negative_prompt, n: body.n ?? 1, width, height, seed: body.seed ?? null },
-      { requestId: req.requestId, timeoutMs: 180_000 },
+      { requestId: req.requestId, timeoutMs: 180_000, signal: ac.signal },
     );
     return {
       created: Math.floor(Date.now() / 1000),
@@ -239,8 +250,11 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
   server.post<{ Body: { model?: string; input?: string; voice?: string; response_format?: string; speed?: number; meridian?: OAIChatBody['meridian'] } }>(
     '/v1/audio/speech', { bodyLimit: app.config.maxBodyBytes },
     async (req, reply) => {
+      requireScope(req, 'inference');
       const body = req.body ?? {};
       if (!body.input) throw new MeridianError('invalid_request', '"input" is required');
+      const ac = new AbortController();
+      req.raw.on('close', () => ac.abort(new Error('client disconnected')));
       const res = await app.executor.speech(
         buildAIRequest(body, [], req.auth.userId, 'speech', 'speech-synthesis'),
         {
@@ -249,7 +263,7 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
           format: (body.response_format as 'mp3' | 'wav' | 'opus' | 'flac' | undefined) ?? 'mp3',
           speed: body.speed,
         },
-        { requestId: req.requestId, timeoutMs: 120_000 },
+        { requestId: req.requestId, timeoutMs: 120_000, signal: ac.signal },
       );
       const asset = res.value.asset;
       const comma = asset.url.indexOf(',');
@@ -265,6 +279,7 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
   server.post<{ Body: { model?: string; file?: string; mime_type?: string; language?: string; prompt?: string; meridian?: OAIChatBody['meridian'] } }>(
     '/v1/audio/transcriptions', { bodyLimit: app.config.maxBodyBytes },
     async (req) => {
+      requireScope(req, 'inference');
       const body = req.body ?? {};
       // Multipart would need another plugin and a temp-file policy; a base64
       // field keeps the surface to JSON and is what our own client sends.
@@ -272,10 +287,12 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
       const raw = body.file.startsWith('data:') ? body.file.slice(body.file.indexOf(',') + 1) : body.file;
       const audio = new Uint8Array(Buffer.from(raw, 'base64'));
 
+      const ac = new AbortController();
+      req.raw.on('close', () => ac.abort(new Error('client disconnected')));
       const res = await app.executor.transcribe(
         buildAIRequest(body, [], req.auth.userId, 'transcription', 'transcription'),
         { audio, mimeType: body.mime_type ?? 'audio/mpeg', language: body.language, prompt: body.prompt },
-        { requestId: req.requestId, timeoutMs: 300_000 },
+        { requestId: req.requestId, timeoutMs: 300_000, signal: ac.signal },
       );
       return { text: res.value.text, language: res.value.language, meridian: routingMeta(res, req.requestId) };
     },
@@ -459,7 +476,7 @@ function parseSize(size: string | undefined): [number | undefined, number | unde
  * product's default experience.
  */
 export function buildAIRequest(
-  body: { model?: string; meridian?: OAIChatBody['meridian'] },
+  body: { model?: string; meridian?: OAIChatBody['meridian']; tools?: unknown[] },
   messages: ChatMessage[],
   userId: string | null,
   modality: Modality,
@@ -467,6 +484,15 @@ export function buildAIRequest(
 ): AIRequest {
   const ext = body.meridian ?? {};
   const model = body.model && body.model !== 'auto' && body.model !== 'meridian' ? body.model : null;
+  // These are hard routing constraints, and they come from the request itself:
+  // a call that offers tools must land on a model that can call them, and a
+  // message carrying an image must land on a model that can see it. Hardcoding
+  // them off meant the constraints existed only for the internal agent loop,
+  // never for the compatibility surfaces real clients actually use.
+  const toolsRequired = Array.isArray(body.tools) && body.tools.length > 0;
+  const hasImages = messages.some(
+    (m) => Array.isArray(m.content) && m.content.some((part) => typeof part === 'object' && part !== null && (part as { type?: string }).type === 'image'),
+  );
   return {
     modality,
     taskType: ext.task_type ?? taskType,
@@ -474,7 +500,7 @@ export function buildAIRequest(
     model,
     provider: ext.provider ?? null,
     pool: ext.pool ?? null,
-    mode: ext.mode,
+    mode: normalizeMode(ext.mode),
     freeOnly: ext.free_only,
     localOnly: ext.local_only,
     allowPaid: ext.allow_paid,
@@ -482,7 +508,8 @@ export function buildAIRequest(
     sensitive: ext.sensitive,
     userId,
     workspaceId: ext.workspace_id ?? null,
-    toolsRequired: false,
+    toolsRequired,
+    requiredCapabilities: hasImages ? ['vision'] : undefined,
   };
 }
 

@@ -5,7 +5,7 @@ import { MeridianError, newId, type AgentTask, type PrivacyMode, type RoutingMod
 import { Workspace, newTask, taskDiff, type Lane } from '@meridian/agent-sdk';
 import { requireScope } from './authz.js';
 import type { App } from '../services/app.js';
-import { intParam } from './shared.js';
+import { intParam, normalizeMode } from './shared.js';
 
 /**
  * Workspaces, files, diff review and agent tasks.
@@ -211,18 +211,24 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
       const body = req.body ?? {};
       if (!body.request) throw new MeridianError('invalid_request', '"request" is required');
       const pipeline = app.orchestrator.planPipeline(body.request);
+      // The estimate exists so the caller can approve a cost. It has to be
+      // priced under the mode the task will actually run with — which POST
+      // /api/tasks resolves through the workspace's default — or the approval
+      // is for a different decision than the one that spends the money.
+      const workspaceDefault = body.workspaceId ? app.store.getWorkspace(body.workspaceId)?.defaultMode : undefined;
+      const prefs = app.preferencesFor(req.auth.userId);
       const estimate = app.orchestrator.estimate(body.request, {
-        mode: body.mode ?? app.config.defaultRoutingMode,
+        mode: normalizeMode(body.mode) ?? workspaceDefault ?? prefs.routingMode,
         workspaceId: body.workspaceId ?? '',
         userId: req.auth.userId,
-        allowPaid: body.allowPaid ?? app.preferencesFor(req.auth.userId).allowPaid,
+        allowPaid: body.allowPaid ?? prefs.allowPaid,
       });
       return { estimate, pipeline };
     },
   );
 
   server.post<{
-    Body: { workspaceId?: string; request?: string; mode?: RoutingMode; allowPaid?: boolean; budget?: number; lane?: string };
+    Body: { workspaceId?: string; request?: string; mode?: RoutingMode; allowPaid?: boolean; budget?: number; lane?: string; pipeline?: 'auto' | 'research' | 'debug' | 'tests' | 'code' };
   }>('/api/tasks', async (req) => {
     const body = req.body ?? {};
     if (!body.workspaceId || !body.request) throw new MeridianError('invalid_request', '"workspaceId" and "request" are required');
@@ -231,7 +237,7 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
     const ws = requireWorkspace(app, req, body.workspaceId);
 
     const prefs = app.preferencesFor(req.auth.userId);
-    const mode = body.mode ?? record.defaultMode ?? prefs.routingMode;
+    const mode = normalizeMode(body.mode) ?? record.defaultMode ?? prefs.routingMode;
     const task = newTask({ workspaceId: body.workspaceId, userId: req.auth.userId, request: body.request, lane: body.lane, mode });
     task.estimate = app.orchestrator.estimate(body.request, {
       mode,
@@ -248,6 +254,7 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
       .run({
         task,
         workspace: ws,
+        pipeline: body.pipeline,
         mode,
         privacyMode: record.privacyMode,
         allowPaid: body.allowPaid ?? prefs.allowPaid,

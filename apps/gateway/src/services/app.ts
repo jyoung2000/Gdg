@@ -133,7 +133,6 @@ export class App {
 
     /* ---- Models --------------------------------------------------- */
     const models = new ModelRegistry();
-    models.upsertMany(store.listModels());
     for (const s of store.listModelScores()) models.setScores(s);
     for (const p of store.listModelPerformance()) models.setPerformance(p);
 
@@ -154,6 +153,29 @@ export class App {
         trust: (o.trust as ProviderDescriptor['trust']) ?? d.trust,
         baseUrl: o.baseUrl ?? d.baseUrl,
         dataUse: (o.dataUse as ProviderDescriptor['dataUse']) ?? d.dataUse,
+      });
+      // An operator's "disable this provider" and a recorded live verification
+      // both have to survive a restart, or the toggle is decoration and every
+      // reboot forgets what was proven.
+      if (o.enabled === false) providers.setEnabled(d.id, false);
+      if (o.verifiedAt != null) providers.setVerifiedAt(d.id, o.verifiedAt);
+    }
+
+    // Persisted models are only trustworthy while their provider exists. A
+    // dynamically-discovered local server from a previous run leaves its models
+    // in the database; loading them without their provider would hand the
+    // router candidates it can only reject with "provider is not registered".
+    // They are dropped here and come back the moment discovery sees the
+    // endpoint again — discovery is the authority on what exists, the database
+    // is only a warm start.
+    const persisted = store.listModels();
+    const orphaned = persisted.filter((m) => !providers.descriptor(m.providerId));
+    models.upsertMany(persisted.filter((m) => providers.descriptor(m.providerId)));
+    if (orphaned.length) {
+      store.deleteModels(orphaned.map((m) => m.id));
+      logger.info('dropped models from unregistered providers', {
+        count: orphaned.length,
+        providerIds: [...new Set(orphaned.map((m) => m.providerId))].join(','),
       });
     }
 
@@ -248,7 +270,7 @@ export class App {
       onUpdate: (job) => events.publish({ type: 'generation', job }),
       storeAsset: createAssetStore(config.assetRoot),
     });
-    media.load(store.listGenerationJobs(200));
+    for (const corrected of media.load(store.listGenerationJobs(200))) store.saveGenerationJob(corrected);
 
     const orchestrator = new Orchestrator({
       executor,
@@ -317,6 +339,10 @@ export class App {
         });
       }
     }
+
+    // Budget counters are memory-held; a restart must not grant a pool its
+    // whole daily budget again. Today's persisted usage is the ground truth.
+    this.pools.hydrateSpend(this.store.spentTodayByPool());
 
     await this.discovery.runOnce();
     this.discoveredAt = Date.now();

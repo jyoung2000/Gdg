@@ -312,7 +312,21 @@ export class PoolManager {
     const u = this.usageFor(poolId);
     if (limit != null && u.inFlight >= limit) return `Pool ${pool.name} is at its concurrency limit of ${limit}`;
 
-    const budget = this.budgetLimit(poolId);
+    // A reservation's budget is a ceiling on the reservation's own window, so it
+    // is compared against what the reservation has spent — not against the
+    // pool's UTC-day counter, which resets at midnight mid-window and counts
+    // spend from before the window began.
+    const active = this.activeReservation(poolId);
+    if (active && active.budget != null) {
+      if (active.spend + estimatedCost > active.budget) {
+        return active.budget === 0
+          ? `Reservation "${active.label}" is a no-spend reservation and this call would cost money`
+          : `Reservation "${active.label}" would exceed its budget of $${active.budget.toFixed(2)}`;
+      }
+      return null;
+    }
+
+    const budget = this.pools.get(poolId)?.dailyBudget ?? null;
     if (budget != null && u.spentToday + estimatedCost > budget) {
       return budget === 0
         ? `Pool ${pool.name} is a no-spend pool and this call would cost money`
@@ -344,6 +358,20 @@ export class PoolManager {
         used: active.used + 1,
         spend: Math.round((active.spend + cost) * 1e6) / 1e6,
       });
+    }
+  }
+
+  /**
+   * Warm today's spend counters from persisted usage after a restart.
+   *
+   * The counters are otherwise memory-only, and a gateway that restarts at
+   * 23:50 with a pool at its budget would happily spend the whole budget again
+   * at 23:55. Only today's rows matter; yesterday's budget is history.
+   */
+  hydrateSpend(spentTodayByPool: Record<string, number>): void {
+    for (const [poolId, spent] of Object.entries(spentTodayByPool)) {
+      const u = this.usageFor(poolId);
+      u.spentToday = Math.round((u.spentToday + spent) * 1e6) / 1e6;
     }
   }
 

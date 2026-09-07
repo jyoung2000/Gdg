@@ -120,7 +120,14 @@ export class Router {
 
     const pool = req.pool ?? null;
     const universe = this.universe(req, pool, rejected);
-    const eligible = universe.filter((m) => this.passesHardConstraints(m, req, effectiveMode, privacy, prefs, rejected));
+    // A pool's strategy may re-weight the scoring, but it must never dissolve a
+    // hard guarantee the caller asked for by mode: FREE through a QUALITY_FIRST
+    // pool is still strictly free. Both modes gate; the pool only ranks.
+    const eligible = universe.filter(
+      (m) =>
+        this.passesHardConstraints(m, req, mode, privacy, prefs, rejected) &&
+        (effectiveMode === mode || this.passesHardConstraints(m, req, effectiveMode, privacy, prefs, rejected)),
+    );
 
     if (!eligible.length) {
       throw new MeridianError('no_candidates', this.explainEmpty(req, effectiveMode, privacy, rejected), {
@@ -279,9 +286,17 @@ export class Router {
       if (block) return no(block);
     }
 
-    // Credentials.
-    if (descriptor.auth !== 'none' && !this.deps.credentials.hasAny(m.providerId)) {
-      return no('No credential is configured for this provider');
+    // The operator's kill-switch is absolute: a disabled provider is not a
+    // candidate no matter what it scores.
+    if (!this.deps.providers.isEnabled(m.providerId)) {
+      return no('Provider is disabled by the operator');
+    }
+
+    // Credentials — for THIS caller. hasAny() would pass a provider whose only
+    // key belongs to someone else, selecting a primary that can only fail at
+    // execution with an authentication error the caller cannot act on.
+    if (descriptor.auth !== 'none' && !this.deps.credentials.hasAnyFor(m.providerId, req.userId ?? null, req.workspaceId ?? null)) {
+      return no('No credential this caller may use is configured for this provider');
     }
 
     return true;
@@ -377,6 +392,10 @@ export class Router {
     const res = this.deps.credentials.resolve(
       { providerId: m.providerId, userId: req.userId, workspaceId: req.workspaceId },
       (descriptor?.auth ?? 'api-key') !== 'none',
+      // Routing chooses; execution uses. Only the executor's resolution should
+      // advance rotation or last-used marks — this one may describe a call that
+      // a budget, a preview, or a failover never lets happen.
+      { commit: false },
     );
     return { credentialId: res.credential?.id ?? null, reason: res.reason };
   }
@@ -526,12 +545,17 @@ export class Router {
   preview(req: AIRequest): { candidates: RoutingCandidate[]; rejected: Rejection[] } {
     const prefs = this.deps.preferencesFor?.(req.userId) ?? null;
     const mode = canonicalMode(req.mode ?? prefs?.routingMode ?? 'AUTO');
+    // The dry run must run under the same policy as the real call, or the cost
+    // and ranking it shows are for a decision route() would never make.
+    const effectiveMode = req.pool ? this.deps.pools.strategyOf(req.pool, mode) : mode;
     const privacy = req.privacyMode ?? prefs?.privacyMode ?? 'TRUSTED_ONLY';
     const rejected: Rejection[] = [];
-    const eligible = this.universe(req, req.pool ?? null, rejected).filter((m) =>
-      this.passesHardConstraints(m, req, mode, privacy, prefs, rejected),
+    const eligible = this.universe(req, req.pool ?? null, rejected).filter(
+      (m) =>
+        this.passesHardConstraints(m, req, mode, privacy, prefs, rejected) &&
+        (effectiveMode === mode || this.passesHardConstraints(m, req, effectiveMode, privacy, prefs, rejected)),
     );
-    const weights = this.weightsFor(mode);
+    const weights = this.weightsFor(effectiveMode);
     return {
       candidates: eligible.map((m) => this.score(m, req, weights, req.pool ?? null, prefs)).sort((a, b) => b.score - a.score),
       rejected: dedupeRejections(rejected),

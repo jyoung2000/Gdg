@@ -200,9 +200,10 @@ function AiSection(): React.JSX.Element {
   const [preferredModels, setPreferredModels] = useState<string[]>(prefs?.preferredModels ?? []);
   const [preferredProviders, setPreferredProviders] = useState<string[]>(prefs?.preferredProviders ?? []);
 
+  const updatePreferences = useStore((s) => s.updatePreferences);
   const save = async (patch: Record<string, unknown>): Promise<void> => {
     if (!prefs) return;
-    await api.savePreferences({ ...prefs, ...patch });
+    await updatePreferences(patch as Partial<typeof prefs>);
     toast({ level: 'success', message: 'Preferences saved' });
   };
 
@@ -256,9 +257,10 @@ function RoutingSection(): React.JSX.Element {
   const toast = useStore((s) => s.toast);
   const [maxCost, setMaxCost] = useState(prefs?.maxCostPerTask == null ? '' : String(prefs.maxCostPerTask));
 
+  const updatePreferences = useStore((s) => s.updatePreferences);
   const save = async (patch: Record<string, unknown>): Promise<void> => {
     if (!prefs) return;
-    await api.savePreferences({ ...prefs, ...patch });
+    await updatePreferences(patch as Partial<typeof prefs>);
     toast({ level: 'success', message: 'Routing preferences saved' });
   };
 
@@ -458,7 +460,7 @@ function PrivacySection(): React.JSX.Element {
             aria-label={`Use ${m.value}`}
             onCheckedChange={async (v) => {
               if (!v || !prefs) return;
-              await api.savePreferences({ ...prefs, privacyMode: m.value as typeof prefs.privacyMode });
+              await useStore.getState().updatePreferences({ privacyMode: m.value as typeof prefs.privacyMode });
               toast({ level: 'success', message: 'Privacy mode saved' });
             }}
           />

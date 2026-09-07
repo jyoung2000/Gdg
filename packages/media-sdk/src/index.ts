@@ -35,6 +35,10 @@ export interface GenerateOptions {
   privacyMode?: PrivacyMode;
   allowPaid?: boolean;
   budget?: number | null;
+  /** Restrict routing to capacity that cannot charge. */
+  freeOnly?: boolean;
+  /** Restrict routing to models on this machine. */
+  localOnly?: boolean;
   signal?: AbortSignal;
 }
 
@@ -117,7 +121,15 @@ export class MediaEngine {
 
   async generateVideo(req: VideoRequest, opts: GenerateOptions = {}): Promise<GenerationJob> {
     const { width, height } = resolveDimensions(req);
-    const job = this.begin('video', req.prompt, { ...req, width, height }, opts);
+    const job = this.begin('video', req.prompt, {
+      ...req,
+      width,
+      height,
+      // Same rule as the image path, for the same reason: the job record is
+      // persisted and broadcast on the event stream, and a base64 frame is
+      // both megabytes of noise and content the caller did not ask to publish.
+      referenceImage: req.referenceImage ? '[reference image supplied]' : null,
+    }, opts);
 
     void this.execute(job.id, opts, async (ac) => {
       const res = await this.deps.executor.video(
@@ -168,12 +180,26 @@ export class MediaEngine {
     return [...this.jobs.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
   }
 
-  /** Rehydrate jobs from the database at startup. */
-  load(jobs: GenerationJob[]): void {
+  /**
+   * Rehydrate jobs from the database at startup.
+   *
+   * Returns the jobs whose state had to be corrected, so the caller can write
+   * the correction back. Fixing them only in memory left the database claiming
+   * a job was still running forever — every restart re-reported it as live.
+   */
+  load(jobs: GenerationJob[]): GenerationJob[] {
+    const corrected: GenerationJob[] = [];
     for (const j of jobs) {
-      // A job that was running when the process died did not survive it.
-      this.jobs.set(j.id, j.status === 'running' || j.status === 'queued' ? { ...j, status: 'failed', error: 'Interrupted by a gateway restart' } : j);
+      if (j.status === 'running' || j.status === 'queued') {
+        // A job that was running when the process died did not survive it.
+        const dead = { ...j, status: 'failed' as const, error: 'Interrupted by a gateway restart', finishedAt: this.now() };
+        this.jobs.set(j.id, dead);
+        corrected.push(dead);
+      } else {
+        this.jobs.set(j.id, j);
+      }
     }
+    return corrected;
   }
 
   /* ---------------------------------------------------------------- */
@@ -192,6 +218,8 @@ export class MediaEngine {
       workspaceId: opts.workspaceId ?? null,
       allowPaid: opts.allowPaid,
       budget: opts.budget ?? null,
+      freeOnly: opts.freeOnly,
+      localOnly: opts.localOnly,
     };
   }
 

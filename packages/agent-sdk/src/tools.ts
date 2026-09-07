@@ -1,5 +1,4 @@
 import { BlockedAddressError, guardedFetchText } from './fetch.js';
-import { isPrivateHost } from './net.js';
 import {
   MeridianError,
   newId,
@@ -297,6 +296,9 @@ export const gitTool: Tool = {
       checkout: extra ? `git checkout ${shellQuote(extra)}` : '',
     };
     const command = commands[op];
+    // `checkout` with nothing to check out is a caller mistake with an obvious
+    // answer; "unsupported operation" pointed the model at the wrong problem.
+    if (op === 'checkout' && !command) return fail('checkout needs a branch or path in "args", e.g. {"operation":"checkout","args":"main"}');
     if (!command) return fail(`Unsupported git operation "${op}"`);
     const res = await ctx.sandbox.exec(command, { cwd: ctx.workspace.root, timeoutMs: 30_000, signal: ctx.signal });
     return ok(clip(`${res.stdout}${res.stderr}`.trim() || `exit code ${res.exitCode}`));

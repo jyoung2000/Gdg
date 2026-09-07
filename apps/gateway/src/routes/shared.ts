@@ -1,4 +1,5 @@
 import type { FastifyReply } from 'fastify';
+import { MeridianError, ROUTING_MODES } from '@meridian/shared';
 import { DEFAULT_PORT as PORT, type RoutingMode } from '@meridian/shared';
 
 export const DEFAULT_PORT = PORT;
@@ -36,4 +37,20 @@ export function beginSse(reply: FastifyReply, extra: Record<string, string> = {}
     'x-accel-buffering': 'no',
     ...extra,
   });
+}
+
+
+/**
+ * Refuse an unknown routing mode rather than silently treating it as AUTO.
+ *
+ * `--mode local` degrading to AUTO is worse than an error: the caller asked for
+ * a privacy-relevant constraint and got a shrug. Case is forgiven — the CLI and
+ * humans write `fast`; the vocabulary is uppercase — but a value outside the
+ * vocabulary is a mistake the caller needs to hear about.
+ */
+export function normalizeMode(raw: unknown): RoutingMode | undefined {
+  if (raw == null || raw === '') return undefined;
+  const candidate = String(raw).toUpperCase();
+  if ((ROUTING_MODES as readonly string[]).includes(candidate)) return candidate as RoutingMode;
+  throw new MeridianError('invalid_request', `Unknown routing mode "${String(raw)}". One of: ${ROUTING_MODES.join(', ')}`);
 }

@@ -15,9 +15,14 @@ export function computeCost(pricing: Pricing, promptTokens: number, completionTo
 /** True when routing to this model cannot draw down real money. */
 export function isFree(pricing: Pricing): boolean {
   if (NON_SPENDING_PRICING.includes(pricing.kind)) return true;
-  // A metered model with all-zero published rates is effectively free.
   if (pricing.kind === 'METERED' || pricing.kind === 'PAID') {
-    return (pricing.inputPerMTok ?? 0) === 0 && (pricing.outputPerMTok ?? 0) === 0 && (pricing.perRequest ?? 0) === 0;
+    const rates = [pricing.inputPerMTok, pricing.outputPerMTok, pricing.perRequest];
+    // Unpublished is not the same thing as zero. A metered model whose rates
+    // are simply unknown can absolutely charge, and coalescing null to 0 here
+    // let exactly those models through free-only routing and past the paid
+    // gate. Free requires at least one rate stated, and every stated rate zero.
+    if (rates.every((r) => r == null)) return false;
+    return rates.every((r) => r == null || r === 0);
   }
   return false;
 }

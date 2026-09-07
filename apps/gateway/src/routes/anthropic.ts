@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { MeridianError, type ChatMessage, type ContentPart, type ToolDefinition } from '@meridian/shared';
 import { beginSse } from './shared.js';
+import { requireScope } from './authz.js';
 import type { App } from '../services/app.js';
 import { buildAIRequest, routingMeta } from './openai.js';
 
@@ -40,6 +41,7 @@ interface AnthropicBody {
  */
 export async function registerAnthropicRoutes(server: FastifyInstance, app: App): Promise<void> {
   server.post<{ Body: AnthropicBody }>('/anthropic/v1/messages', { bodyLimit: app.config.maxBodyBytes }, async (req, reply) => {
+    requireScope(req, 'inference');
     const body = req.body ?? {};
     const messages = toMessages(body);
     if (!messages.length) throw new MeridianError('invalid_request', '"messages" must contain at least one message');
@@ -118,6 +120,7 @@ async function streamMessages(
 
   const messageId = `msg_${requestId}`;
   let model = 'auto';
+  let started = false;
   let textBlockOpen = false;
   let blockIndex = 0;
   let inputTokens = 0;
@@ -128,6 +131,15 @@ async function streamMessages(
     for await (const chunk of app.executor.chatStream(aiRequest, completion, { requestId, signal: ac.signal })) {
       switch (chunk.type) {
         case 'start':
+          // A pre-token fallback re-enters the stream with a second start
+          // chunk. The Anthropic contract allows exactly one message_start per
+          // message, so only the first opens the message; a retry updates the
+          // model silently and the client never sees the seam.
+          if (started) {
+            model = `${chunk.providerId}:${chunk.model}`;
+            break;
+          }
+          started = true;
           model = `${chunk.providerId}:${chunk.model}`;
           send('message_start', {
             type: 'message_start',

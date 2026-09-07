@@ -100,6 +100,8 @@ interface State {
   patchLayout: (patch: Partial<LayoutState>) => void;
   setComposerValue: (value: string) => void;
   setRoutingMode: (mode: RoutingMode) => void;
+  /** Merge a patch into the CURRENT preferences, update state, persist. */
+  updatePreferences: (patch: Partial<UserPreferences>) => Promise<void>;
 
   refreshWorkspaces: () => Promise<void>;
   openWorkspace: (id: string) => Promise<void>;
@@ -250,11 +252,32 @@ export const useStore = create<State>((set, get) => ({
   setScreen: (screen) => set({ screen }),
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
 
+  /**
+   * Every preference write goes through here. The old pattern — each setter
+   * spreading its own captured copy of `preferences` — meant each save PUT a
+   * boot-time snapshot: whichever section you touched last silently reverted
+   * everything saved since the page loaded.
+   */
+  async updatePreferences(patch) {
+    const prefs = get().preferences;
+    if (!prefs) return;
+    const next = { ...prefs, ...patch };
+    // Optimistic, so a toggled switch holds instead of snapping back while the
+    // request is in flight; the server's normalised copy then replaces it.
+    set({ preferences: next });
+    try {
+      const saved = await api.savePreferences(next);
+      set({ preferences: saved });
+    } catch {
+      set({ preferences: prefs });
+      get().toast({ level: 'error', message: 'Could not save preferences' });
+    }
+  },
+
   setTheme(theme) {
     applyTheme(theme);
     set({ theme });
-    const prefs = get().preferences;
-    if (prefs) void api.savePreferences({ ...prefs, theme }).catch(() => undefined);
+    void get().updatePreferences({ theme });
   },
 
   setReduceMotion(value) {
@@ -265,8 +288,7 @@ export const useStore = create<State>((set, get) => ({
       /* ignore */
     }
     set({ reduceMotion: value });
-    const prefs = get().preferences;
-    if (prefs) void api.savePreferences({ ...prefs, reduceMotion: value }).catch(() => undefined);
+    void get().updatePreferences({ reduceMotion: value });
   },
 
   patchLayout(patch) {
@@ -279,8 +301,7 @@ export const useStore = create<State>((set, get) => ({
 
   setRoutingMode(routingMode) {
     set({ routingMode });
-    const prefs = get().preferences;
-    if (prefs) void api.savePreferences({ ...prefs, routingMode }).catch(() => undefined);
+    void get().updatePreferences({ routingMode });
   },
 
   /* ---------------------------------------------------------------- */

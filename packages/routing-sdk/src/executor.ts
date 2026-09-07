@@ -1,4 +1,6 @@
 import {
+  computeCost,
+  isErrorCode,
   MeridianError,
   ZERO_USAGE,
   backoffMs,
@@ -20,6 +22,7 @@ import {
   type StreamChunk,
   type TranscriptionRequest,
   type TranscriptionResponse,
+  type Usage,
   type UsageRecord,
   type VideoRequest,
   type VideoResponse,
@@ -169,6 +172,8 @@ export class Executor {
 
     let attempt = 0;
     let emitted = false;
+    /** Characters streamed to the caller, for a usage floor when a stream dies. */
+    let emittedChars = 0;
 
     for (let i = 0; i < targets.length && attempt < budget; i++) {
       const target = targets[i];
@@ -179,16 +184,26 @@ export class Executor {
       let ttftMs: number | null = null;
 
       try {
-        const { adapter, ctx } = this.prepare(target, requestId, opts, log);
+        const { adapter, ctx } = this.prepare(target, req, requestId, opts, log);
         if (!adapter.chatStream) throw new MeridianError('unsupported_capability', 'Adapter cannot stream', { providerId: target.providerId });
 
         for await (const chunk of adapter.chatStream({ ...completion, model: target.providerModelId, stream: true, signal: ctx.signal }, ctx)) {
-          if (chunk.type === 'text' && !emitted) {
+          // A tool call is output the client has acted on just as much as text
+          // is — failing over after either would splice two models' answers
+          // into one response.
+          if ((chunk.type === 'text' || chunk.type === 'tool_call') && !emitted) {
             emitted = true;
             ttftMs = this.now() - started;
           }
+          if (chunk.type === 'text') emittedChars += chunk.delta.length;
           if (chunk.type === 'usage') usage = chunk.usage;
-          if (chunk.type === 'error') throw new MeridianError('server_error', chunk.error, { providerId: target.providerId });
+          if (chunk.type === 'error') {
+            // The adapter classified this failure; flattening it to
+            // server_error made every streamed failure look retryable.
+            throw new MeridianError(isErrorCode(chunk.code) ? chunk.code : 'server_error', chunk.error, {
+              providerId: target.providerId,
+            });
+          }
           if (chunk.type === 'start') {
             yield { ...chunk, meta: { fallbacks, routingReason: decision.routingReason } };
             continue;
@@ -198,12 +213,29 @@ export class Executor {
 
         this.deps.health.recordSuccess(target.providerId, this.now() - started);
         this.recordUsage(req, target, opts, requestId, usage, this.now() - started, ttftMs, true, null, fallbacks.length);
-        this.deps.pools.recordSpend(req.pool ?? 'balanced', usage.cost);
+        if (req.pool) this.deps.pools.recordSpend(req.pool, usage.cost);
         return;
       } catch (e) {
         const err = classifyUnknown(e, target.providerId, target.providerModelId);
+
+        // Tokens that reached the caller before the failure were still
+        // generated and, on a paid model, still charged. Zero would be a lie in
+        // the polite direction; an estimate from what was actually streamed is
+        // a floor, and the code marks the row as failed either way.
+        const partial = usage.totalTokens > 0 ? usage : this.estimatePartialUsage(target, emittedChars);
+
+        const cancelled = err.code === 'cancelled' || opts.signal?.aborted === true;
+        if (cancelled) {
+          // The caller hung up. Not the provider's fault: no breaker, no
+          // fallback — there is nobody left to stream a fallback to.
+          this.recordUsage(req, target, opts, requestId, partial, this.now() - started, ttftMs, false, 'cancelled', fallbacks.length);
+          if (req.pool) this.deps.pools.recordSpend(req.pool, partial.cost);
+          return;
+        }
+
         this.deps.health.recordFailure(target.providerId, err.code, err.message, err.retryAfterSec);
-        this.recordUsage(req, target, opts, requestId, usage, this.now() - started, ttftMs, false, err.code, fallbacks.length);
+        this.recordUsage(req, target, opts, requestId, partial, this.now() - started, ttftMs, false, err.code, fallbacks.length);
+        if (req.pool && partial.cost > 0) this.deps.pools.recordSpend(req.pool, partial.cost);
 
         if (emitted || !err.failover || i === targets.length - 1 || attempt >= budget) {
           // Report the whole chain, not just the last link. A stalled stream
@@ -264,13 +296,15 @@ export class Executor {
         const release = this.acquire(target, req.pool ?? null);
 
         try {
-          const { adapter, ctx } = this.prepare(target, requestId, opts, log);
+          const { adapter, ctx } = this.prepare(target, req, requestId, opts, log);
           const value = await call(adapter, target, ctx);
           const m = meter(value);
 
           this.deps.health.recordSuccess(target.providerId, m.latencyMs || this.now() - started);
           this.recordUsage(req, target, opts, requestId, m.usage, m.latencyMs, m.ttftMs, true, null, fallbacks.length);
-          this.deps.pools.recordSpend(req.pool ?? 'balanced', m.usage.cost);
+          // Spend outside a pool is still recorded in usage; it just is not
+          // charged against a pool budget the caller never chose.
+          if (req.pool) this.deps.pools.recordSpend(req.pool, m.usage.cost);
           log.info('call succeeded', {
             providerId: target.providerId,
             modelId: target.providerModelId,
@@ -292,11 +326,20 @@ export class Executor {
         } catch (e) {
           const err = classifyUnknown(e, target.providerId, target.providerModelId);
           lastError = err;
+
+          // The caller walking away is not evidence about the provider. Recording
+          // it as a failure would open the circuit breaker against a healthy
+          // provider every time a user closes a tab at the wrong moment.
+          const cancelled = err.code === 'cancelled' || opts.signal?.aborted === true;
+          if (cancelled) {
+            this.recordUsage(req, target, opts, requestId, ZERO_USAGE, this.now() - started, null, false, 'cancelled', fallbacks.length);
+            throw err;
+          }
+
           this.deps.health.recordFailure(target.providerId, err.code, err.message, err.retryAfterSec);
           this.recordUsage(req, target, opts, requestId, ZERO_USAGE, this.now() - started, null, false, err.code, fallbacks.length);
           log.warn('call failed', { providerId: target.providerId, modelId: target.providerModelId, errorCode: err.code });
 
-          if (err.code === 'cancelled') throw err;
           // A non-failover error is terminal: no other provider will do better.
           if (!err.failover) throw err;
 
@@ -329,6 +372,19 @@ export class Executor {
     });
   }
 
+  /**
+   * A floor for what a dead stream consumed, from the characters that reached
+   * the caller. Provider-reported usage always wins when it arrived; this only
+   * replaces a zero that everyone knows is wrong.
+   */
+  private estimatePartialUsage(target: Target, emittedChars: number): Usage {
+    if (emittedChars <= 0) return ZERO_USAGE;
+    const completionTokens = Math.ceil(emittedChars / 3.7);
+    const model = this.deps.models.get(`${target.providerId}:${target.providerModelId}`);
+    const cost = model ? computeCost(model.pricing, 0, completionTokens) : 0;
+    return { promptTokens: 0, completionTokens, totalTokens: completionTokens, cost };
+  }
+
   /* ---------------------------------------------------------------- */
 
   private targets(decision: import('@meridian/shared').RoutingDecision): Target[] {
@@ -340,6 +396,7 @@ export class Executor {
 
   private prepare(
     target: Target,
+    req: AIRequest,
     requestId: string,
     opts: ExecuteOptions,
     log: Logger,
@@ -349,9 +406,17 @@ export class Executor {
       throw new MeridianError('provider_unavailable', `No adapter for provider ${target.providerId}`, { providerId: target.providerId });
     }
     const descriptor = adapter.descriptor;
+    // The caller's identity travels with the resolution. Without it a
+    // user-scoped credential the router chose fails its own ownership check
+    // here — the resolver correctly refuses a user credential for an unknown
+    // user — and every personally-keyed request dies at execution.
+    const identity = { userId: req.userId ?? null, workspaceId: req.workspaceId ?? null };
     const resolved = target.credentialId
-      ? this.deps.credentials.resolve({ providerId: target.providerId, explicitCredentialId: target.credentialId }, descriptor.auth !== 'none')
-      : this.deps.credentials.resolve({ providerId: target.providerId }, descriptor.auth !== 'none');
+      ? this.deps.credentials.resolve(
+          { providerId: target.providerId, explicitCredentialId: target.credentialId, ...identity },
+          descriptor.auth !== 'none',
+        )
+      : this.deps.credentials.resolve({ providerId: target.providerId, ...identity }, descriptor.auth !== 'none');
 
     if (!resolved.credential && descriptor.auth !== 'none') {
       throw new MeridianError('authentication_failed', resolved.reason, { providerId: target.providerId });

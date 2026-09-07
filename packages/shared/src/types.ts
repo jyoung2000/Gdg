@@ -178,6 +178,8 @@ export const SUPPORT_STATES = [
   'experimental',
   'not_configured',
   'unavailable',
+  /** Registered and remembered, but the operator has switched it off. */
+  'disabled',
 ] as const;
 export type SupportState = (typeof SUPPORT_STATES)[number];
 

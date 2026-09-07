@@ -298,6 +298,28 @@ export class FalAdapter implements ProviderAdapter {
     });
   }
 
+  /**
+   * Ask fal's queue to stop a request we no longer want.
+   *
+   * The queue exposes `PUT .../requests/{id}/cancel` beside the status URL.
+   * Failures are swallowed on purpose: this runs on the way out of a cancel or
+   * timeout, and the caller's error is the one that matters.
+   */
+  private async cancelQueued(statusUrl: string, ctx: AdapterContext): Promise<void> {
+    const cancelUrl = statusUrl.replace(/\/status\/?$/, '/cancel');
+    if (cancelUrl === statusUrl) return;
+    try {
+      await httpRequest(cancelUrl, {
+        method: 'PUT',
+        headers: this.headers(ctx),
+        timeoutMs: 10_000,
+        providerId: this.descriptor.id,
+      });
+    } catch {
+      /* best-effort; the job may already be past cancellation */
+    }
+  }
+
   private async awaitCompletion(
     statusUrl: string,
     requestId: string | null,
@@ -310,6 +332,11 @@ export class FalAdapter implements ProviderAdapter {
 
     for (;;) {
       if (ctx.signal?.aborted) {
+        // Walking away locally is not enough: the queue keeps rendering, and on
+        // a paid account that is GPU time billed for output nobody will fetch.
+        // Cancellation is best-effort — the job may already be running past the
+        // point fal will stop it — but not asking guarantees the waste.
+        await this.cancelQueued(statusUrl, ctx);
         throw new MeridianError('cancelled', `fal job ${requestId ?? 'unknown'} cancelled`, {
           providerId: this.descriptor.id,
           modelId: model,
@@ -317,6 +344,7 @@ export class FalAdapter implements ProviderAdapter {
         });
       }
       if (Date.now() >= deadline) {
+        await this.cancelQueued(statusUrl, ctx);
         const queued = queuePosition != null ? `; last reported queue position ${queuePosition}` : '';
         throw new MeridianError('timeout', `fal job ${requestId ?? 'unknown'} did not finish within ${ctx.timeoutMs}ms${queued}`, {
           providerId: this.descriptor.id,

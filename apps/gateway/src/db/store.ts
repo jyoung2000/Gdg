@@ -878,6 +878,16 @@ export class Store implements CredentialStore {
     }));
   }
 
+  /** Today's spend per pool (UTC day), for warming budget counters after a restart. */
+  spentTodayByPool(): Record<string, number> {
+    const dayStart = new Date();
+    dayStart.setUTCHours(0, 0, 0, 0);
+    const rows = this.db
+      .prepare('SELECT pool_id AS poolId, COALESCE(SUM(cost),0) AS spent FROM usage WHERE at >= ? AND pool_id IS NOT NULL GROUP BY pool_id')
+      .all(dayStart.getTime()) as { poolId: string; spent: number }[];
+    return Object.fromEntries(rows.map((r) => [r.poolId, Number(r.spent)]));
+  }
+
   /* ---------------------------------------------------------------- */
   /* Task checkpoints                                                 */
   /* ---------------------------------------------------------------- */
