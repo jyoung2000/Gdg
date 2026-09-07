@@ -20,3 +20,6 @@ docs/evidence/screens/
 # Build-time CAs belong to the environment, not the repository.
 docker/ca/*.crt
 docker/ca/*.pem
+
+# Bind-mounted workspace root used by the Compose verification runs.
+docker-workspaces/
