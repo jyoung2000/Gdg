@@ -128,7 +128,7 @@ class Client {
   ): Promise<void> {
     const res = await fetch(`${this.config.baseUrl.replace(/\/+$/, '')}/v1/chat/completions`, {
       method: 'POST',
-      headers: this.headers({ accept: 'text/event-stream' }),
+      headers: this.headers({ accept: 'text/event-stream', 'content-type': 'application/json' }),
       body: JSON.stringify({ ...body, stream: true }),
     });
     if (!res.ok || !res.body) {
