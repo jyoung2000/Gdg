@@ -1,0 +1,196 @@
+# Upstream integration matrix
+
+What was taken from each upstream project, what was deliberately left, and what
+Meridian already had before any of them were read.
+
+The last of those turned out to matter most. Meridian was not a model list
+waiting for a routing engine: the router, the policy modes, the retry and
+circuit-breaker layer and the latency measurement were already built and
+working. Reimplementing them from an upstream design would have been a
+destructive rewrite of code that passes its tests. So this exercise was mostly
+**one real integration** — a live catalog of free providers, which Meridian
+genuinely lacked — plus an audit that confirmed the rest was already there.
+
+Recording that honestly is the point. A matrix that claimed five integrations
+where there was one would be the same kind of lie as a catalog that calls trial
+credit free.
+
+---
+
+## Summary
+
+| Upstream | Licence | Outcome |
+| --- | --- | --- |
+| [free-llm-api-hub](https://github.com/pacocartones/free-llm-api-hub) | MIT | **Integrated.** Live dataset sync — 69 providers, 28 new callable routes |
+| [free-coding-models](https://github.com/vava-nessa/free-coding-models) | MIT | **Already present.** Health/latency measurement existed; concept confirmed |
+| [free-claude-code](https://github.com/itspsr/free-claude-code) | MIT | **Already present.** Provider rotation and fallback existed |
+| [Codebuff / freebuff](https://github.com/CodebuffAI/codebuff) | Apache-2.0 | **Partially present.** Agent pools existed; per-task model routing existed |
+| [cheapestinference/*](https://github.com/cheapestinference) | MIT (3 repos) | **Already present.** Retry, backoff, `Retry-After`, circuit breaker existed |
+| cheapestinference/examples | **none** | **Excluded.** No licence — nothing copied or adapted |
+
+No source code was copied from any upstream repository. The one thing
+redistributed is the free-llm-api-hub dataset, which MIT permits; see
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+
+---
+
+## 1. free-llm-api-hub — the real integration
+
+**Licence:** MIT (Copyright 2026 Paco Cartones). Data redistribution permitted
+with attribution.
+
+**What it is:** a curated, versioned, machine-readable dataset of providers with
+free tiers or trial credit, carrying the fine print catalogs normally omit —
+card and phone requirements, commercial-use permission, OpenAI-compatible base
+URLs, and a per-entry verification date.
+
+**What Meridian does with it**
+
+| Upstream field | Becomes | Notes |
+| --- | --- | --- |
+| `slug`, `name` | `ProviderDescriptor.id` / `.name` | |
+| `free_type` | `FreeAccessKind` | `renewing-quota` resolves to daily/monthly by reading the published limits, or stays a generic ongoing tier when no period is stated |
+| `free_tier`, `rate_limits`, `notes` | `ProviderIntelligence` summaries | Kept as prose; providers do not express limits uniformly |
+| `card_required`, `phone_required` | `AccessRequirements` (tri-state) | `null` → `'unknown'`, never `'no'` |
+| `commercial_ok` | `DataUsePolicy.commercialUse` | `null` → `'unknown'` |
+| `openai_compatible` + `openai_base_url` | `adapter: 'openai-compatible'`, `baseUrl` | The one adapter this data can honestly back |
+| `env_key` | `ProviderDescriptor.envKeys` | Credential discovery finds it automatically |
+| `modalities` | `ProviderKind[]` | Conservative mapping |
+| `verified`, `last_verified`, dataset `version` | `Provenance` | Confidence is capped at `medium`; never `high` |
+
+**Measured result** against the real upstream (v2.9.0, generated 2026-08-14):
+
+```
+69 entries
+ 28  registered as new callable providers
+  8  enriched providers Meridian already ships
+  1  rejected: base URL needs operator substitution ({account_id})
+ 32  rejected: no OpenAI-compatible endpoint
+```
+
+Provider count went from 24 to 52 on a live sync.
+
+**Where it lives:** `packages/model-sdk/src/sources/free-llm-api-hub.ts`
+(schema, classification, normalisation), `sources/sync.ts` (fetch, ETag cache,
+offline fallback, change detection), `apps/gateway/src/services/catalog-sync.ts`
+(registration into the provider registry).
+
+**What was NOT taken:** the repository's site, badges, README generators and
+probe scripts. Meridian syncs the dataset, not the project around it.
+
+---
+
+## 2. free-coding-models — concept confirmed, already implemented
+
+**Licence:** MIT.
+
+**The concept worth having:** measure provider health continuously instead of
+trusting static claims — latency distribution, jitter, uptime — and rank on
+what was observed.
+
+**Meridian already did this.** `packages/model-sdk/src/scoring.ts` computes,
+from a rolling 100-sample window of real usage rows:
+
+- `p95LatencyMs` — the 95th percentile of a sorted window, not an average
+- `jitterMs` — the standard deviation (`Math.sqrt(variance)`)
+- `uptime` — an exponentially weighted moving average of success
+- `stability` — observed successes over attempts
+
+fed from `App.recordUsage` in `apps/gateway/src/services/app.ts`, i.e. from
+every real call rather than a synthetic probe.
+
+**Consequence:** nothing to port. A "Stability Score" reimplementation would
+have replaced a working, tested measurement with a differently-shaped one.
+Meridian's `freeRadar` exposes these numbers with the factors broken out, which
+is the same idea reaching the user.
+
+---
+
+## 3. free-claude-code — concept confirmed, already implemented
+
+**Licence:** MIT.
+
+**The concept worth having:** a user should not lose a task because one
+provider returned an error; rotate to another configured model.
+
+**Meridian already did this.** `packages/routing-sdk/src/executor.ts` builds a
+fallback chain from the router's ranked candidates and walks it, with a retry
+budget shared across the whole chain so a request cannot bounce indefinitely.
+Errors carry `retryable` and `failover` flags from a taxonomy, so a bad API key
+fails fast instead of being retried against the same provider.
+
+**Consequence:** nothing to port.
+
+---
+
+## 4. Codebuff / freebuff — partially present
+
+**Licence:** Apache-2.0. Not copied; Apache-2.0 obligations (NOTICE, stating
+changes) therefore do not arise.
+
+**The concept worth having:** specialised agents with per-task model selection,
+and reviewing with a different model family from the one that implemented.
+
+**Meridian already has** agent roles with per-role task types and preferred
+routing modes (surfaced in the vocabulary endpoint's `agents` array), inference
+pools (`BUILTIN_POOLS`), and a router that takes `taskType` into account when
+scoring.
+
+**Not implemented:** an enforced "review with a different family than the
+implementer" rule. Meridian can be configured that way through pools, but does
+not require it. Recorded here as a gap rather than claimed.
+
+---
+
+## 5. cheapestinference — concept confirmed, already implemented
+
+**Licences:** MIT for `claude-auto-retry`, `openclaw-plugin-ratelimit-retry` and
+`silos`. **`examples` carries no licence file** and was therefore excluded
+entirely — no code, config or data from it was read into Meridian.
+
+**The concept worth having:** honour `Retry-After`, back off exponentially with
+jitter, bound the retry budget, and trip a breaker rather than hammering a
+provider that is down.
+
+**Meridian already did all of it:**
+
+| Behaviour | Where |
+| --- | --- |
+| `Retry-After` honoured | `executor.ts` — `err.retryAfterSec != null ? min(retryAfterSec*1000, 10s) : backoff(...)` |
+| Full-jitter exponential backoff | `packages/shared/src/time.ts` — `rand() * min(cap, base * 2**attempt)` |
+| Bounded retry budget | `executor.ts` — shared across the whole fallback chain |
+| Same-target retry cap | `executor.ts` — at most two tries before moving on |
+| Circuit breaker | `packages/routing-sdk/src/health.ts` — `closed` / `open` / `half_open` with cooldown |
+| Non-retryable errors fail fast | the error taxonomy's `retryable` / `failover` flags |
+
+**Consequence:** nothing to port.
+
+---
+
+## What this exercise actually added
+
+1. A live, self-updating catalog of free and trial providers, with provenance
+   and change detection — Meridian had no equivalent.
+2. A free-access taxonomy that distinguishes a perpetual free tier from a
+   renewing quota from a one-off trial credit, and a tri-state for access
+   requirements and commercial use.
+3. Route comparison: the same model grouped across providers, with cheapest,
+   fastest, free and local computed without guessing at absent data.
+4. A Discover screen and a free-model radar that show the factors behind every
+   ranking.
+
+## What it did not add, and why
+
+- **Live provider benchmarking from this environment.** The network allowlist
+  here reaches github.com but not provider APIs, so no free-tier endpoint could
+  be called to verify a claim end to end. The measurement code is real and
+  exercised against a local server; verification against a hosted free tier is
+  the operator's to run.
+- **Quota introspection.** `QuotaState` exists and is honest — every field is
+  nullable and `quotaRemainingFraction` returns `null` rather than `1` when a
+  provider publishes nothing — but no provider adapter currently populates it
+  from response headers. It is a typed hole, not a filled one.
+- **Subscription-backed access.** Distinguishing "included in a subscription I
+  already pay for" from API billing requires provider-specific entitlement
+  checks that none of the upstreams solve either. `SUBSCRIPTION_INCLUDED` exists
+  in the taxonomy and nothing currently produces it.

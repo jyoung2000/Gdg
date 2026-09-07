@@ -339,6 +339,8 @@ What has and has not been verified is written down rather than implied — see
 | `docs/ARCHITECTURE.md` | How the pieces fit and why |
 | `docs/SECURITY.md` | Threat model and the guarantees |
 | `docs/ROUTING.md` | Modes, pools, reservations, economics |
+| `docs/MODEL_INTELLIGENCE.md` | Free-access taxonomy, catalog sync, routes, the free radar |
+| `docs/UPSTREAM_INTEGRATION_MATRIX.md` | What was integrated from each upstream project, and what was already there |
 | `docs/AGENTS.md` | The agent roster and the task pipeline |
 | `design/DESIGN_SYSTEM.md` | Tokens, components, states, theming |
 | `design/ACCESSIBILITY.md` | The accessibility contract, with measured contrast |
