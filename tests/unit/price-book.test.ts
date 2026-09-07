@@ -7,6 +7,7 @@ import {
   PriceBook,
   PROVIDER_ALIASES,
   looksLikePriceBook,
+  isSuspiciousShrink,
   perMTok,
   priceBookCachePath,
   syncPriceBook,
@@ -235,6 +236,31 @@ describe('sync', () => {
       assert.ok(r.entries >= 200);
       assert.equal(readFileSync(priceBookCachePath(dir), 'utf8'), before, 'cache untouched');
     });
+  });
+
+  it('refuses a well-formed refetch that lost most of its entries', async () => {
+    // The dangerous case nothing else catches: a partial publish or a CDN
+    // serving a stub. It passes every structural check and would silently
+    // return thousands of models to reporting $0.
+    await withDir(async (dir) => {
+      const full = await syncPriceBook({ cacheDir: dir, now: 1000, fetchImpl: ok(many()) });
+      assert.ok(full.entries >= 200);
+
+      const shrunk: Record<string, unknown> = {};
+      for (let i = 0; i < 120; i++) shrunk[`model-${i}`] = { litellm_provider: 'openai', input_cost_per_token: 1e-6 };
+
+      const r = await syncPriceBook({ cacheDir: dir, now: 2000, fetchImpl: ok(shrunk) });
+      assert.equal(r.status, 'stale-cache');
+      assert.equal(r.entries, full.entries, 'the fuller cached card is kept');
+      assert.match(r.error ?? '', /shrank from/);
+    });
+  });
+
+  it('accepts growth, and accepts a first sync with nothing to compare against', () => {
+    assert.equal(isSuspiciousShrink(0, 10), false, 'a first sync has no baseline');
+    assert.equal(isSuspiciousShrink(1000, 4000), false, 'catalogues grow');
+    assert.equal(isSuspiciousShrink(1000, 800), false, 'ordinary churn is fine');
+    assert.equal(isSuspiciousShrink(1000, 700), true, 'losing a third is not');
   });
 
   it('reports unavailable rather than pricing everything at zero', async () => {

@@ -81,6 +81,30 @@ export function looksLikePriceBook(raw: unknown): raw is Record<string, unknown>
   return withProvider >= 50;
 }
 
+/**
+ * Fraction of the cached rate card a refetch must retain to be adopted.
+ *
+ * The absolute floor above catches a 404 page or a truncated download, but not
+ * a payload that is well-formed and catastrophically smaller — a partial
+ * publish, a bad upstream migration, a CDN serving an old stub. Accepting one
+ * would silently drop rates for thousands of models, and every one of them
+ * would go back to reporting $0, which is precisely the failure this module
+ * exists to prevent. Losing a quarter of the entries in one refresh is not a
+ * normal day for a catalogue that only grows.
+ */
+export const MIN_RETAINED_FRACTION = 0.75;
+
+/**
+ * Reject a refetch that lost most of what we already had.
+ *
+ * Deliberately one-directional: growth is always fine, and a first sync with
+ * nothing cached has nothing to compare against and is accepted.
+ */
+export function isSuspiciousShrink(previousEntries: number, nextEntries: number): boolean {
+  if (previousEntries <= 0) return false;
+  return nextEntries < previousEntries * MIN_RETAINED_FRACTION;
+}
+
 /** Never throws: a missing rate card is a reportable state, not a crash. */
 export async function syncPriceBook(opts: PriceBookOptions): Promise<PriceBookResult> {
   const url = opts.url ?? DEFAULT_PRICE_BOOK_URL;
@@ -138,11 +162,25 @@ export async function syncPriceBook(opts: PriceBookOptions): Promise<PriceBookRe
       return serveCache('stale-cache', 'upstream payload did not look like the price book');
     }
 
+    // A well-formed payload that lost most of its entries is more dangerous
+    // than a malformed one, because nothing else would catch it. Keep the copy
+    // we have and say why.
+    const nextBook = new PriceBook(raw as Record<string, unknown>);
+    if (cachedOk) {
+      const previous = new PriceBook(cachedOk.payload as Record<string, unknown>).size;
+      if (isSuspiciousShrink(previous, nextBook.size)) {
+        return serveCache(
+          'stale-cache',
+          `refused a refetch that shrank from ${previous} to ${nextBook.size} entries; keeping the cached rate card`,
+        );
+      }
+    }
+
     const p = priceBookCachePath(opts.cacheDir);
     mkdirSync(dirname(p), { recursive: true });
     writeFileSync(p, JSON.stringify({ etag: res.headers.get('etag'), fetchedAt: opts.now, url, payload: raw }), 'utf8');
 
-    const book = new PriceBook(raw as Record<string, unknown>);
+    const book = nextBook;
     return {
       ...base,
       status: 'updated',
