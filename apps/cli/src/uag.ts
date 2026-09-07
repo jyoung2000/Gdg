@@ -356,6 +356,117 @@ async function main(): Promise<number> {
     }
 
     /* ---------------- models ---------------- */
+    /**
+     * Route comparison: the same model, every way of reaching it.
+     *
+     * The point of the table is the price column, where "—" means the provider
+     * publishes no rate. That is not zero, and it is not free.
+     */
+    case 'routes': {
+      const query = new URLSearchParams();
+      if (positional[1]) query.set('q', positional[1]);
+      if (flags.all !== true) query.set('multiOnly', 'true');
+      const res = await client.request<{ groups: Record<string, unknown>[]; total: number }>(`/api/routes?${query}`);
+      if (json) {
+        out(JSON.stringify(res.groups, null, 2));
+        return 0;
+      }
+      out();
+      for (const g of res.groups.slice(0, 20)) {
+        const options = g.options as Record<string, unknown>[];
+        const cheapest = g.cheapest as Record<string, unknown> | null;
+        out(`  ${c.bold(String(g.displayName))}  ${c.dim(`${options.length} route${options.length === 1 ? '' : 's'}`)}`);
+        table(
+          ['PROVIDER', 'PRICE/M', 'P95', 'RELIABILITY', 'STATE'],
+          options.map((o) => {
+            const price = o.blendedPerMTok as number | null;
+            const p95 = o.p95LatencyMs as number | null;
+            const rel = o.reliability as number | null;
+            return [
+              String(o.providerId) + (cheapest && cheapest.modelId === o.modelId ? c.green(' *') : ''),
+              price === null ? c.dim('—') : price === 0 ? c.green('free') : `$${price.toFixed(3)}`,
+              p95 === null ? c.dim('—') : `${Math.round(p95)}ms`,
+              rel === null ? c.dim('unmeasured') : `${Math.round(rel * 100)}%`,
+              o.configured ? String(o.health) : c.dim('needs key'),
+            ];
+          }),
+        );
+        out();
+      }
+      out(c.dim(`  ${res.total} group${res.total === 1 ? '' : 's'}. * marks the cheapest priced route. "—" means no published rate.`));
+      out();
+      return 0;
+    }
+
+    /** The best models available for nothing, right now. */
+    case 'radar': {
+      const query = new URLSearchParams();
+      if (flags.configured === true) query.set('includeUnconfigured', 'false');
+      else query.set('includeUnconfigured', 'true');
+      const res = await client.request<{ entries: Record<string, unknown>[]; configuredProviders: number }>(
+        `/api/radar/free?${query}`,
+      );
+      if (json) {
+        out(JSON.stringify(res.entries, null, 2));
+        return 0;
+      }
+      out();
+      if (res.entries.length === 0) {
+        out(c.dim(res.configuredProviders === 0
+          ? '  No provider has a credential yet, so nothing is usable for free. Add a key, or start a local model server.'
+          : '  Nothing configured offers a zero-cost route. Trial credit is excluded: it is cheap, not free.'));
+        out();
+        return 0;
+      }
+      table(
+        ['SCORE', 'MODEL', 'PROVIDER', 'ACCESS', 'NOTE'],
+        res.entries.map((e) => {
+          const o = e.option as Record<string, unknown>;
+          return [
+            (e.score as number).toFixed(1),
+            String(o.displayName),
+            String(o.providerId),
+            o.local ? c.green('local') : String(o.freeAccess ?? 'free'),
+            c.dim(String(e.note)),
+          ];
+        }),
+      );
+      out();
+      out(c.dim(`  ${res.configuredProviders} provider(s) have a credential. Trial credit is never listed here.`));
+      out();
+      return 0;
+    }
+
+    /**
+     * Synchronise the free-provider catalog.
+     *
+     * Without --refresh this only reports; a refresh reaches a third-party
+     * host, so it is opt-in rather than a side effect of asking.
+     */
+    case 'sync': {
+      const status = flags.refresh === true
+        ? (await client.request<{ status: Record<string, unknown> }>('/api/catalog/sync', { method: 'POST' })).status
+        : (await client.request<{ status: Record<string, unknown> }>('/api/catalog/status')).status;
+      if (json) {
+        out(JSON.stringify(status, null, 2));
+        return 0;
+      }
+      out();
+      out(`  Source     ${status.source} ${c.dim(`(${status.license})`)}`);
+      out(`  State      ${status.status}${status.fromCache ? c.dim(' — served from cache') : ''}`);
+      out(`  Version    ${status.version ?? c.dim('none')}${status.generated ? c.dim(`, published ${status.generated}`) : ''}`);
+      if (status.cacheAgeDays !== null && status.cacheAgeDays !== undefined) {
+        out(`  Age        ${status.cacheAgeDays} day(s)`);
+      }
+      out(`  Providers  ${status.entries} in the dataset; ${status.registered} registered here, ${status.enriched} enriched`);
+      if (status.error) out(c.yellow(`  Problem    ${status.error}`));
+      out();
+      out(c.dim(`  ${status.attribution}`));
+      out(c.dim(status.status === 'never-run' || !flags.refresh ? '  Run with --refresh to fetch the latest.' : ''));
+      out();
+      return 0;
+    }
+
     case 'models': {
       const query = new URLSearchParams();
       if (positional[1]) query.set('search', positional[1]);

@@ -136,6 +136,8 @@ export class App {
   }
 
   static async create(config: MeridianConfig): Promise<App> {
+    // Filled in at the end of this method; see recordUsage below.
+    let instance: App | null = null;
     const logger = createLogger({ level: config.logLevel, format: config.logFormat });
     const db = openDatabase(config.databasePath, logger);
     const box = SecretBox.create(db, config.masterKey);
@@ -279,6 +281,12 @@ export class App {
       recordUsage: (row) => {
         store.recordUsage(row);
         events.publish({ type: 'usage', record: row });
+        // Every completed call feeds the measurement pipeline, not just the
+        // ones a user later rates. Latency percentiles, jitter and uptime are
+        // only meaningful if they come from ordinary traffic — measuring the
+        // rare rated task and calling it the model's p95 would be a number
+        // built from an unrepresentative sample.
+        instance?.recordOutcome(row);
       },
       onFallback: (event: FallbackEvent) => events.publish({ type: 'fallback', event }),
       streamIdleTimeoutMs: config.streamIdleTimeoutMs,
@@ -379,7 +387,7 @@ export class App {
       },
     });
 
-    return new App({
+    const app = new App({
       config,
       logger,
       store,
@@ -404,6 +412,8 @@ export class App {
       computer,
       warnings,
     });
+    instance = app;
+    return app;
   }
 
   /* ---------------------------------------------------------------- */
