@@ -9,7 +9,7 @@ import {
   type RoutingMode,
   type ToolDefinition,
 } from '@meridian/shared';
-import { beginSse, normalizeMode } from './shared.js';
+import { beginSse, normalizeMode, withSkills } from './shared.js';
 import { requireScope } from './authz.js';
 import type { App } from '../services/app.js';
 
@@ -49,6 +49,8 @@ interface OAIChatBody {
     sensitive?: boolean;
     task_type?: AIRequest['taskType'];
     workspace_id?: string;
+    /** Run under a saved AI profile: its skills and MCP grants apply. */
+    profile_id?: string;
   };
 }
 
@@ -105,8 +107,15 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
     if (!messages.length) throw new MeridianError('invalid_request', '"messages" must contain at least one message');
 
     const aiRequest = buildAIRequest(body, messages, req.auth.userId, 'text');
+    // Configured skills are resolved per request and prepended here, so a
+    // change made in the Skills screen affects the very next call.
+    const withSkill = withSkills(app, messages, {
+      profileId: body.meridian?.profile_id ?? null,
+      modelId: aiRequest.model,
+      workspaceId: aiRequest.workspaceId,
+    });
     const completion = {
-      messages,
+      messages: withSkill.messages,
       tools: toToolDefinitions(body.tools),
       toolChoice: normaliseToolChoice(body.tool_choice),
       temperature: body.temperature,

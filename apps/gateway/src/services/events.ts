@@ -16,7 +16,9 @@ export type ServerEvent =
   | { type: 'generation'; job: GenerationJob }
   | { type: 'discovery'; providerId: string; added: number; removed: number; total: number }
   | { type: 'notice'; level: 'info' | 'warn' | 'error'; message: string }
-  | { type: 'browser'; sessionId: string; entry: { at: number; kind: string; message: string } };
+  | { type: 'browser'; sessionId: string; entry: { at: number; kind: string; message: string } }
+  | { type: 'model-change'; change: Omit<import('@meridian/shared').ModelChange, 'id'> }
+  | { type: 'control-plane'; kind: 'skill' | 'assignment' | 'profile'; detail: string };
 
 export type Subscriber = (event: ServerEvent) => void;
 

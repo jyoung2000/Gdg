@@ -1115,6 +1115,118 @@ export class Store implements CredentialStore {
       this.db.prepare('SELECT record FROM research_records ORDER BY at DESC LIMIT ?').all(Math.min(limit, 500)) as { record: string }[]
     ).map((r) => JSON.parse(r.record));
   }
+
+  /* ---------------------------------------------------------------- */
+  /* Control plane: skills, profiles, assignments, model history      */
+  /* ---------------------------------------------------------------- */
+
+  listSkills(): unknown[] {
+    return (this.db.prepare('SELECT skill FROM skills ORDER BY slug').all() as { skill: string }[]).map((r) => JSON.parse(r.skill));
+  }
+
+  saveSkill(id: string, slug: string, skill: unknown, updatedAt: number): void {
+    this.db
+      .prepare(
+        'INSERT INTO skills (id, slug, skill, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET slug = excluded.slug, skill = excluded.skill, updated_at = excluded.updated_at',
+      )
+      .run(id, slug, JSON.stringify(skill), updatedAt);
+  }
+
+  deleteSkill(id: string): void {
+    this.db.prepare('DELETE FROM skills WHERE id = ?').run(id);
+  }
+
+  listAIProfiles(): unknown[] {
+    return (this.db.prepare('SELECT profile FROM ai_profiles ORDER BY updated_at').all() as { profile: string }[]).map((r) =>
+      JSON.parse(r.profile),
+    );
+  }
+
+  saveAIProfile(id: string, profile: unknown, updatedAt: number): void {
+    this.db
+      .prepare(
+        'INSERT INTO ai_profiles (id, profile, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET profile = excluded.profile, updated_at = excluded.updated_at',
+      )
+      .run(id, JSON.stringify(profile), updatedAt);
+  }
+
+  deleteAIProfile(id: string): void {
+    this.db.prepare('DELETE FROM ai_profiles WHERE id = ?').run(id);
+  }
+
+  listAssignments(): {
+    id: string;
+    kind: string;
+    targetId: string;
+    scope: string;
+    scopeId: string | null;
+    mode: string;
+    createdAt: number;
+    updatedAt: number;
+  }[] {
+    const rows = this.db.prepare('SELECT * FROM assignments').all() as Row[];
+    return rows.map((r) => ({
+      id: String(r.id),
+      kind: String(r.kind),
+      targetId: String(r.target_id),
+      scope: String(r.scope),
+      scopeId: (r.scope_id as string) ?? null,
+      mode: String(r.mode),
+      createdAt: Number(r.created_at),
+      updatedAt: Number(r.updated_at),
+    }));
+  }
+
+  saveAssignment(a: {
+    id: string;
+    kind: string;
+    targetId: string;
+    scope: string;
+    scopeId: string | null;
+    mode: string;
+    createdAt: number;
+    updatedAt: number;
+  }): void {
+    // The unique index is on the natural key, so an upsert there keeps one
+    // decision per scope even when a caller invents a fresh id.
+    this.db
+      .prepare(
+        `INSERT INTO assignments (id, kind, target_id, scope, scope_id, mode, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(kind, target_id, scope, IFNULL(scope_id, '')) DO UPDATE SET mode = excluded.mode, updated_at = excluded.updated_at`,
+      )
+      .run(a.id, a.kind, a.targetId, a.scope, a.scopeId, a.mode, a.createdAt, a.updatedAt);
+  }
+
+  deleteAssignment(id: string): void {
+    this.db.prepare('DELETE FROM assignments WHERE id = ?').run(id);
+  }
+
+  recordModelChanges(changes: { id: string; modelId: string; at: number; kind: string; changes: unknown }[]): void {
+    if (!changes.length) return;
+    const stmt = this.db.prepare('INSERT OR REPLACE INTO model_changes (id, model_id, at, kind, changes) VALUES (?, ?, ?, ?, ?)');
+    const tx = this.db.transaction((rows: typeof changes) => {
+      for (const c of rows) stmt.run(c.id, c.modelId, c.at, c.kind, JSON.stringify(c.changes));
+    });
+    tx(changes);
+  }
+
+  listModelChanges(limit = 100): { id: string; modelId: string; at: number; kind: string; changes: unknown }[] {
+    const rows = this.db.prepare('SELECT * FROM model_changes ORDER BY at DESC LIMIT ?').all(Math.min(limit, 500)) as Row[];
+    return rows.map((r) => ({
+      id: String(r.id),
+      modelId: String(r.model_id),
+      at: Number(r.at),
+      kind: String(r.kind),
+      changes: json<unknown>(r.changes as string, []),
+    }));
+  }
+
+  /** Prune history so a long-running instance does not grow without bound. */
+  pruneModelChanges(keep = 2000): number {
+    return this.db.prepare('DELETE FROM model_changes WHERE id NOT IN (SELECT id FROM model_changes ORDER BY at DESC LIMIT ?)').run(keep)
+      .changes;
+  }
 }
 
 /* ------------------------------------------------------------------ */

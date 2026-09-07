@@ -4,6 +4,7 @@ import { beginSse } from './shared.js';
 import { requireScope } from './authz.js';
 import type { App } from '../services/app.js';
 import { buildAIRequest, routingMeta } from './openai.js';
+import { withSkills } from './shared.js';
 
 interface AnthropicBlock {
   type: string;
@@ -47,8 +48,15 @@ export async function registerAnthropicRoutes(server: FastifyInstance, app: App)
     if (!messages.length) throw new MeridianError('invalid_request', '"messages" must contain at least one message');
 
     const aiRequest = buildAIRequest(body, messages, req.auth.userId, 'text');
+    // Same control-plane resolution as the OpenAI surface: whichever skills
+    // are configured for this model reach the model on this request.
+    const withSkill = withSkills(app, messages, {
+      profileId: body.meridian?.profile_id ?? null,
+      modelId: aiRequest.model,
+      workspaceId: aiRequest.workspaceId,
+    });
     const completion = {
-      messages,
+      messages: withSkill.messages,
       tools: toTools(body.tools),
       toolChoice: toToolChoice(body.tool_choice),
       temperature: body.temperature,

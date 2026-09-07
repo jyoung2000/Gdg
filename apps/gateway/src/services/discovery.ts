@@ -5,14 +5,17 @@ import {
   type Capability,
   type Logger,
   type MeridianConfig,
+  type ModelChange,
   type ModelDescriptor,
   type Pricing,
   type ProviderDescriptor,
 } from '@meridian/shared';
-import { ModelRegistry, enrich } from '@meridian/model-sdk';
+import { ModelRegistry, detectChanges, enrich } from '@meridian/model-sdk';
+import type { DiscoveryScheduler } from '@meridian/control-sdk';
 import { discoverLocalEndpoints, type AdapterContext, type ProviderRegistry } from '@meridian/provider-sdk';
 import type { CredentialResolver, HealthStore } from '@meridian/routing-sdk';
 import type { Store } from '../db/store.js';
+import { newChangeId } from './control-plane.js';
 
 export interface DiscoveryDeps {
   providers: ProviderRegistry;
@@ -23,6 +26,9 @@ export interface DiscoveryDeps {
   logger: Logger;
   config: MeridianConfig;
   onProvider?: (providerId: string, added: number, removed: number, total: number) => void;
+  /** Paces per-provider queries; absent in tests that want every pass to run. */
+  scheduler?: DiscoveryScheduler;
+  onModelChange?: (change: Omit<ModelChange, 'id'>) => void;
 }
 
 const LOCAL_PRICING: Pricing = {
@@ -51,18 +57,37 @@ export class Discovery {
     this.deps = deps;
   }
 
-  /** Discover from every configured provider, plus any local servers. */
-  async runOnce(): Promise<{ providers: number; models: number }> {
-    if (this.running) return { providers: 0, models: this.deps.models.size() };
+  /**
+   * Discover from every configured provider, plus any local servers.
+   *
+   * `force` is the manual-refresh path. Without it the scheduler decides: a
+   * provider queried minutes ago, or one backing off after failures, is
+   * skipped rather than re-asked, because discovery talks to other people's
+   * rate-limited APIs and a periodic timer must not become a burst.
+   */
+  async runOnce(opts: { force?: boolean } = {}): Promise<{ providers: number; models: number; skipped: string[] }> {
+    if (this.running) return { providers: 0, models: this.deps.models.size(), skipped: [] };
     this.running = true;
     try {
       await this.discoverLocal();
 
-      const targets = this.deps.providers.list().filter((d) => {
+      const eligible = this.deps.providers.list().filter((d) => {
         if (!d.supportsDiscovery) return false;
         const adapter = this.deps.providers.get(d.id);
         if (!adapter?.listModels) return false;
         return d.auth === 'none' || this.deps.credentials.hasAny(d.id);
+      });
+
+      const skipped: string[] = [];
+      const targets = eligible.filter((d) => {
+        const scheduler = this.deps.scheduler;
+        if (!scheduler) return true;
+        const verdict = scheduler.canRun(d.id, { force: opts.force });
+        if (!verdict.allowed) {
+          skipped.push(`${d.id}: ${verdict.reason}`);
+          return false;
+        }
+        return true;
       });
 
       // Providers are probed concurrently: a slow one must not delay the rest,
@@ -72,8 +97,12 @@ export class Discovery {
       for (const r of results) if (r.status === 'fulfilled') discovered += r.value;
 
       this.deps.store.upsertModels(this.deps.models.all());
-      this.deps.logger.info('discovery complete', { providers: targets.length, models: this.deps.models.size() });
-      return { providers: targets.length, models: discovered };
+      this.deps.logger.info('discovery complete', {
+        providers: targets.length,
+        models: this.deps.models.size(),
+        skipped: skipped.length,
+      });
+      return { providers: targets.length, models: discovered, skipped };
     } finally {
       this.running = false;
     }
@@ -94,11 +123,18 @@ export class Discovery {
       signal: timeoutSignal(30_000),
     };
 
+    this.deps.scheduler?.markAttempt(descriptor.id);
+
     try {
       const raw = await adapter.listModels(ctx);
-      const models = raw.map((m) => enrich(m));
+      // Provenance needs to name the source, and the previous set is needed to
+      // tell a genuinely new model from one that was already there.
+      const previous = this.deps.models.all().filter((m) => m.providerId === descriptor.id);
+      const models = raw.map((m) => enrich(m, { declaredSource: `${descriptor.name} model listing` }));
+      this.recordChanges(previous, models);
       const { added, removed } = this.deps.models.replaceProviderModels(descriptor.id, models);
       if (removed.length) this.deps.store.deleteModels(removed);
+      this.deps.scheduler?.markSuccess(descriptor.id);
 
       // A provider that answered a listing request is demonstrably reachable
       // and correctly authenticated, which is exactly what "verified" means.
@@ -118,8 +154,24 @@ export class Discovery {
       const message = e instanceof Error ? e.message : String(e);
       this.deps.logger.warn('discovery failed for provider', { providerId: descriptor.id, errorCode: message });
       this.deps.health.recordProbe(descriptor.id, false, 0, message);
+      this.deps.scheduler?.markFailure(descriptor.id, message);
       return 0;
     }
+  }
+
+  /**
+   * Persist what changed about a provider's models.
+   *
+   * Providers move models under stable ids — a context window doubles, vision
+   * appears, a model is withdrawn — and without a record the user only finds
+   * out when behaviour changes. Recording the diff is what makes the
+   * "recently discovered" and "model updated" views real observations.
+   */
+  private recordChanges(previous: ModelDescriptor[], next: ModelDescriptor[]): void {
+    const changes = detectChanges(previous, next, Date.now());
+    if (!changes.length) return;
+    this.deps.store.recordModelChanges(changes.map((c) => ({ ...c, id: newChangeId() })));
+    for (const change of changes) this.deps.onModelChange?.(change);
   }
 
   /**

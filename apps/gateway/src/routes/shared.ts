@@ -1,4 +1,6 @@
 import type { FastifyReply } from 'fastify';
+import type { ChatMessage } from '@meridian/shared';
+import type { App } from '../services/app.js';
 import { MeridianError, ROUTING_MODES } from '@meridian/shared';
 import { DEFAULT_PORT as PORT, type RoutingMode } from '@meridian/shared';
 
@@ -53,4 +55,32 @@ export function normalizeMode(raw: unknown): RoutingMode | undefined {
   const candidate = String(raw).toUpperCase();
   if ((ROUTING_MODES as readonly string[]).includes(candidate)) return candidate as RoutingMode;
   throw new MeridianError('invalid_request', `Unknown routing mode "${String(raw)}". One of: ${ROUTING_MODES.join(', ')}`);
+}
+
+/**
+ * Prepend the skills a request resolves to, as a system message.
+ *
+ * This is the join between the control plane and the runtime: whatever the
+ * effective-config resolver says is active is exactly what the model is told,
+ * on this request, right now. Without this call the Skills screen would be a
+ * set of toggles that change nothing — the failure mode the whole feature
+ * exists to avoid.
+ *
+ * The skill block goes ahead of the conversation, so the caller's own system
+ * message still follows it and a user instruction outranks a configured skill.
+ */
+export function withSkills(
+  app: App,
+  messages: ChatMessage[],
+  ctx: { profileId?: string | null; modelId?: string | null; providerId?: string | null; workspaceId?: string | null; sessionId?: string | null },
+): { messages: ChatMessage[]; applied: number; tokens: number } {
+  const config = app.ai.profiles.effectiveConfig(ctx);
+  if (!config.skills.length) return { messages, applied: 0, tokens: 0 };
+  const prompt = app.ai.profiles.skillPrompt(config);
+  if (!prompt) return { messages, applied: 0, tokens: 0 };
+  return {
+    messages: [{ role: 'system', content: `The operator has configured the following skills for you.\n\n${prompt}` }, ...messages],
+    applied: config.skills.length,
+    tokens: config.skillTokens,
+  };
 }

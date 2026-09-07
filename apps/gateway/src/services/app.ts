@@ -32,6 +32,7 @@ import { Store, defaultPreferences } from '../db/store.js';
 import { Discovery } from './discovery.js';
 import { EventBus, type ServerEvent } from './events.js';
 import { browserTools, createControlPlane, type ControlPlane } from './control.js';
+import { createAIControlPlane, type ControlPlane as AIControlPlane } from './control-plane.js';
 
 export interface Warning {
   level: 'info' | 'warn';
@@ -58,6 +59,7 @@ interface AppParts {
   events: EventBus;
   discovery: Discovery;
   control: ControlPlane;
+  ai: AIControlPlane;
   warnings: Warning[];
 }
 
@@ -89,6 +91,8 @@ export class App {
   readonly events: EventBus;
   readonly discovery: Discovery;
   readonly control: ControlPlane;
+  /** Skills, AI profiles and scoped assignments. */
+  readonly ai: AIControlPlane;
   readonly warnings: Warning[];
 
   /** Live workspaces, keyed by workspace id, so change state survives requests. */
@@ -117,6 +121,7 @@ export class App {
     this.events = parts.events;
     this.discovery = parts.discovery;
     this.control = parts.control;
+    this.ai = parts.ai;
     this.warnings = parts.warnings;
   }
 
@@ -297,7 +302,18 @@ export class App {
     });
 
     const parallel = new ParallelRunner(orchestrator);
-    const discovery = new Discovery({ providers, models, credentials, health, store, logger, config });
+    const ai = await createAIControlPlane({ store, models, mcp: control.mcp, logger });
+    const discovery = new Discovery({
+      providers,
+      models,
+      credentials,
+      health,
+      store,
+      logger,
+      config,
+      scheduler: ai.scheduler,
+      onModelChange: (change) => events.publish({ type: 'model-change', change }),
+    });
 
     return new App({
       config,
@@ -319,6 +335,7 @@ export class App {
       events,
       discovery,
       control,
+      ai,
       warnings,
     });
   }
