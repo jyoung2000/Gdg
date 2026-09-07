@@ -136,9 +136,16 @@ export class Router {
     }
 
     const weights = this.weightsFor(effectiveMode);
+    // Explicitly preferred candidates rank first, then by score within each
+    // group. A preference is an instruction the operator typed, not a hint, so
+    // it is not left to be outvoted by a learned average — a model that has
+    // simply been measured recently should not silently displace the provider
+    // someone asked for. Hard constraints have already removed anything
+    // unusable, so this only reorders candidates that could all serve, and the
+    // rest of the list stays behind it as the fallback chain.
     const scored = eligible
       .map((m) => this.score(m, req, weights, pool, prefs))
-      .sort((a, b) => b.score - a.score);
+      .sort((a, b) => Number(b.preferred ?? false) - Number(a.preferred ?? false) || b.score - a.score);
 
     const winner = scored[0];
     const winnerModel = this.deps.models.get(winner.modelId)!;
@@ -339,6 +346,11 @@ export class Router {
     const local = descriptor?.local ? 1 : 0;
 
     const preference = this.preferenceScore(m, prefs, pool);
+    // Only what the operator named counts as an instruction; a pool's member
+    // weight is Meridian's own arrangement, not the user's.
+    const preferred = Boolean(
+      prefs && (prefs.preferredModels.includes(m.id) || prefs.preferredProviders.includes(m.providerId)),
+    );
     const reliability = clamp01((view?.scores?.stability ?? 0.85) * (1 - health.errorRate));
 
     const factors = {
@@ -360,6 +372,7 @@ export class Router {
       estimatedCost,
       estimatedLatencyMs: latency,
       free: isFree(m.pricing),
+      preferred,
     };
   }
 

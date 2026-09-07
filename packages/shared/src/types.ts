@@ -467,6 +467,14 @@ export interface RoutingCandidate {
   estimatedCost: number;
   estimatedLatencyMs: number | null;
   free: boolean;
+  /**
+   * The operator named this model or its provider in their preferences.
+   *
+   * Distinct from the `preference` factor, which is a weighted nudge that a
+   * strong enough score elsewhere can outvote. This is the explicit instruction
+   * itself, and ranking honours it ahead of the weighted score.
+   */
+  preferred?: boolean;
 }
 
 export interface RoutingReason {

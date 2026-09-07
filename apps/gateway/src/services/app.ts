@@ -640,30 +640,63 @@ export class App {
   }
 
   /**
-   * Fold a completed call into the model's learned scores.
+   * Fold a completed call into what is known about the model.
    *
    * Only telemetry feeds this — success, latency, whether tests passed, whether
    * tool calls parsed, and explicit user feedback. The content of the request is
    * never part of what is learned.
+   *
+   * Availability and quality are recorded separately, because they answer
+   * different questions and a provider's refusal answers only one of them. A
+   * 429 means the provider would not serve the request; it says nothing about
+   * how good the model's output is, and its 5ms round trip is not evidence that
+   * the model is fast. Folding refusals into quality and latency would let a
+   * rate-limited hour rewrite a model's reputation and pull its latency
+   * distribution toward zero — and would quietly overrule an operator who
+   * explicitly preferred that provider, since the circuit breaker in
+   * ProviderHealth already handles "this provider is not serving right now".
    */
   recordOutcome(
     row: UsageRecord,
     extra: { testsPassed?: boolean | null; toolCallsValid?: boolean | null; userFeedback?: 'positive' | 'negative' | null } = {},
   ): void {
-    const nextScores = applyObservation(this.models.getScores(row.modelId), {
-      modelId: row.modelId,
-      taskType: row.taskType,
-      success: row.success,
-      latencyMs: row.latencyMs,
-      ttftMs: row.ttftMs,
-      outputTokens: row.completionTokens,
-      testsPassed: extra.testsPassed ?? null,
-      toolCallsValid: extra.toolCallsValid ?? null,
-      userFeedback: extra.userFeedback ?? null,
-      at: row.at,
-    });
-    this.models.setScores(nextScores);
-    this.store.setModelScores(nextScores);
+    const judged =
+      extra.userFeedback != null || extra.testsPassed != null || extra.toolCallsValid != null;
+
+    // Quality is a JUDGEMENT, and only a judgement updates it: a passing test
+    // suite, valid tool calls, or a human saying it was good or bad.
+    //
+    // A call merely completing is not evidence of quality. The scoring ladder
+    // behind this awards a flat 70 for any success, so folding every request
+    // into it would let a chatty model out-rank a better one on volume alone,
+    // and would quietly outvote an operator who named a preferred provider —
+    // learned averages overruling an explicit instruction. Latency and uptime
+    // below are measurements and are recorded from every call; this is not.
+    if (judged) {
+      const nextScores = applyObservation(this.models.getScores(row.modelId), {
+        modelId: row.modelId,
+        taskType: row.taskType,
+        success: row.success,
+        latencyMs: row.latencyMs,
+        ttftMs: row.ttftMs,
+        outputTokens: row.completionTokens,
+        testsPassed: extra.testsPassed ?? null,
+        toolCallsValid: extra.toolCallsValid ?? null,
+        userFeedback: extra.userFeedback ?? null,
+        at: row.at,
+      });
+      this.models.setScores(nextScores);
+      this.store.setModelScores(nextScores);
+    }
+
+    // Performance describes how a model serves, so only a call that actually
+    // served contributes to it. A refusal is a fact about the PROVIDER — it is
+    // recorded by ProviderHealth, which already tracks error rate, consecutive
+    // failures and the circuit breaker, and which the router reads separately.
+    // Writing refusals in here too would penalise the model twice for someone
+    // else's rate limit, and would let a rate-limited hour override an operator
+    // who deliberately preferred that provider.
+    if (!row.success) return;
 
     const window = [...(this.latencyWindows.get(row.modelId) ?? []), row.latencyMs].slice(-100);
     this.latencyWindows.set(row.modelId, window);
@@ -674,7 +707,7 @@ export class App {
         latencyMs: row.latencyMs,
         ttftMs: row.ttftMs,
         outputTokens: row.completionTokens,
-        success: row.success,
+        success: true,
         at: row.at,
       },
       window,
@@ -719,3 +752,5 @@ function createAssetStore(assetRoot: string): (jobId: string, index: number, ass
 }
 
 export type { ServerEvent };
+
+
