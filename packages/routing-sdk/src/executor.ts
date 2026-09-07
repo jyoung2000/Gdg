@@ -10,6 +10,7 @@ import {
   sleep,
   type AIRequest,
   type CompletionRequest,
+  type ReasoningEffort,
   type CompletionResponse,
   type EmbeddingRequest,
   type EmbeddingResponse,
@@ -111,8 +112,26 @@ export class Executor {
   chat(req: AIRequest, completion: Omit<CompletionRequest, 'model'>, opts: ExecuteOptions = {}): Promise<ExecutionResult<CompletionResponse>> {
     return this.run(req, opts, async (adapter, target, ctx) => {
       if (!adapter.chat) throw new MeridianError('unsupported_capability', 'Adapter cannot chat', { providerId: target.providerId });
-      return adapter.chat({ ...completion, model: target.providerModelId, signal: ctx.signal }, ctx);
+      return adapter.chat({ ...this.gateEffort(completion, target), model: target.providerModelId, signal: ctx.signal }, ctx);
     }, (r) => ({ usage: r.usage, latencyMs: r.latencyMs, ttftMs: r.ttftMs }));
+  }
+
+  /**
+   * Drop a reasoning-effort request when the resolved model cannot honour it.
+   *
+   * This is the capability gate, and it lives here because here is the first
+   * point at which the concrete model is known — under AUTO the model is not
+   * chosen until routing, so the caller cannot gate it. Sending
+   * `reasoning_effort` to a plain chat model makes some providers reject the
+   * whole request; dropping it silently is both safer and truer to the user's
+   * intent, which was "think harder if you can", not "fail if you can't".
+   */
+  private gateEffort<T extends { reasoningEffort?: ReasoningEffort }>(completion: T, target: Target): T {
+    if (!completion.reasoningEffort) return completion;
+    const model = this.deps.models.get(`${target.providerId}:${target.providerModelId}`);
+    if (model?.capabilities.includes('reasoning')) return completion;
+    const { reasoningEffort: _dropped, ...rest } = completion;
+    return rest as T;
   }
 
   embed(req: AIRequest, embedding: EmbeddingRequest, opts: ExecuteOptions = {}): Promise<ExecutionResult<EmbeddingResponse>> {
@@ -187,7 +206,7 @@ export class Executor {
         const { adapter, ctx } = this.prepare(target, req, requestId, opts, log);
         if (!adapter.chatStream) throw new MeridianError('unsupported_capability', 'Adapter cannot stream', { providerId: target.providerId });
 
-        for await (const chunk of adapter.chatStream({ ...completion, model: target.providerModelId, stream: true, signal: ctx.signal }, ctx)) {
+        for await (const chunk of adapter.chatStream({ ...this.gateEffort(completion, target), model: target.providerModelId, stream: true, signal: ctx.signal }, ctx)) {
           // A tool call is output the client has acted on just as much as text
           // is — failing over after either would splice two models' answers
           // into one response.

@@ -253,6 +253,7 @@ ${c.dim('COMMON OPTIONS')}
   --provider <id>        Pin a provider
   --pool <id>            Route through an inference pool
   --mode <MODE>          AUTO | BEST | FAST | CHEAP | FREE | LOCAL
+  --effort <LEVEL>       Reasoning effort: minimal | low | medium | high (reasoning models)
   --free                 Only models that cannot charge money
   --local                Only models on your own hardware
   --paid                 Permit paid routing for this request
@@ -501,11 +502,15 @@ async function main(): Promise<number> {
       // --json wants one parseable object, so the stream is collected rather
       // than teed to the terminal as it arrives.
       const collected: string[] = [];
+      const effort = str(flags.effort);
+      const validEffort = effort && ['minimal', 'low', 'medium', 'high'].includes(effort) ? effort : undefined;
       await client.stream(
         {
           model: str(flags.model) ?? 'auto',
           messages: [{ role: 'user', content: prompt }],
           meridian: routingFlags(flags),
+          // Passed to reasoning models, dropped by the gateway for the rest.
+          ...(validEffort ? { reasoning_effort: validEffort } : {}),
         },
         (m) => {
           meta = { ...meta, ...m };

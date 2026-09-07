@@ -240,6 +240,12 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
           ? { type: 'json_schema', json_schema: { name: 'response', schema: req.responseFormat.schema, strict: true } }
           : { type: req.responseFormat.type };
     }
+    // The OpenAI dialect (and every provider that mirrors it — xAI, Groq's
+    // reasoning models, Gemini's OpenAI-compat surface) names the control
+    // `reasoning_effort`. The executor has already established that the target
+    // model reasons before this value arrives, so it is passed straight
+    // through. `extra` still wins, so a caller can override with a raw body.
+    if (req.reasoningEffort) body.reasoning_effort = req.reasoningEffort;
     if (req.extra) Object.assign(body, req.extra);
     return body;
   }

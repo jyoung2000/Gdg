@@ -603,6 +603,19 @@ export interface ToolDefinition {
   parameters: Record<string, unknown>;
 }
 
+/**
+ * How hard a reasoning-capable model should think before answering.
+ *
+ * These are Meridian's canonical levels; each adapter maps them onto whatever
+ * its provider actually accepts — OpenAI's `reasoning_effort`, Anthropic's
+ * extended-thinking token budget, and so on. A model without the `reasoning`
+ * capability never receives it: the value is dropped in the executor once the
+ * concrete model is known, so a chat model is never sent a parameter it would
+ * reject.
+ */
+export const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high'] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
 export interface CompletionRequest {
   model: string;
   messages: ChatMessage[];
@@ -613,6 +626,8 @@ export interface CompletionRequest {
   maxTokens?: number;
   stop?: string[];
   stream?: boolean;
+  /** How hard a reasoning model should think. Ignored by non-reasoning models. */
+  reasoningEffort?: ReasoningEffort;
   /** Provider-specific escape hatch, passed through verbatim. */
   extra?: Record<string, unknown>;
   signal?: AbortSignal;

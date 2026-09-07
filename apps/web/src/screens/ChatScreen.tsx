@@ -10,6 +10,7 @@ import {
   Panel,
   RoutingExplanation,
   SegmentedControl,
+  Select,
   Stack,
   StatusChip,
   IconMessageSquare,
@@ -61,6 +62,28 @@ export function ChatScreen(): React.JSX.Element {
    */
   const [agentMode, setAgentMode] = useState<'chat' | 'computer'>('chat');
   const [handover, setHandover] = useState<string | null>(null);
+  /**
+   * Reasoning effort. Unlike the agent mode, this is remembered: it is a
+   * harmless preference, and someone who wants their models to think hard
+   * usually wants that to stick. `off` sends nothing and leaves the provider's
+   * own default in place.
+   */
+  const [effort, setEffort] = useState<'off' | 'minimal' | 'low' | 'medium' | 'high'>(() => {
+    try {
+      const saved = localStorage.getItem('meridian.chat.effort');
+      return saved === 'minimal' || saved === 'low' || saved === 'medium' || saved === 'high' ? saved : 'off';
+    } catch {
+      return 'off';
+    }
+  });
+  const chooseEffort = useCallback((next: typeof effort): void => {
+    setEffort(next);
+    try {
+      localStorage.setItem('meridian.chat.effort', next);
+    } catch {
+      // A browser that refuses storage still gets a working control this session.
+    }
+  }, []);
   const abortRef = useRef<AbortController | null>(null);
   const seq = useRef(0);
   const toast = useStore((s) => s.toast);
@@ -100,7 +123,13 @@ export function ChatScreen(): React.JSX.Element {
     };
 
     await streamChat(
-      { messages: history, meridian: { mode: routingMode } },
+      {
+        messages: history,
+        meridian: { mode: routingMode },
+        // Sent only when chosen; the gateway drops it for models that do not
+        // reason, so a plain chat model is never handed a parameter it rejects.
+        ...(effort !== 'off' ? { reasoning_effort: effort } : {}),
+      },
       {
         onStart: (meta) => patch((m) => ({ ...m, model: meta.model, routing: meta.routing as RoutingReason })),
         onText: (delta) => patch((m) => ({ ...m, content: m.content + delta })),
@@ -113,7 +142,7 @@ export function ChatScreen(): React.JSX.Element {
 
     setRunning(false);
     abortRef.current = null;
-  }, [agentMode, messages, routingMode, running, value]);
+  }, [agentMode, effort, messages, routingMode, running, value]);
 
   const modes = vocabulary?.routingModes.filter((m) => m.primary) ?? [];
 
@@ -184,16 +213,33 @@ export function ChatScreen(): React.JSX.Element {
             onStop={() => abortRef.current?.abort()}
             placeholder="Ask anything…"
             leftSlot={
-              <SegmentedControl
-                label="What should handle this message"
-                size="sm"
-                value={agentMode}
-                onChange={(v) => setAgentMode(v)}
-                options={[
-                  { value: 'chat', label: 'Normal AI', icon: <IconSparkle /> },
-                  { value: 'computer', label: 'Computer agent', icon: <IconMonitor /> },
-                ]}
-              />
+              <Stack direction="row" gap={2} align="center">
+                <SegmentedControl
+                  label="What should handle this message"
+                  size="sm"
+                  value={agentMode}
+                  onChange={(v) => setAgentMode(v)}
+                  options={[
+                    { value: 'chat', label: 'Normal AI', icon: <IconSparkle /> },
+                    { value: 'computer', label: 'Computer agent', icon: <IconMonitor /> },
+                  ]}
+                />
+                {agentMode === 'chat' ? (
+                  <Select
+                    size="sm"
+                    aria-label="Reasoning effort — how hard a thinking model should work. Ignored by models that do not reason."
+                    title="Reasoning effort. Applies to reasoning-capable models; ignored by others."
+                    value={effort}
+                    onChange={(e) => chooseEffort(e.target.value as typeof effort)}
+                  >
+                    <option value="off">Effort: default</option>
+                    <option value="minimal">Effort: minimal</option>
+                    <option value="low">Effort: low</option>
+                    <option value="medium">Effort: medium</option>
+                    <option value="high">Effort: high</option>
+                  </Select>
+                ) : null}
+              </Stack>
             }
             rightSlot={
               <Stack direction="row" gap={2} align="center">

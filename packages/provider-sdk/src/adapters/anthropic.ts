@@ -12,11 +12,26 @@ import {
   type Pricing,
   type ProviderDescriptor,
   type StreamChunk,
+  type ReasoningEffort,
   type ToolCall,
   type Usage,
 } from '@meridian/shared';
 import type { AdapterCapabilities, AdapterContext, ProviderAdapter } from '../adapter.js';
 import { httpJson, httpRequest, sseLines } from '../http.js';
+
+/**
+ * Meridian's effort levels as Anthropic thinking budgets, in output tokens.
+ *
+ * 1024 is Anthropic's floor; the rest climb roughly geometrically so the
+ * levels feel distinct. These are the token budgets the model may spend
+ * thinking, separate from and additional to the answer.
+ */
+const THINKING_BUDGETS: Record<ReasoningEffort, number> = {
+  minimal: 1024,
+  low: 4000,
+  medium: 10_000,
+  high: 24_000,
+};
 
 interface AnthropicContentBlock {
   type: string;
@@ -146,8 +161,22 @@ export class AnthropicAdapter implements ProviderAdapter {
       stream,
     };
     if (system) body.system = system;
-    if (req.temperature !== undefined) body.temperature = req.temperature;
-    if (req.topP !== undefined) body.top_p = req.topP;
+
+    // Extended thinking is a token budget, not an enum, so Meridian's levels
+    // map onto budgets. The constraints are Anthropic's, not ours: the budget
+    // must be at least 1024, max_tokens must exceed it (thinking tokens count
+    // against the output ceiling, so headroom is added for the answer itself),
+    // and temperature/top_p must be left unset when thinking is on — the API
+    // rejects the request otherwise. That last rule is why the sampling params
+    // are guarded rather than always set.
+    const thinkingBudget = req.reasoningEffort ? THINKING_BUDGETS[req.reasoningEffort] : null;
+    if (thinkingBudget) {
+      body.thinking = { type: 'enabled', budget_tokens: thinkingBudget };
+      body.max_tokens = Math.max(Number(body.max_tokens) || 4096, thinkingBudget + 4096);
+    } else {
+      if (req.temperature !== undefined) body.temperature = req.temperature;
+      if (req.topP !== undefined) body.top_p = req.topP;
+    }
     if (req.stop?.length) body.stop_sequences = req.stop;
     if (req.tools?.length) {
       body.tools = req.tools.map((t) => ({

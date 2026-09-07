@@ -1,11 +1,13 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import {
   MeridianError,
+  REASONING_EFFORTS,
   isFree,
   type AIRequest,
   type ChatMessage,
   type ContentPart,
   type Modality,
+  type ReasoningEffort,
   type RoutingMode,
   type ToolDefinition,
 } from '@meridian/shared';
@@ -33,6 +35,7 @@ interface OAIChatBody {
   stop?: string | string[];
   stream?: boolean;
   response_format?: { type?: string; json_schema?: { schema?: Record<string, unknown> } };
+  reasoning_effort?: string;
   user?: string;
   /**
    * Meridian extensions. Namespaced so a stock OpenAI client is unaffected and
@@ -51,6 +54,8 @@ interface OAIChatBody {
     workspace_id?: string;
     /** Run under a saved AI profile: its skills and MCP grants apply. */
     profile_id?: string;
+    /** How hard a reasoning model should think: minimal | low | medium | high. */
+    reasoning_effort?: string;
   };
 }
 
@@ -123,6 +128,11 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
       maxTokens: body.max_completion_tokens ?? body.max_tokens,
       stop: typeof body.stop === 'string' ? [body.stop] : body.stop,
       responseFormat: toResponseFormat(body.response_format),
+      // Accepted both as OpenAI's own top-level field and under the meridian
+      // namespace, since a Meridian-aware client already sends its steering
+      // there. An unrecognised value is ignored rather than rejected — the
+      // effort control is an optimisation, not a gate.
+      reasoningEffort: toReasoningEffort(body.reasoning_effort ?? body.meridian?.reasoning_effort),
     };
 
     if (body.stream) {
@@ -453,6 +463,10 @@ export function toToolDefinitions(raw: OAIChatBody['tools']): ToolDefinition[] |
       description: t.function!.description ?? '',
       parameters: t.function!.parameters ?? { type: 'object', properties: {} },
     }));
+}
+
+function toReasoningEffort(raw: unknown): ReasoningEffort | undefined {
+  return typeof raw === 'string' && (REASONING_EFFORTS as readonly string[]).includes(raw) ? (raw as ReasoningEffort) : undefined;
 }
 
 function normaliseToolChoice(raw: unknown): 'auto' | 'none' | 'required' | { name: string } | undefined {
