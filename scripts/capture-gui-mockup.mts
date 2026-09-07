@@ -90,9 +90,11 @@ const sections = captured
   )
   .join('\n');
 
-const switcher = captured
-  .map((s, i) => `<button class="mock-tab${i === 2 ? ' is-active' : ''}" data-target="${s.id}">${s.label}</button>`)
-  .join('');
+// The mockup navigates through the app's own sidebar — the real menu — so a
+// label like "Version Control" resolves to the screen id it opens.
+const labelToId = JSON.stringify(
+  Object.fromEntries(captured.map((s) => [(SCREENS.find((x) => x.id === s.id)?.nav ?? s.label).toLowerCase(), s.id])),
+);
 
 const doc = `<!doctype html>
 <html lang="en" data-theme="${theme}">
@@ -105,8 +107,10 @@ const doc = `<!doctype html>
   editing the interface offline. It was captured from the real running client:
   the markup below is each screen's actual rendered DOM and the stylesheet is
   the app's own compiled CSS, inlined verbatim. Nothing here talks to a server —
-  buttons, inputs and links are inert. To change how the GUI looks, edit the
-  CSS in the first <style> block or the markup inside each <section>.
+  buttons, inputs and links are inert, EXCEPT the app's own left sidebar, which
+  is wired to switch between the captured screens so you can navigate exactly as
+  in the real app. There is no second, added menu. To change how the GUI looks,
+  edit the CSS in the first <style> block or the markup inside each <section>.
   Regenerate from the live app with scripts/capture-gui-mockup.mts.
 -->
 <style>
@@ -114,43 +118,37 @@ const doc = `<!doctype html>
 ${css}
 </style>
 <style>
-/* ---- Mockup chrome only: the banner and the screen switcher ---- */
-.mock-bar { position: sticky; top: 0; z-index: 99999; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-  padding: 8px 12px; background: #10131a; color: #e7ecf3; border-bottom: 1px solid rgba(255,255,255,.12);
-  font: 12px/1.4 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-.mock-bar strong { font-weight: 650; letter-spacing: .01em; }
-.mock-bar .mock-note { opacity: .6; }
-.mock-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-left: auto; }
-.mock-tab { appearance: none; border: 1px solid rgba(255,255,255,.16); background: transparent; color: inherit;
-  padding: 3px 9px; border-radius: 999px; font: inherit; cursor: pointer; }
-.mock-tab:hover { background: rgba(255,255,255,.08); }
-.mock-tab.is-active { background: #3d6dff; border-color: #3d6dff; color: #fff; }
-.mock-screen { display: block; }
+/* ---- Mockup framing only: one screen fills the viewport at a time. ---- */
+.mock-screen { display: block; height: 100vh; overflow: hidden; }
 .mock-screen[hidden] { display: none; }
-/* The captured app sets height on #root; give the viewport its own frame. */
-.mock-viewport { height: calc(100vh - 42px); overflow: hidden; }
-.mock-viewport > .mock-screen, .mock-viewport > .mock-screen > #root { height: 100%; }
+.mock-screen > #root { height: 100%; }
 </style>
 </head>
 <body>
-<div class="mock-bar">
-  <strong>Meridian GUI</strong>
-  <span class="mock-note">1:1 static mockup · real DOM + real CSS · offline &amp; inert · edit freely</span>
-  <nav class="mock-tabs">${switcher}</nav>
-</div>
-<div class="mock-viewport">
 ${sections}
-</div>
 <script>
-/* The only script in the file: a plain screen switcher, no framework. */
+/* The only script in the file: let the app's own sidebar switch screens, so
+   the mockup navigates through the real menu and shows no second one. */
 (function () {
-  var tabs = document.querySelectorAll('.mock-tab');
+  var LABELS = ${labelToId};
   var screens = document.querySelectorAll('.mock-screen');
   function show(id) {
+    if (!id) return;
     screens.forEach(function (s) { s.hidden = s.getAttribute('data-screen') !== id; });
-    tabs.forEach(function (t) { t.classList.toggle('is-active', t.getAttribute('data-target') === id); });
+    try { window.scrollTo(0, 0); } catch (e) {}
   }
-  tabs.forEach(function (t) { t.addEventListener('click', function () { show(t.getAttribute('data-target')); }); });
+  function labelOf(el) {
+    var t = (el.getAttribute('title') || el.textContent || '').trim().toLowerCase();
+    return t.replace(/\\s+/g, ' ');
+  }
+  // Every captured screen carries its own sidebar; wire them all so a click in
+  // whichever screen is visible moves to the next.
+  document.querySelectorAll('.mrd-sidebar-item').forEach(function (item) {
+    item.addEventListener('click', function (e) {
+      var id = LABELS[labelOf(item)];
+      if (id) { e.preventDefault(); e.stopPropagation(); show(id); }
+    });
+  });
 })();
 </script>
 </body>
