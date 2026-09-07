@@ -36,8 +36,13 @@ redistributed is the free-llm-api-hub dataset, which MIT permits; see
 
 ## 1. free-llm-api-hub — the real integration
 
-**Licence:** MIT (Copyright 2026 Paco Cartones). Data redistribution permitted
-with attribution.
+**Licence:** MIT (Copyright 2026 Paco Cartones). One LICENSE file, standard
+unmodified MIT text; `package.json` and `CITATION.cff` both declare MIT. There
+is no separate data licence — no CC-BY, no ODbL, no dual grant — so the MIT
+grant covers `data/providers.json` along with the code, and the repository's own
+README says so explicitly. Redistribution is permitted; the only obligation is
+retaining the copyright notice, which
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) reproduces in full.
 
 **What it is:** a curated, versioned, machine-readable dataset of providers with
 free tiers or trial credit, carrying the fine print catalogs normally omit —
@@ -125,8 +130,15 @@ fails fast instead of being retried against the same provider.
 
 ## 4. Codebuff / freebuff — partially present
 
-**Licence:** Apache-2.0. Not copied; Apache-2.0 obligations (NOTICE, stating
-changes) therefore do not arise.
+**Licence:** Apache-2.0, "Copyright 2025 Freebuff, Inc.", with a `NOTICE` file.
+Not copied, so the Apache-2.0 obligations (propagating NOTICE, stating changes)
+do not arise.
+
+Worth recording because it is easy to double-count: **the two repositories are
+byte-identical.** `CodebuffAI/freebuff` and `CodebuffAI/codebuff` are two
+remotes publishing the same public snapshot of one private monorepo (both at
+commit `f41e975`; `diff -rq` excluding `.git` returns nothing). They are one
+codebase, not two sources that happen to agree.
 
 **The concept worth having:** specialised agents with per-task model selection,
 and reviewing with a different model family from the one that implemented.
