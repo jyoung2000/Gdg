@@ -90,7 +90,6 @@ class Client {
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {
     return {
-      'content-type': 'application/json',
       ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {}),
       ...extra,
     };
@@ -102,7 +101,9 @@ class Client {
     try {
       res = await fetch(url, {
         method: init.method ?? 'GET',
-        headers: this.headers(),
+        // Only declare a JSON body when there actually is one: Fastify rejects a
+        // content-type of application/json with an empty body.
+        headers: init.body === undefined ? this.headers() : this.headers({ 'content-type': 'application/json' }),
         body: init.body === undefined ? undefined : JSON.stringify(init.body),
       });
     } catch (e) {
@@ -233,6 +234,13 @@ ${c.dim('COMMANDS')}
   compare <prompt>       Run one prompt across several models
   usage [--days N]       Show usage, cost and fallback statistics
   status                 Show gateway status
+  browse <url>           Open a URL in a real browser session and print the page
+  scrape <url>           Robots-aware scrape via the research engine
+  extract <url> --fields name:desc[,name:desc]  Structured extraction
+  mcp <list|catalog|connect|call|health> …      MCP control center
+  dockerdev <status|detect|verify> [path]       Docker dev orchestration
+  vc <status|branches|branch|switch|commit|push|pull|log> --workspace <id>
+                         Version control for a workspace (git; PRs via gh)
   configure              Set the gateway URL and API key
   help                   Show this help
 
@@ -632,6 +640,205 @@ async function main(): Promise<number> {
       out(c.dim(`  ${finished.providerId ?? ''} ${finished.modelId ?? ''} · ${formatCost(finished.cost)}`));
       out();
       return 0;
+    }
+
+    /* ---------------- browser & research ---------------- */
+    case 'browse': {
+      const url = positional[1];
+      if (!url) {
+        err('Usage: uag browse <url>');
+        return 1;
+      }
+      const { session } = await client.request<{ session: { id: string } }>('/api/browser/sessions', {
+        method: 'POST',
+        body: { task: `cli browse ${url}`, engine: str(flags.engine) ?? 'auto' },
+      });
+      try {
+        const { snapshot } = await client.request<{ snapshot: { url: string; title: string; text: string; elements: { ref: string; role: string; name: string }[] } }>(
+          `/api/browser/sessions/${session.id}/actions`,
+          { method: 'POST', body: { kind: 'navigate', url } },
+        );
+        if (json) {
+          out(JSON.stringify(snapshot, null, 2));
+        } else {
+          out(`\n  ${c.bold(snapshot.title)} ${c.dim(snapshot.url)}\n`);
+          out(snapshot.text.slice(0, 4000));
+          out(`\n${c.dim('ELEMENTS')}`);
+          for (const e of snapshot.elements.slice(0, 25)) out(`  ${c.cyan(e.ref)} [${e.role}] ${e.name}`);
+        }
+        return 0;
+      } finally {
+        await client.request(`/api/browser/sessions/${session.id}`, { method: 'DELETE' }).catch(() => undefined);
+      }
+    }
+
+    case 'scrape': {
+      const url = positional[1];
+      if (!url) {
+        err('Usage: uag scrape <url>');
+        return 1;
+      }
+      const result = await client.request<{ snapshot: { title: string; text: string }; fromCache: boolean; robots: string }>(
+        '/api/research/scrape',
+        { method: 'POST', body: { url, fresh: Boolean(flags.fresh) } },
+      );
+      if (json) out(JSON.stringify(result, null, 2));
+      else {
+        out(`\n  ${c.bold(result.snapshot.title)} ${c.dim(`robots:${result.robots}${result.fromCache ? ' · cached' : ''}`)}\n`);
+        out(result.snapshot.text.slice(0, 6000));
+      }
+      return 0;
+    }
+
+    case 'extract': {
+      const url = positional[1];
+      const fieldsFlag = str(flags.fields);
+      if (!url || !fieldsFlag) {
+        err('Usage: uag extract <url> --fields "title:page title,price:listed price" [--objective "..."] [--no-llm]');
+        return 1;
+      }
+      const fields = fieldsFlag.split(',').map((pair) => {
+        const [name, ...rest] = pair.split(':');
+        return { name: name.trim(), description: rest.join(':').trim() || name.trim() };
+      });
+      const { record } = await client.request<{ record: Record<string, unknown> }>('/api/research/extract', {
+        method: 'POST',
+        body: { url, fields, objective: str(flags.objective), noLlm: Boolean(flags['no-llm']) },
+      });
+      out(JSON.stringify(record, null, 2));
+      return 0;
+    }
+
+    /* ---------------- MCP ---------------- */
+    case 'mcp': {
+      const sub = positional[1] ?? 'list';
+      if (sub === 'list') {
+        const { servers } = await client.request<{ servers: { id: string; name: string; transport: string; status: string; tools: number; enabled: boolean }[] }>('/api/mcp/servers');
+        if (json) out(JSON.stringify(servers, null, 2));
+        else if (!servers.length) out('  No MCP servers configured. Try: uag mcp catalog');
+        else for (const s of servers) out(`  ${c.bold(s.name.padEnd(24))} ${s.transport.padEnd(6)} ${s.status.padEnd(9)} ${String(s.tools)} tool(s)${s.enabled ? '' : c.dim(' (disabled)')}  ${c.dim(s.id)}`);
+        return 0;
+      }
+      if (sub === 'catalog') {
+        const q = positional[2] ? `?q=${encodeURIComponent(positional[2])}` : '';
+        const { curated, registry, registryError } = await client.request<{ curated: { id: string; title: string; description: string }[]; registry: { id: string; title: string; description: string }[]; registryError: string | null }>(`/api/mcp/catalog${q}`);
+        if (json) out(JSON.stringify({ curated, registry, registryError }, null, 2));
+        else {
+          out(`\n${c.dim('CURATED')}`);
+          for (const e of curated) out(`  ${c.bold(e.title.padEnd(28))} ${c.dim(e.id)}\n    ${e.description.slice(0, 100)}`);
+          out(`\n${c.dim('OFFICIAL REGISTRY')}${registryError ? c.dim(` (unreachable: ${registryError.slice(0, 60)})`) : ''}`);
+          for (const e of registry.slice(0, 10)) out(`  ${e.title.slice(0, 40).padEnd(42)} ${c.dim(e.id)}`);
+        }
+        return 0;
+      }
+      if (sub === 'connect' || sub === 'health' || sub === 'disconnect') {
+        const id = positional[2];
+        if (!id) {
+          err(`Usage: uag mcp ${sub} <serverId>`);
+          return 1;
+        }
+        const result =
+          sub === 'health'
+            ? await client.request(`/api/mcp/servers/${id}/health`)
+            : await client.request(`/api/mcp/servers/${id}/${sub}`, { method: 'POST' });
+        out(JSON.stringify(result, null, 2));
+        return 0;
+      }
+      if (sub === 'call') {
+        const id = positional[2];
+        const tool = positional[3];
+        if (!id || !tool) {
+          err('Usage: uag mcp call <serverId> <tool> [--args \'{"k":"v"}\']');
+          return 1;
+        }
+        const args = str(flags.args) ? (JSON.parse(str(flags.args)!) as Record<string, unknown>) : {};
+        const result = await client.request(`/api/mcp/servers/${id}/call`, { method: 'POST', body: { tool, args } });
+        out(JSON.stringify(result, null, 2));
+        return 0;
+      }
+      err('Usage: uag mcp <list|catalog|connect|disconnect|health|call>');
+      return 1;
+    }
+
+    /* ---------------- docker dev ---------------- */
+    case 'dockerdev': {
+      const sub = positional[1] ?? 'status';
+      if (sub === 'status') {
+        out(JSON.stringify(await client.request('/api/docker/status'), null, 2));
+        return 0;
+      }
+      const path = positional[2] ?? process.cwd();
+      if (sub === 'detect') {
+        out(JSON.stringify(await client.request('/api/docker/detect', { method: 'POST', body: { path } }), null, 2));
+        return 0;
+      }
+      if (sub === 'verify') {
+        const { jobId } = await client.request<{ jobId: string }>('/api/docker/verify', {
+          method: 'POST',
+          body: { path, browserCheck: str(flags.expect) ? { expectText: str(flags.expect) } : undefined },
+        });
+        out(`  verify job ${jobId} started`);
+        for (;;) {
+          await new Promise((r) => setTimeout(r, 3000));
+          const { job } = await client.request<{ job: { status: string; log: string[]; result: unknown } }>(`/api/docker/verify/${jobId}`);
+          if (job.status !== 'running') {
+            out(JSON.stringify(job, null, 2));
+            return job.status === 'done' ? 0 : 1;
+          }
+          out(c.dim(`  … ${job.log[job.log.length - 1] ?? 'working'}`));
+        }
+      }
+      err('Usage: uag dockerdev <status|detect|verify> [path]');
+      return 1;
+    }
+
+    /* ---------------- version control ---------------- */
+    case 'vc': {
+      const sub = positional[1] ?? 'status';
+      const workspaceId = str(flags.workspace) ?? config.workspaceId;
+      if (!workspaceId) {
+        err('Set a workspace: uag vc <cmd> --workspace <id>');
+        return 1;
+      }
+      const base = `/api/git/${workspaceId}`;
+      switch (sub) {
+        case 'status':
+          out(JSON.stringify(await client.request(`${base}/status`), null, 2));
+          return 0;
+        case 'branches':
+          out(JSON.stringify(await client.request(`${base}/branches`), null, 2));
+          return 0;
+        case 'branch': {
+          const name = positional[2];
+          if (!name) {
+            err('Usage: uag vc branch <name>');
+            return 1;
+          }
+          out(JSON.stringify(await client.request(`${base}/branches`, { method: 'POST', body: { name, from: str(flags.from) } }), null, 2));
+          return 0;
+        }
+        case 'switch':
+          out(JSON.stringify(await client.request(`${base}/switch`, { method: 'POST', body: { name: positional[2] } }), null, 2));
+          return 0;
+        case 'commit':
+          out(JSON.stringify(await client.request(`${base}/commit`, { method: 'POST', body: { message: positional.slice(2).join(' ') } }), null, 2));
+          return 0;
+        case 'push':
+          out(JSON.stringify(await client.request(`${base}/push`, { method: 'POST', body: { setUpstream: Boolean(flags.upstream) } }), null, 2));
+          return 0;
+        case 'pull':
+          out(JSON.stringify(await client.request(`${base}/pull`, { method: 'POST', body: {} }), null, 2));
+          return 0;
+        case 'log':
+          out(JSON.stringify(await client.request(`${base}/log`), null, 2));
+          return 0;
+        case 'pr':
+          out(JSON.stringify(await client.request(`${base}/pr`, { method: 'POST', body: { title: positional.slice(2).join(' '), draft: Boolean(flags.draft) } }), null, 2));
+          return 0;
+        default:
+          err('Usage: uag vc <status|branches|branch|switch|commit|push|pull|log|pr>');
+          return 1;
+      }
     }
 
     /* ---------------- benchmark ---------------- */

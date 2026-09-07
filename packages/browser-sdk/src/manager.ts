@@ -537,7 +537,12 @@ export class BrowserManager {
       if (controller.signal.aborted) {
         throw new MeridianError('cancelled', `Browser operation cancelled or timed out after ${budget}ms`);
       }
-      throw e;
+      // A page that will not load, a dead socket, a bad selector: these are
+      // conditions the caller should see as a clean typed error, not a 500.
+      // MeridianErrors from deeper down (a refused ref, an unsupported engine)
+      // pass through unchanged.
+      if (e instanceof MeridianError) throw e;
+      throw new MeridianError('provider_unavailable', `Browser operation failed: ${e instanceof Error ? e.message.split('\n')[0] : String(e)}`);
     } finally {
       clearTimeout(timer);
       managed.currentOp = null;
