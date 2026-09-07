@@ -97,7 +97,11 @@ export class DiscoveryScheduler {
       };
     }
     if (now < s.nextEligibleAt) {
-      return { allowed: false, reason: 'backing off after a recent failure', waitMs: s.nextEligibleAt - now };
+      // A success also sets nextEligibleAt to pace the next query, so the
+      // failure wording is reserved for providers actually failing — a healthy
+      // provider paced after a good listing was being reported as broken.
+      const reason = s.consecutiveFailures > 0 ? 'backing off after a recent failure' : 'queried recently';
+      return { allowed: false, reason, waitMs: s.nextEligibleAt - now };
     }
     if (s.lastAttemptAt != null && now - s.lastAttemptAt < this.minIntervalMs) {
       return { allowed: false, reason: 'queried recently', waitMs: this.minIntervalMs - (now - s.lastAttemptAt) };

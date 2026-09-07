@@ -125,6 +125,27 @@ describe('E2E: gateway against a real local inference server', () => {
     assert.ok(chat.capabilities.includes('tools'), 'a local OpenAI server serves tool calls');
   });
 
+  it('keeps listing-derived capabilities across a paced discovery pass', async () => {
+    // A discovery pass re-probes local endpoints every time, but the scheduler
+    // declines to re-query a provider listed minutes ago. The probe sees names,
+    // not capabilities — so a pass whose listing is skipped must not downgrade
+    // what the listing already learned. Reseeding `['text','streaming']` over a
+    // record that carried `tools` made every local model unroutable for agent
+    // work within minutes of boot, while this suite — one pass, then assert —
+    // stayed green.
+    const res = await json<{ providers: number; skipped: string[] }>('/api/providers/discover', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    assert.ok(
+      res.skipped.some((s) => s.startsWith(`${simProviderId()}:`)),
+      `the pass should have skipped the sim's paced listing, got ${JSON.stringify(res.skipped)}`,
+    );
+    const chat = app.models.all().find((m) => m.providerModelId === 'meridian-sim-chat');
+    assert.ok(chat, 'the sim chat model must still be registered');
+    assert.ok(chat.capabilities.includes('tools'), 'a reseed without a listing must not drop tools');
+  });
+
   /* ---------------- OpenAI surface ---------------- */
 
   it('completes a chat through the OpenAI surface and reports real usage', async () => {

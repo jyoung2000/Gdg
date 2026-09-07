@@ -17,6 +17,7 @@ export type ScreenId =
   | 'workspace'
   | 'chat'
   | 'projects'
+  | 'director'
   | 'discover'
   | 'tasks'
   | 'agents'
@@ -139,7 +140,10 @@ interface State {
 
   refreshTasks: () => Promise<void>;
   openTask: (id: string) => Promise<void>;
-  runTask: (request: string, opts?: { allowPaid?: boolean; budget?: number }) => Promise<string | null>;
+  runTask: (
+    request: string,
+    opts?: { allowPaid?: boolean; budget?: number; pipeline?: 'auto' | 'research' | 'debug' | 'tests' | 'code' },
+  ) => Promise<string | null>;
   cancelTask: (id: string) => Promise<void>;
 
   refreshModels: (q?: { search?: string; free?: boolean }) => Promise<void>;

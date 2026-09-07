@@ -216,25 +216,49 @@ export class Discovery {
       this.deps.providers.setCredentialed(id, true);
       this.deps.health.recordProbe(id, true, ep.latencyMs);
 
-      // Register the models the probe already reported rather than issuing a
-      // second listing call for information we have.
-      const models: ModelDescriptor[] = ep.models.map((name) =>
-        enrich({
-          id: modelKey(id, name),
-          providerId: id,
-          providerModelId: name,
-          displayName: name,
-          family: null,
-          modalities: ['text'],
-          capabilities: ['text', 'streaming'] as Capability[],
-          contextLength: null,
-          maxOutputTokens: null,
-          pricing: LOCAL_PRICING,
-          discovered: true,
-          deprecated: false,
-          tags: ['local'],
-          updatedAt: Date.now(),
-        }),
+      // The probe is authoritative about *which* models the server serves and
+      // nothing else — it sees names, not capabilities. The adapter's own
+      // listing pass (discoverProvider, below) refines these records, but the
+      // scheduler paces that pass, so on any run where it is skipped the probe
+      // must not overwrite what the listing already learned. Reseeding
+      // `['text','streaming']` over a record that carried `tools` once made
+      // every local model unroutable for agent work within minutes of boot.
+      const previous = new Map(
+        this.deps.models
+          .all()
+          .filter((m) => m.providerId === id)
+          .map((m) => [m.providerModelId, m]),
+      );
+
+      // A name the registry has never seen gets a seed mirroring the adapter's
+      // declared surface, exactly as the listing's default mapper would — the
+      // two passes must agree, or whichever ran last would win.
+      const surface = this.deps.providers.get(id)?.capabilities();
+      const seedCapabilities: Capability[] = [
+        'text',
+        ...(surface?.streaming ? (['streaming'] as const) : []),
+        ...(surface?.tools ? (['tools'] as const) : []),
+      ];
+
+      const models: ModelDescriptor[] = ep.models.map(
+        (name) =>
+          previous.get(name) ??
+          enrich({
+            id: modelKey(id, name),
+            providerId: id,
+            providerModelId: name,
+            displayName: name,
+            family: null,
+            modalities: ['text'],
+            capabilities: seedCapabilities,
+            contextLength: null,
+            maxOutputTokens: null,
+            pricing: LOCAL_PRICING,
+            discovered: true,
+            deprecated: false,
+            tags: ['local'],
+            updatedAt: Date.now(),
+          }),
       );
       const { added, removed } = this.deps.models.replaceProviderModels(id, models);
       if (removed.length) this.deps.store.deleteModels(removed);

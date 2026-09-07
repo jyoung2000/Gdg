@@ -102,12 +102,22 @@ describe('Gateway integration', () => {
   it('lists models in the OpenAI shape', async () => {
     const body = (await server.inject({ method: 'GET', url: '/v1/models' })).json() as {
       object: string;
-      data: { id: string; object: string; meridian: { free: boolean } }[];
+      data: { id: string; object: string; meridian: { free?: boolean; alias?: boolean } }[];
     };
     assert.equal(body.object, 'list');
     assert.ok(body.data.length > 0);
     assert.equal(body.data[0].object, 'model');
-    assert.equal(body.data[0].meridian.free, true, 'local models are free');
+
+    // Aliases lead the listing so `meridian/auto` is discoverable, and are
+    // marked as such. An alias carries no `free` claim: what it costs depends
+    // on where it routes, and `meridian/auto` may legitimately pick a paid
+    // route when the operator allows paying.
+    assert.equal(body.data[0].meridian.alias, true, 'aliases are listed first and marked');
+    assert.ok(body.data.some((m) => m.id === 'meridian/auto'));
+
+    const concrete = body.data.find((m) => !m.meridian.alias);
+    assert.ok(concrete, 'real models are listed after the aliases');
+    assert.equal(concrete.meridian.free, true, 'local models are free');
   });
 
   it('completes a chat with no model specified, choosing one itself', async () => {

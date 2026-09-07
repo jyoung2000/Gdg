@@ -42,6 +42,7 @@ import {
   IconSettings,
   IconSidebar,
   IconSliders,
+  IconSparkle,
   IconTerminal,
 } from '@meridian/ui';
 import { api } from '../lib/api.js';
@@ -56,6 +57,7 @@ import { WorkspaceScreen } from '../screens/WorkspaceScreen.js';
 import { ChatScreen } from '../screens/ChatScreen.js';
 import { ProjectsScreen } from '../screens/ProjectsScreen.js';
 import { DiscoverScreen } from '../screens/DiscoverScreen.js';
+import { DirectorScreen } from '../screens/DirectorScreen.js';
 import { TasksScreen } from '../screens/TasksScreen.js';
 import { AgentsScreen } from '../screens/AgentsScreen.js';
 import { ModelsScreen } from '../screens/ModelsScreen.js';
@@ -88,6 +90,7 @@ const NAV: { id: ScreenId; label: string; icon: React.JSX.Element; section: 'wor
   { id: 'workspace', label: 'Workspace', icon: <IconFolder />, section: 'work' },
   { id: 'chat', label: 'Chat', icon: <IconMessageSquare />, section: 'work' },
   { id: 'projects', label: 'Projects', icon: <IconFolderOpen />, section: 'work' },
+  { id: 'director', label: 'Director', icon: <IconSparkle />, section: 'work' },
   { id: 'tasks', label: 'Tasks', icon: <IconActivity />, section: 'work' },
   { id: 'agents', label: 'Agents', icon: <IconRobot />, section: 'work' },
   { id: 'browser', label: 'Browser', icon: <IconGlobe />, section: 'work' },
@@ -111,6 +114,7 @@ const SCREENS: Record<ScreenId, () => React.JSX.Element> = {
   workspace: WorkspaceScreen,
   chat: ChatScreen,
   projects: ProjectsScreen,
+  director: DirectorScreen,
   tasks: TasksScreen,
   agents: AgentsScreen,
   browser: BrowserScreen,

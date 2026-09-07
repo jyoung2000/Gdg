@@ -14,7 +14,7 @@ const { chromium } = pkg;
 
 const root = process.cwd();
 const mockup = join(root, 'docs/mockup/meridian-gui-mockup.html');
-const TARGETS = ['chat', 'projects', 'discover', 'computer', 'models', 'settings'];
+const TARGETS = ['chat', 'projects', 'director', 'discover', 'computer', 'models', 'settings'];
 
 function chromiumPath() {
   for (const c of [

@@ -32,7 +32,7 @@ import { startSimServer, type SimServer } from '../e2e/helpers/sim-server.js';
  * first paint should not be a user.
  */
 const SCREENS = [
-  'home', 'workspace', 'chat', 'projects', 'tasks', 'agents', 'browser', 'computer',
+  'home', 'workspace', 'chat', 'projects', 'director', 'tasks', 'agents', 'browser', 'computer',
   'versioncontrol', 'generations', 'discover', 'ai', 'skills', 'models', 'providers',
   'pools', 'mcp', 'devops', 'usage', 'settings',
 ] as const;

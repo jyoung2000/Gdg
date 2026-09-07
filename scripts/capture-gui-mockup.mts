@@ -23,6 +23,7 @@ const SCREENS: { id: string; label: string; nav?: string }[] = [
   { id: 'workspace', label: 'Workspace' },
   { id: 'chat', label: 'Chat' },
   { id: 'projects', label: 'Projects' },
+  { id: 'director', label: 'Director' },
   { id: 'tasks', label: 'Tasks' },
   { id: 'agents', label: 'Agents' },
   { id: 'browser', label: 'Browser' },
