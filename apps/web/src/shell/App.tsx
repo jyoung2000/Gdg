@@ -18,9 +18,13 @@ import {
   type Command,
   IconActivity,
   IconBarChart,
+  IconBolt,
+  IconBox,
   IconCommand,
   IconCpu,
   IconFolder,
+  IconGitBranch,
+  IconGlobe,
   IconHome,
   IconImage,
   IconLayers,
@@ -37,6 +41,7 @@ import {
 } from '@meridian/ui';
 import { api } from '../lib/api.js';
 import { BREAKPOINT, useMediaQuery } from '../lib/media.js';
+import { formatCost } from '@meridian/shared';
 import { useStore, type ScreenId } from '../lib/store.js';
 import { Toasts } from './Toasts.js';
 import { Inspector } from './Inspector.js';
@@ -52,6 +57,10 @@ import { PoolsScreen } from '../screens/PoolsScreen.js';
 import { GenerationsScreen } from '../screens/GenerationsScreen.js';
 import { UsageScreen } from '../screens/UsageScreen.js';
 import { SettingsScreen } from '../screens/SettingsScreen.js';
+import { BrowserScreen } from '../screens/BrowserScreen.js';
+import { VersionControlScreen } from '../screens/VersionControlScreen.js';
+import { McpScreen } from '../screens/McpScreen.js';
+import { DevOpsScreen } from '../screens/DevOpsScreen.js';
 
 /** The identity mark: a meridian line crossing a circle. */
 function Mark({ className }: { className?: string }): React.JSX.Element {
@@ -70,10 +79,14 @@ const NAV: { id: ScreenId; label: string; icon: React.JSX.Element; section: 'wor
   { id: 'chat', label: 'Chat', icon: <IconMessageSquare />, section: 'work' },
   { id: 'tasks', label: 'Tasks', icon: <IconActivity />, section: 'work' },
   { id: 'agents', label: 'Agents', icon: <IconRobot />, section: 'work' },
+  { id: 'browser', label: 'Browser', icon: <IconGlobe />, section: 'work' },
+  { id: 'versioncontrol', label: 'Version Control', icon: <IconGitBranch />, section: 'work' },
   { id: 'generations', label: 'Generations', icon: <IconImage />, section: 'work' },
   { id: 'models', label: 'Models', icon: <IconCpu />, section: 'infrastructure' },
   { id: 'providers', label: 'Providers', icon: <IconServer />, section: 'infrastructure' },
   { id: 'pools', label: 'Pools', icon: <IconLayers />, section: 'infrastructure' },
+  { id: 'mcp', label: 'MCP', icon: <IconBolt />, section: 'infrastructure' },
+  { id: 'devops', label: 'DevOps', icon: <IconBox />, section: 'infrastructure' },
   { id: 'usage', label: 'Usage', icon: <IconBarChart />, section: 'infrastructure' },
   { id: 'settings', label: 'Settings', icon: <IconSettings />, section: 'infrastructure' },
 ];
@@ -84,9 +97,13 @@ const SCREENS: Record<ScreenId, () => React.JSX.Element> = {
   chat: ChatScreen,
   tasks: TasksScreen,
   agents: AgentsScreen,
+  browser: BrowserScreen,
+  versioncontrol: VersionControlScreen,
   models: ModelsScreen,
   providers: ProvidersScreen,
   pools: PoolsScreen,
+  mcp: McpScreen,
+  devops: DevOpsScreen,
   generations: GenerationsScreen,
   usage: UsageScreen,
   settings: SettingsScreen,
@@ -337,6 +354,7 @@ function Shell(): React.JSX.Element {
         <div className="mrd-spacer" />
 
         <ToolbarGroup className="app__toolbar-actions">
+          <UsageMeter onOpen={() => setScreen('usage')} />
           {runningTasks.length > 0 && (
             <StatusChip status="busy" label={`${runningTasks.length} running`} size="sm" />
           )}
@@ -452,4 +470,90 @@ function privacyLabel(mode: string): string {
     default:
       return 'Any provider';
   }
+}
+
+/**
+ * The header usage meter.
+ *
+ * Answers three questions the user asked to see at a glance: what did today
+ * cost, which model and provider served the last request, and how close is the
+ * current model's pool to its daily limit. Every number is live — cost and
+ * request counts come from real usage records, pool budgets from the pools
+ * themselves — so nothing here is an estimate.
+ */
+function UsageMeter({ onOpen }: { onOpen: () => void }): React.JSX.Element {
+  const usage = useStore((s) => s.liveUsage);
+  const pools = useStore((s) => s.pools);
+  const models = useStore((s) => s.models);
+  const providers = useStore((s) => s.providers);
+  const refreshPools = useStore((s) => s.refreshPools);
+
+  useEffect(() => {
+    void refreshPools();
+  }, [refreshPools]);
+
+  const lastModel = usage.lastModelId ? models.find((m) => m.id === usage.lastModelId) : null;
+  const lastProvider = usage.lastProviderId ? providers.find((p) => p.id === usage.lastProviderId) : null;
+
+  // The representative "session limit" is the primary pool's daily budget: the
+  // cap the router actually enforces on spend. A pool with no budget is
+  // genuinely unlimited, and the meter says so rather than inventing a cap.
+  const pool = pools[0] ?? null;
+  const budget = pool?.budgetLimit ?? null;
+  const spent = pool?.usage.spentToday ?? 0;
+  const pct = budget && budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : null;
+
+  const providerHealth = lastProvider?.health?.state ?? null;
+
+  const tip = (
+    <div style={{ display: 'grid', gap: 6, minWidth: 220 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span>Today</span>
+        <strong>{formatCost(usage.cost)}</strong>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span>Requests</span>
+        <span>{usage.requests}{usage.failures > 0 ? ` (${usage.failures} failed)` : ''}</span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span>Tokens</span>
+        <span>{usage.tokens.toLocaleString()}</span>
+      </div>
+      <hr style={{ border: 0, borderTop: '1px solid var(--color-border)', margin: '2px 0' }} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span>Last model</span>
+        <span className="mrd-truncate" style={{ maxWidth: 140 }}>{usage.lastModelId ?? '—'}</span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span>Provider</span>
+        <span>
+          {lastProvider?.name ?? usage.lastProviderId ?? '—'}
+          {providerHealth ? ` · ${providerHealth}` : ''}
+        </span>
+      </div>
+      {pool && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+          <span>Pool limit ({pool.name})</span>
+          <span>{budget ? `${formatCost(spent)} / ${formatCost(budget)}${pct !== null ? ` (${pct}%)` : ''}` : 'no daily cap'}</span>
+        </div>
+      )}
+      <span className="mrd-caption mrd-secondary">Open Usage for the full breakdown</span>
+    </div>
+  );
+
+  const label = usage.requests > 0 ? formatCost(usage.cost) : 'No spend';
+  const status = pct !== null && pct >= 90 ? 'degraded' : usage.failures > 0 ? 'unknown' : 'ready';
+
+  return (
+    <Tooltip content={tip}>
+      <button className="mrd-linklike" onClick={onOpen} aria-label="Usage and limits" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <StatusChip status={status} size="sm" label={label} />
+        {pct !== null && (
+          <span aria-hidden style={{ width: 40, height: 6, borderRadius: 3, background: 'var(--color-surface-3, rgba(127,127,127,0.25))', overflow: 'hidden', display: 'inline-block' }}>
+            <span style={{ display: 'block', height: '100%', width: `${pct}%`, background: pct >= 90 ? 'var(--color-danger)' : 'var(--color-accent)' }} />
+          </span>
+        )}
+      </button>
+    </Tooltip>
+  );
 }

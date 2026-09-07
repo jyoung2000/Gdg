@@ -263,7 +263,244 @@ export const api = {
 
   /* Usage */
   usage: (days = 30) => get<{ since: number; days: number; summary: UsageSummary; recent: UsageRecord[] }>(`/api/usage?days=${days}`),
+
+  /* Browser */
+  browserEngines: () => get<{ engines: BrowserEngineView[]; configured: { lightpandaCdp: string | null; realBrowserCdp: string | null } }>('/api/browser/engines'),
+  browserSessions: () => get<{ sessions: BrowserSessionView[] }>('/api/browser/sessions'),
+  browserSession: (id: string) => get<{ session: BrowserSessionView; log: BrowserLogEntry[] }>(`/api/browser/sessions/${id}`),
+  createBrowserSession: (body: { engine?: string; task?: string; profile?: string }) => post<{ session: BrowserSessionView }>('/api/browser/sessions', body),
+  closeBrowserSession: (id: string, saveProfile = false) => del<{ closed: boolean }>(`/api/browser/sessions/${id}?saveProfile=${saveProfile}`),
+  cancelBrowserSession: (id: string) => post<{ cancelled: boolean }>(`/api/browser/sessions/${id}/cancel`),
+  browserAction: (id: string, body: Record<string, unknown>) => post<{ snapshot?: PageSnapshotView; result?: string }>(`/api/browser/sessions/${id}/actions`, body),
+  browserScreenshot: (id: string) => get<{ data: string; width: number; height: number }>(`/api/browser/sessions/${id}/screenshot`),
+  browserProfiles: () => get<{ profiles: { name: string; cookies: number; origins: number; createdAt: number; lastUsedAt: number | null }[] }>('/api/browser/profiles'),
+
+  /* Research */
+  scrape: (body: { url: string; fresh?: boolean; engine?: string }) => post<{ snapshot: PageSnapshotView; fromCache: boolean; robots: string }>('/api/research/scrape', body),
+  extract: (body: { url: string; objective?: string; fields: { name: string; description: string }[]; noLlm?: boolean }) => post<{ record: ResearchRecordView }>('/api/research/extract', body),
+  researchRecords: (limit = 50) => get<{ records: ResearchRecordView[] }>(`/api/research/records?limit=${limit}`),
+
+  /* MCP */
+  mcpCatalog: (q = '') => get<{ curated: McpCatalogEntry[]; registry: McpCatalogEntry[]; registryError: string | null }>(`/api/mcp/catalog${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  mcpServers: () => get<{ servers: McpServerView[] }>('/api/mcp/servers'),
+  addMcpServer: (body: Record<string, unknown>) => post<{ server: McpServerView; warnings: McpWarning[] }>('/api/mcp/servers', body),
+  updateMcpServer: (id: string, body: Record<string, unknown>) => patch<{ server: McpServerView }>(`/api/mcp/servers/${id}`, body),
+  deleteMcpServer: (id: string) => del<{ deleted: boolean }>(`/api/mcp/servers/${id}`),
+  connectMcp: (id: string) => post<{ tools: McpToolView[]; health: McpHealthView }>(`/api/mcp/servers/${id}/connect`),
+  disconnectMcp: (id: string) => post<{ disconnected: boolean }>(`/api/mcp/servers/${id}/disconnect`),
+  mcpHealth: (id: string) => get<{ health: McpHealthView }>(`/api/mcp/servers/${id}/health`),
+  mcpTools: (id: string) => get<{ tools: McpToolView[] }>(`/api/mcp/servers/${id}/tools`),
+  revealMcpSecret: (id: string, name: string) => post<{ name: string; value: string }>(`/api/mcp/servers/${id}/reveal`, { name }),
+  mcpInstallPlan: (body: { catalogId: string; planIndex?: number; q?: string }) => post<McpInstallPlan>('/api/mcp/install/plan', body),
+  mcpInstallConfirm: (body: Record<string, unknown>) => post<{ server: McpServerView; warnings: McpWarning[] }>('/api/mcp/install/confirm', body),
+  callMcpTool: (id: string, body: { tool: string; args?: Record<string, unknown> }) => post<{ content: unknown; isError: boolean; latencyMs: number }>(`/api/mcp/servers/${id}/call`, body),
+  mcpPolicies: () => get<{ policies: McpPolicyView[] }>('/api/mcp/policies'),
+  saveMcpPolicy: (body: Record<string, unknown>) => post<{ policy: McpPolicyView }>('/api/mcp/policies', body),
+  deleteMcpPolicy: (id: string) => del<{ deleted: boolean }>(`/api/mcp/policies/${id}`),
+  mcpPresets: () => get<{ presets: { id: string; name: string; description: string; serverIds: string[] }[] }>('/api/mcp/presets'),
+  saveMcpPreset: (body: Record<string, unknown>) => post<{ preset: unknown }>('/api/mcp/presets', body),
+  applyMcpPreset: (id: string) => post<{ applied: boolean }>(`/api/mcp/presets/${id}/apply`),
+
+  /* Docker */
+  dockerStatus: () => get<{ docker: { available: boolean; version: string | null; compose: boolean; detail: string | null } }>('/api/docker/status'),
+  dockerDetect: (path: string) => post<{ project: DockerProjectView; isolationName: string }>('/api/docker/detect', { path }),
+  dockerPs: (path: string) => post<{ containers: DockerContainerView[] }>('/api/docker/ps', { path }),
+  dockerLogs: (path: string, service?: string) => post<{ logs: string }>('/api/docker/logs', { path, service }),
+  dockerVerify: (body: { path: string; browserCheck?: { expectText?: string } | false; testCommand?: string[] }) => post<{ jobId: string }>('/api/docker/verify', body),
+  dockerVerifyJob: (id: string) => get<{ job: DockerVerifyJobView }>(`/api/docker/verify/${id}`),
+  dockerVerifyJobs: () => get<{ jobs: { id: string; path: string; status: string; startedAt: number; finishedAt: number | null }[] }>('/api/docker/verify'),
+
+  /* Git / version control */
+  ghInfo: () => get<{ gh: { installed: boolean; version: string | null; authenticated: boolean; detail: string | null } }>('/api/git/gh'),
+  gitStatus: (workspaceId: string) => get<{ status: GitStatusView }>(`/api/git/${workspaceId}/status`),
+  gitBranches: (workspaceId: string) => get<{ branches: { current: string | null; local: string[]; remote: string[] } }>(`/api/git/${workspaceId}/branches`),
+  gitCreateBranch: (workspaceId: string, name: string, from?: string) => post<{ created: string }>(`/api/git/${workspaceId}/branches`, { name, from }),
+  gitSwitch: (workspaceId: string, name: string) => post<{ switched: string }>(`/api/git/${workspaceId}/switch`, { name }),
+  gitCommit: (workspaceId: string, message: string) => post<{ committed: boolean; output: string }>(`/api/git/${workspaceId}/commit`, { message, addAll: true }),
+  gitFetch: (workspaceId: string) => post<{ ok: boolean; output: string }>(`/api/git/${workspaceId}/fetch`),
+  gitPull: (workspaceId: string) => post<{ ok: boolean; output: string }>(`/api/git/${workspaceId}/pull`),
+  gitPush: (workspaceId: string, setUpstream = false) => post<{ ok: boolean; output: string }>(`/api/git/${workspaceId}/push`, { setUpstream }),
+  gitLog: (workspaceId: string, limit = 30) => get<{ commits: { hash: string; subject: string; author: string; at: string }[] }>(`/api/git/${workspaceId}/log?limit=${limit}`),
+  gitCreatePr: (workspaceId: string, body: { title: string; body?: string; base?: string; draft?: boolean }) => post<{ url: string | null }>(`/api/git/${workspaceId}/pr`, body),
 };
+
+/* ------------------------------------------------------------------ */
+/* Control-plane view types                                           */
+/* ------------------------------------------------------------------ */
+
+export interface BrowserEngineView {
+  id: string;
+  available: boolean;
+  detail: string | null;
+  note: string;
+}
+export interface BrowserSessionView {
+  id: string;
+  engine: string;
+  profile: string;
+  status: string;
+  createdAt: number;
+  lastActivityAt: number;
+  url: string | null;
+  title: string | null;
+  task: string | null;
+  idleTimeoutMs: number;
+  pages: number;
+  activePage: number;
+}
+export interface BrowserLogEntry {
+  at: number;
+  kind: string;
+  message: string;
+}
+export interface SnapshotElementView {
+  ref: string;
+  role: string;
+  name: string;
+  value?: string;
+  enabled: boolean;
+  href?: string;
+}
+export interface PageSnapshotView {
+  url: string;
+  title: string;
+  text: string;
+  outline: string;
+  elements: SnapshotElementView[];
+  truncated: boolean;
+  capturedAt: number;
+}
+export interface ResearchRecordView {
+  id: string;
+  objective: string;
+  sourceUrl: string;
+  finalUrl: string;
+  title: string;
+  engine: string;
+  method: string;
+  data: unknown;
+  confidence: number;
+  modelId: string | null;
+  error: string | null;
+  at: number;
+}
+export interface McpInstallPlanStep {
+  kind: string;
+  transport: string;
+  command: string | null;
+  args: string[];
+  url: string | null;
+  display: string;
+  note: string | null;
+}
+export interface McpCatalogEntry {
+  id: string;
+  name: string;
+  title: string;
+  description: string;
+  category: string;
+  source: string;
+  installs: McpInstallPlanStep[];
+  homepage: string | null;
+  envHints: { name: string; description: string; secret: boolean }[];
+  suggestedPermissionLevel: string;
+}
+export interface McpInstallPlan {
+  entry: { id: string; title: string; description: string; homepage: string | null };
+  plan: McpInstallPlanStep;
+  envHints: { name: string; description: string; secret: boolean }[];
+  suggestedPermissionLevel: string;
+  note: string;
+}
+export interface McpWarning {
+  kind: string;
+  detail: string;
+}
+export interface McpToolView {
+  name: string;
+  description: string;
+  inputSchema: unknown;
+}
+export interface McpHealthView {
+  serverId: string;
+  status: string;
+  serverInfo: { name: string; version: string } | null;
+  protocolVersion: string | null;
+  tools: number;
+  lastCheckAt: number | null;
+  lastOkAt: number | null;
+  error: string | null;
+  latencyMs: number | null;
+}
+export interface McpServerView {
+  id: string;
+  name: string;
+  description: string;
+  transport: string;
+  command: string | null;
+  args: string[];
+  env: { name: string; value: string | null; secret: boolean; secretHandle: string | null }[];
+  url: string | null;
+  permissionLevel: string;
+  enabled: boolean;
+  source: string;
+  status: string;
+  tools: number;
+  warnings?: McpWarning[];
+  health?: McpHealthView | null;
+}
+export interface McpPolicyView {
+  id: string;
+  scope: string;
+  scopeId: string | null;
+  serverId: string;
+  allowTools: string[];
+  denyTools: string[];
+  enabled: boolean;
+}
+export interface DockerProjectView {
+  path: string;
+  kind: string;
+  composeFile: string | null;
+  dockerfile: string | null;
+  services: string[];
+}
+export interface DockerContainerView {
+  id: string;
+  name: string;
+  image: string;
+  state: string;
+  status: string;
+  ports: string;
+}
+export interface DockerVerifyJobView {
+  id: string;
+  path: string;
+  startedAt: number;
+  finishedAt: number | null;
+  status: string;
+  log: string[];
+  result: {
+    ok: boolean;
+    attempts: number;
+    steps: { name: string; ok: boolean; detail: string; durationMs: number }[];
+    failure: { class: string; stage: string; detail: string; retryable: boolean } | null;
+    cleaned: boolean;
+  } | null;
+  error: string | null;
+}
+export interface GitStatusView {
+  isRepo: boolean;
+  branch: string | null;
+  detached: boolean;
+  ahead: number;
+  behind: number;
+  upstream: string | null;
+  staged: { path: string; state: string }[];
+  unstaged: { path: string; state: string }[];
+  untracked: string[];
+  remoteUrl: string | null;
+}
 
 /* ------------------------------------------------------------------ */
 /* Chat streaming                                                     */

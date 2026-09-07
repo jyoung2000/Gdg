@@ -18,10 +18,14 @@ export type ScreenId =
   | 'chat'
   | 'tasks'
   | 'agents'
+  | 'browser'
+  | 'versioncontrol'
+  | 'generations'
   | 'models'
   | 'providers'
   | 'pools'
-  | 'generations'
+  | 'mcp'
+  | 'devops'
   | 'usage'
   | 'settings';
 
@@ -85,6 +89,21 @@ interface State {
   pools: PoolView[];
   generations: GenerationJob[];
 
+  /**
+   * Today's usage, kept live for the header meter. Refreshed on boot and
+   * incremented on every usage event, so the number the user sees is what was
+   * actually spent — never an estimate.
+   */
+  liveUsage: {
+    cost: number;
+    requests: number;
+    tokens: number;
+    failures: number;
+    lastModelId: string | null;
+    lastProviderId: string | null;
+    lastAt: number | null;
+  };
+
   /* Composer */
   composerValue: string;
   routingMode: RoutingMode;
@@ -122,6 +141,7 @@ interface State {
   refreshProviders: () => Promise<void>;
   refreshPools: () => Promise<void>;
   refreshGenerations: () => Promise<void>;
+  refreshLiveUsage: () => Promise<void>;
 
   toast: (t: Omit<Toast, 'id'>) => void;
   dismissToast: (id: string) => void;
@@ -199,6 +219,7 @@ export const useStore = create<State>((set, get) => ({
   providers: [],
   pools: [],
   generations: [],
+  liveUsage: { cost: 0, requests: 0, tokens: 0, failures: 0, lastModelId: null, lastProviderId: null, lastAt: null },
 
   composerValue: '',
   routingMode: 'AUTO',
@@ -236,6 +257,8 @@ export const useStore = create<State>((set, get) => ({
       eventStream.onStateChange((connection) => set({ connection }));
       eventStream.onEvent((e) => get().handleEvent(e));
       eventStream.connect();
+
+      void get().refreshLiveUsage();
 
       // The most recently opened workspace is almost always the one wanted.
       const recent = workspaces[0];
@@ -461,8 +484,43 @@ export const useStore = create<State>((set, get) => ({
    * polling, which is what lets a task's timeline update in place while the
    * user is looking at a different screen.
    */
+  async refreshLiveUsage() {
+    try {
+      const { summary, recent } = await api.usage(1);
+      const last = recent[0] ?? null;
+      set({
+        liveUsage: {
+          cost: summary.totals.cost,
+          requests: summary.totals.requests,
+          tokens: summary.totals.tokens,
+          failures: summary.totals.failures,
+          lastModelId: last?.modelId ?? null,
+          lastProviderId: last?.providerId ?? null,
+          lastAt: last?.at ?? null,
+        },
+      });
+    } catch {
+      // A usage read failing must not break the shell; the meter just stays put.
+    }
+  },
+
   handleEvent(event) {
     switch (event.type) {
+      case 'usage': {
+        const r = event.record;
+        set((s) => ({
+          liveUsage: {
+            cost: s.liveUsage.cost + (r.cost ?? 0),
+            requests: s.liveUsage.requests + 1,
+            tokens: s.liveUsage.tokens + (r.promptTokens ?? 0) + (r.completionTokens ?? 0),
+            failures: s.liveUsage.failures + (r.success ? 0 : 1),
+            lastModelId: r.modelId ?? s.liveUsage.lastModelId,
+            lastProviderId: r.providerId ?? s.liveUsage.lastProviderId,
+            lastAt: r.at ?? Date.now(),
+          },
+        }));
+        break;
+      }
       case 'task': {
         const inner = event.event;
         if (inner.type === 'task-update') {
