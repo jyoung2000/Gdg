@@ -111,6 +111,21 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
     },
   );
 
+  /**
+   * The rate card: where model prices come from and how fresh they are.
+   *
+   * Worth surfacing because every cost figure in the product depends on it,
+   * and because an unloaded price book means paid providers report unknown
+   * cost rather than a number anyone should act on.
+   */
+  server.get('/api/catalog/prices', async () => ({ status: app.priceBook.status() }));
+
+  /** Refresh the rate card from upstream. Admin-only: it reaches a third party. */
+  server.post('/api/catalog/prices/sync', async (req) => {
+    requireAdmin(req);
+    return { status: await app.priceBook.runOnce() };
+  });
+
   /* ---------------- Routes ---------------- */
 
   /**

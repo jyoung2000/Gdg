@@ -31,6 +31,7 @@ import { SecretBox } from '../db/crypto.js';
 import { Store, defaultPreferences } from '../db/store.js';
 import { Discovery } from './discovery.js';
 import { CatalogSync } from './catalog-sync.js';
+import { PriceBookService } from './price-book.js';
 import { EventBus, type ServerEvent } from './events.js';
 import { browserTools, createControlPlane, type ControlPlane } from './control.js';
 import { createAIControlPlane, type ControlPlane as AIControlPlane } from './control-plane.js';
@@ -61,6 +62,7 @@ interface AppParts {
   events: EventBus;
   discovery: Discovery;
   catalogSync: CatalogSync;
+  priceBook: PriceBookService;
   control: ControlPlane;
   ai: AIControlPlane;
   computer: ComputerService;
@@ -96,6 +98,8 @@ export class App {
   readonly discovery: Discovery;
   /** Keeps the provider catalog in step with the free-model dataset. */
   readonly catalogSync: CatalogSync;
+  /** Rates for paid providers, so cost accounting is not always zero. */
+  readonly priceBook: PriceBookService;
   readonly control: ControlPlane;
   /** Skills, AI profiles and scoped assignments. */
   readonly ai: AIControlPlane;
@@ -129,6 +133,7 @@ export class App {
     this.events = parts.events;
     this.discovery = parts.discovery;
     this.catalogSync = parts.catalogSync;
+    this.priceBook = parts.priceBook;
     this.control = parts.control;
     this.ai = parts.ai;
     this.computer = parts.computer;
@@ -157,10 +162,29 @@ export class App {
     for (const s of store.listModelScores()) models.setScores(s);
     for (const p of store.listModelPerformance()) models.setPerformance(p);
 
+    /* ---- Rates ----------------------------------------------------- */
+    // Loaded from the on-disk cache before the registry is built, because the
+    // registry's pricing lookup closes over it. Offline at boot for the same
+    // reason as the catalog: a gateway must not wait on a third-party host,
+    // and must not come up pricing everything at zero because one was slow.
+    const priceBook = new PriceBookService({ logger, config });
+    await priceBook.runOnce({ offline: true });
+
     /* ---- Providers ------------------------------------------------ */
     const providers = createRegistry({
-      pricingLookup: (providerId, providerModelId) =>
-        models.get(`${providerId}:${providerModelId}`)?.pricing ?? null,
+      pricingLookup: (providerId, providerModelId) => {
+        // Order matters, most authoritative first.
+        //
+        // 1. A rate already carrying real numbers — that came either from the
+        //    provider's own listing or from a previous book lookup, and either
+        //    way re-deriving it would only add churn.
+        const known = models.get(`${providerId}:${providerModelId}`)?.pricing ?? null;
+        if (known && (known.inputPerMTok !== null || known.outputPerMTok !== null)) return known;
+        // 2. The community price book. Returns null rather than guessing when
+        //    it cannot confidently match the model AT THIS provider, which
+        //    leaves the price unknown instead of wrong.
+        return priceBook.lookup(providerId, providerModelId) ?? known;
+      },
     });
 
     // Operator edits layer over the shipped catalog rather than replacing it,
@@ -407,6 +431,7 @@ export class App {
       events,
       discovery,
       catalogSync,
+      priceBook,
       control,
       ai,
       computer,
