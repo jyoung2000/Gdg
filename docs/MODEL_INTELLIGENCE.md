@@ -262,6 +262,30 @@ OpenAI-compatible model list and the admin model list is the literal string
 `discoveredAt` and `lastVerifiedAt`. An operator confirming a model's
 capabilities has that confirmation lost on restart.
 
+### Paid spend is reported as $0
+
+The most consequential finding, and it undercuts every cost comparison above.
+Every price in the shipped catalog is `null` — the entries carry a pricing
+*posture* (`METERED`, `FREE_DAILY`) and no rates. Live discovery fills in real
+rates for exactly one provider, OpenRouter, which publishes them in its model
+listing. For everyone else — Anthropic, OpenAI, fal, Replicate — `computeCost`
+therefore returns **0**, so usage reports $0 spend on calls that cost real
+money, and there is no route or file through which an operator can supply
+rates.
+
+Two consequences worth stating plainly. Budget caps and pool limits cannot bind
+on providers whose spend always computes to zero. And `blendedPerMTok` in route
+comparison returns `null` for those providers, which is why "—" appears where a
+price should be: the route view is honest about not knowing, but it is not
+comparing what it cannot see.
+
+### Two providers can never be routed
+
+Cloudflare Workers AI and fal.ai declare `supportsDiscovery: false` and
+implement no `listModels`. Their code comments say their models come from "the
+static catalog" — and no such static model catalog exists. Both providers are
+registered, can hold a credential, and will never have a model to route to.
+
 ---
 
 ## 7. API
