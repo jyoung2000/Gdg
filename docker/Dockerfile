@@ -169,6 +169,12 @@ COPY --from=build /app/database ./database
 COPY --from=build /app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
 COPY --from=build /app/node_modules/bindings ./node_modules/bindings
 COPY --from=build /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
+# playwright-core is external to the bundle (it lazily requires optional
+# transports and resolves a browser binary relative to its own install path).
+# The module is copied so the browser capability exists when browsers are
+# installed; without a browser binary the engine reports itself unavailable
+# rather than failing at startup.
+COPY --from=build /app/node_modules/playwright-core ./node_modules/playwright-core
 COPY package.json ./
 
 # Run as a non-root user. The data and workspace mounts are chowned so a

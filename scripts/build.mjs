@@ -44,7 +44,12 @@ async function bundleNode(entry, outfile, label) {
     alias,
     // better-sqlite3 is a native addon: bundling it would break the .node
     // binding resolution, so it stays external and is required at runtime.
-    external: ['better-sqlite3'],
+    //
+    // playwright-core is external for a related reason: it lazily requires
+    // optional transport backends and resolves a browser binary relative to
+    // its own install path. Bundling it fails outright on those optional
+    // requires, and would break binary resolution even if it linked.
+    external: ['better-sqlite3', 'playwright-core'],
     banner: {
       // esbuild's ESM output loses CommonJS interop that some dependencies
       // still reach for; this restores require() inside the bundle.

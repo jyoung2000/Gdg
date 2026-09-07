@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core';
+import type { Browser, BrowserContext, Page } from 'playwright-core';
 import { MeridianError } from '@meridian/shared';
 import type { BrowserProvider, ProviderSession, ProviderSessionOptions } from './provider.js';
 import type {
@@ -73,8 +73,27 @@ export class PlaywrightProvider implements BrowserProvider {
     }
   }
 
+  /**
+   * Load Playwright on first use, not at import time.
+   *
+   * The gateway bundle keeps playwright-core external, and a deployment that
+   * has no browser support at all should still start and report the engine as
+   * unavailable — a missing optional dependency must never be a boot failure.
+   */
+  private async playwright(): Promise<typeof import('playwright-core')> {
+    try {
+      return await import('playwright-core');
+    } catch (e) {
+      throw new MeridianError(
+        'unsupported_capability',
+        `Playwright is not installed in this deployment, so browser sessions are unavailable (${e instanceof Error ? e.message : String(e)})`,
+      );
+    }
+  }
+
   private async ensureBrowser(): Promise<Browser> {
     if (this.browser?.isConnected()) return this.browser;
+    const { chromium } = await this.playwright();
     if (this.engine === 'lightpanda' || this.engine === 'cdp') {
       if (!this.opts.cdpUrl) {
         const envVar = this.engine === 'lightpanda' ? 'MERIDIAN_LIGHTPANDA_CDP' : 'MERIDIAN_BROWSER_CDP_URL';
