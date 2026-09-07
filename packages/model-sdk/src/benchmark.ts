@@ -1,4 +1,5 @@
 import type { CompletionRequest, CompletionResponse, ModelDescriptor } from '@meridian/shared';
+import { percentile } from './scoring.js';
 
 /**
  * A benchmark case with an objectively checkable answer.
@@ -304,8 +305,15 @@ export function summarise(results: BenchmarkResult[]): BenchmarkSummary | null {
     toolUse: dim('toolUse'),
     latencyMs: mean,
     ttftMs: ttfts.length ? ttfts.reduce((s, v) => s + v, 0) / ttfts.length : null,
-    p95LatencyMs: latencies.length ? latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * 0.95))] : null,
-    jitterMs: variance != null ? Math.sqrt(variance) : null,
+    // A suite of seven cases cannot yield a 95th percentile: nearest-rank
+    // would return the slowest run wearing a percentile's name. percentile()
+    // returns null below the sample size where the answer means what it says.
+    p95LatencyMs: percentile(latencies, 0.95),
+    // Deliberately null. The spread across these cases is spread across
+    // DIFFERENT PROMPTS — the suite varies maxTokens from 200 to 700 — so its
+    // standard deviation measures prompt length, not serving jitter. Serving
+    // jitter comes from repeated live calls, in applyPerformance.
+    jitterMs: null,
     tokensPerSecond: tps.length ? tps.reduce((s, v) => s + v, 0) / tps.length : null,
     uptime: results.length ? ok.length / results.length : 0,
     cases: results.length,

@@ -173,29 +173,94 @@ reasoning is hidden is a ranking the user cannot argue with.
 
 ## 5. Health and measurement
 
-Already present before this subsystem, and it feeds it.
-`packages/model-sdk/src/scoring.ts` computes from a rolling 100-sample window of
-**real usage rows** (not synthetic probes):
+`packages/model-sdk/src/scoring.ts` computes, from a rolling 100-sample window
+of **real usage rows** (every completed call, not synthetic probes and not only
+the rare task someone rated):
 
-- `p95LatencyMs` — 95th percentile of the sorted window
-- `jitterMs` — standard deviation
-- `uptime` — EWMA of success
-- `stability` — observed successes / attempts
+| Signal | How |
+| --- | --- |
+| `latencyMs` | EWMA of observed latency |
+| `p95LatencyMs` | Nearest-rank 95th percentile — **null below 21 samples** |
+| `jitterMs` | Standard deviation across the window |
+| `uptime` | EWMA of success |
+| `stability` | Observed successes / attempts |
+
+### Why p95 has a floor
+
+Nearest-rank picks `sorted[floor(n * 0.95)]`, and for any **n ≤ 20 that is the
+last index** — the maximum, wearing a percentile's name. A "p95" from ten calls
+is the slowest of the ten, which systematically overstates tail latency.
+`percentile()` returns `null` below `MIN_SAMPLES_FOR_P95`, so the value only
+appears once it means what it says. Observed live: at 10 samples p95 is `null`
+while jitter and mean latency are already real; at 22 samples p95 appears.
+
+### Benchmarks do not overwrite traffic
+
+A manual benchmark is seven cases. It cannot produce a 95th percentile, its
+spread is across prompts of deliberately different lengths (200–700 max tokens)
+rather than repeated calls, and a single run's pass rate has no time dimension
+and so is not uptime. The benchmark path therefore reports `null` for p95 and
+jitter, and the gateway **carries forward** the traffic-derived p95, jitter,
+uptime and stability rather than replacing them. Running a benchmark must not
+degrade the numbers routing depends on.
 
 `ProviderHealth` carries a circuit breaker (`closed` / `open` / `half_open`)
 with cooldown, consecutive failures and a rolling error rate.
 
 ---
 
-## 6. Quota
+## 6. Known gaps
 
-`QuotaState` is typed and honest but **not yet populated**. Every field is
-nullable, and `quotaRemainingFraction()` returns `null` — not `1` — when a
-provider publishes nothing, because "we don't know" and "it's full" must not be
-the same value to a router that is choosing a free route.
+A multi-agent audit of this subsystem and its neighbours found the following.
+They are listed rather than quietly left, because a catalogue that hides its own
+holes is doing the same thing as one that calls trial credit free.
 
-No adapter currently reads quota from response headers. This is a typed hole,
-recorded as such, not a filled one.
+### Quota is a typed hole
+
+`QuotaState` is defined and its helpers are honest — `quotaRemainingFraction()`
+returns `null`, not `1`, when a provider publishes nothing, because "we don't
+know" and "it's full" must not be the same value to a router choosing a free
+route. But **nothing constructs a `QuotaState`.** No adapter reads quota from
+response headers, and the `quotas` table in migration 001 is dead schema with no
+reader or writer. Live remaining-quota is therefore always unknown.
+
+### Free allowances are not counted
+
+`FREE_DAILY` and `FREE_MONTHLY` sit inside `NON_SPENDING_PRICING`, so `isFree()`
+is permanently true for them and `estimateCost()` returns 0 forever. There is no
+allowance accounting: a model on a 250-request daily quota is treated as free on
+request 251 exactly as on request 1. Meridian will not overspend *money* on it,
+but it cannot tell you the allowance is gone.
+
+### FREE_FIRST is a weight, not a gate
+
+`FREE_FIRST` is absent from `STRICTLY_FREE_MODES`, so it applies a 0.42 bonus to
+free candidates rather than exhausting free capacity before considering paid.
+`FREE` and `LOCAL` do gate. The mode's description overstates what it enforces.
+
+### Provider rate limits are declared and unread
+
+`ProviderDescriptor.rateLimits` (requests/minute, tokens/minute, requests/day)
+is populated by the catalog and read by nothing. Published limits do not
+influence routing.
+
+### Intelligence is not in the database
+
+`ProviderIntelligence` lives in memory and is rebuilt at boot from the on-disk
+sync cache, so it survives a restart — but there is no `provider_intelligence`
+table, and it cannot be queried with SQL or joined against usage.
+
+### Model status is always "unknown"
+
+`ModelRegistry.setStatus()` is never called, so the `status` field on both the
+OpenAI-compatible model list and the admin model list is the literal string
+`"unknown"` for every model, always.
+
+### Not persisted across restart
+
+`upsertModels` writes 14 columns and silently drops `capabilityClaims`,
+`discoveredAt` and `lastVerifiedAt`. An operator confirming a model's
+capabilities has that confirmation lost on restart.
 
 ---
 

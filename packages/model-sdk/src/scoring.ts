@@ -119,6 +119,28 @@ const EMPTY_PERF = (modelId: string): ModelPerformance => ({
  * `recentLatencies` is the caller's rolling window; p95 and jitter need the
  * actual distribution, which an EWMA cannot reconstruct.
  */
+/**
+ * Smallest window in which a nearest-rank 95th percentile is not just the
+ * maximum.
+ *
+ * Nearest-rank picks `sorted[floor(n * 0.95)]`, and for any n ≤ 20 that index
+ * is the last one — so a "p95" computed from ten samples is the slowest of the
+ * ten, wearing a percentile's name. Reporting that as a tail latency
+ * systematically overstates it, and it would be a number Meridian cannot
+ * defend when someone asks what it means.
+ */
+export const MIN_SAMPLES_FOR_P95 = 21;
+
+/**
+ * Nearest-rank percentile, or null when the sample is too small for the answer
+ * to mean what it says.
+ */
+export function percentile(values: number[], q: number): number | null {
+  if (values.length < MIN_SAMPLES_FOR_P95) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))] ?? null;
+}
+
 export function applyPerformance(
   prev: ModelPerformance | null,
   sample: { modelId: string; latencyMs: number; ttftMs: number | null; outputTokens: number; success: boolean; at: number },
@@ -127,10 +149,9 @@ export function applyPerformance(
 ): ModelPerformance {
   const base = prev ?? EMPTY_PERF(sample.modelId);
   const window = [...recentLatencies, sample.latencyMs].slice(-100);
-  const sorted = [...window].sort((a, b) => a - b);
-  const p95 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] ?? sample.latencyMs;
   const mean = window.reduce((s, v) => s + v, 0) / window.length;
   const variance = window.reduce((s, v) => s + (v - mean) ** 2, 0) / window.length;
+  const p95 = percentile(window, 0.95);
 
   const tps =
     sample.outputTokens > 0 && sample.latencyMs > 0

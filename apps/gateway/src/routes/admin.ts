@@ -426,22 +426,33 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
         general: summary.general,
         toolUse: summary.toolUse,
         vision: app.models.getScores(model.id)?.vision ?? null,
-        stability: summary.uptime,
+        // Observed stability across all traffic outranks one run's pass rate;
+        // only adopt the benchmark's figure when nothing has been observed yet.
+        stability: app.models.getScores(model.id)?.stability ?? summary.uptime,
         samples: (app.models.getScores(model.id)?.samples ?? 0) + summary.cases,
         updatedAt: Date.now(),
       };
       app.models.setScores(scores);
       app.store.setModelScores(scores);
 
+      // A benchmark establishes what a benchmark can establish. The tail
+      // latency, serving jitter and uptime a model has accumulated from live
+      // traffic are worth far more than a seven-case run, so they are carried
+      // forward rather than overwritten — a manual benchmark must not degrade
+      // the numbers routing depends on.
+      const priorPerf = app.models.getPerformance(model.id);
       const perf = {
         modelId: model.id,
-        ttftMs: summary.ttftMs,
+        ttftMs: summary.ttftMs ?? priorPerf?.ttftMs ?? null,
         latencyMs: summary.latencyMs,
-        p95LatencyMs: summary.p95LatencyMs,
-        jitterMs: summary.jitterMs,
+        p95LatencyMs: summary.p95LatencyMs ?? priorPerf?.p95LatencyMs ?? null,
+        jitterMs: summary.jitterMs ?? priorPerf?.jitterMs ?? null,
         tokensPerSecond: summary.tokensPerSecond,
-        uptime: summary.uptime,
-        samples: (app.models.getPerformance(model.id)?.samples ?? 0) + summary.cases,
+        // A single run's pass rate has no time dimension, so it cannot be
+        // uptime. Keep the observed value; the benchmark's own pass rate is
+        // reported in the summary the caller receives.
+        uptime: priorPerf?.uptime ?? null,
+        samples: (priorPerf?.samples ?? 0) + summary.cases,
         updatedAt: Date.now(),
       };
       app.models.setPerformance(perf);

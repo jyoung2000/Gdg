@@ -1,6 +1,16 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { blendedPerMTok, freeRadar, groupRoutes, multiRouteGroups, normalizeModelKey, type RouteContext } from '@meridian/model-sdk';
+import {
+  MIN_SAMPLES_FOR_P95,
+  applyPerformance,
+  blendedPerMTok,
+  freeRadar,
+  groupRoutes,
+  multiRouteGroups,
+  normalizeModelKey,
+  percentile,
+  type RouteContext,
+} from '@meridian/model-sdk';
 import type { ModelDescriptor, Pricing, ProviderHealth } from '@meridian/shared';
 
 /**
@@ -246,3 +256,43 @@ describe('free radar', () => {
     assert.ok(e.score > 0 && e.score <= 100);
   });
 });
+
+describe('percentile honesty', () => {
+  it('refuses to report a p95 from a sample too small to have one', () => {
+    // Nearest-rank picks sorted[floor(n*0.95)], which for any n <= 20 is the
+    // LAST index — the maximum wearing a percentile's name. Reporting that
+    // systematically overstates tail latency.
+    for (const n of [1, 5, 10, 20]) {
+      const values = Array.from({ length: n }, (_, i) => i + 1);
+      assert.equal(percentile(values, 0.95), null, `${n} samples cannot yield a p95`);
+    }
+  });
+
+  it('reports a real percentile once the sample supports one', () => {
+    const values = Array.from({ length: 100 }, (_, i) => i + 1);
+    const p95 = percentile(values, 0.95);
+    assert.ok(p95 !== null);
+    // The 95th of 1..100 must be near 96, and must NOT be the maximum.
+    assert.equal(p95, 96);
+    assert.notEqual(p95, 100, 'a percentile that equals the max is not a percentile');
+  });
+
+  it('leaves p95 unmeasured until enough calls have happened', () => {
+    let perf = applyPerformance(null, sampleAt(100), []);
+    assert.equal(perf.p95LatencyMs, null, 'one call is not a distribution');
+
+    const window: number[] = [];
+    for (let i = 0; i < MIN_SAMPLES_FOR_P95 + 4; i++) {
+      perf = applyPerformance(perf, sampleAt(100 + i), window);
+      window.push(100 + i);
+    }
+    assert.ok(perf.p95LatencyMs !== null, 'it appears once it is meaningful');
+    // Jitter is a standard deviation over real traffic, so it is honest from
+    // the start; only the percentile needed a floor.
+    assert.ok(perf.jitterMs !== null);
+  });
+});
+
+function sampleAt(latencyMs: number) {
+  return { modelId: 'p:m', latencyMs, ttftMs: null, outputTokens: 10, success: true, at: 0 };
+}
