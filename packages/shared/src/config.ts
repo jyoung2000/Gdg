@@ -56,6 +56,16 @@ export interface MeridianConfig {
   discoveryIntervalMs: number;
   /** Base URLs probed when auto-discovering local inference servers. */
   localEndpoints: string[];
+  /**
+   * The coordinate space computer-use models are asked to emit in.
+   *
+   * Models are trained to point in a normalized space (1000x1000 is common) and
+   * Meridian scales what they emit onto the real screen. Null means "use the
+   * screen's own pixels", which is right when the model was trained that way.
+   */
+  computerGrounding: { width: number; height: number } | null;
+  /** Where the browser computer surface starts, when one is configured. */
+  computerStartUrl: string | null;
   corsOrigins: string[];
   trustProxy: boolean;
 }
@@ -74,6 +84,20 @@ function bool(v: string | undefined, dflt: boolean): boolean {
 function list(v: string | undefined, dflt: string[]): string[] {
   if (!v) return dflt;
   return v.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * Grounding is only meaningful as a pair.
+ *
+ * Half a grounding space would silently scale one axis and not the other,
+ * putting every click off by a factor — so either both are set and valid, or
+ * the model is asked to point in real pixels.
+ */
+function groundingFrom(env: NodeJS.ProcessEnv): { width: number; height: number } | null {
+  const width = Number(env.MERIDIAN_GROUNDING_WIDTH);
+  const height = Number(env.MERIDIAN_GROUNDING_HEIGHT);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+  return { width: Math.round(width), height: Math.round(height) };
 }
 
 /** The canonical port. Documented, tested, and used by every entry point. */
@@ -110,6 +134,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): MeridianConfig
     sandboxNetwork: bool(env.MERIDIAN_SANDBOX_NETWORK, false),
     healthIntervalMs: num(env.MERIDIAN_HEALTH_INTERVAL_MS, 120_000),
     discoveryIntervalMs: num(env.MERIDIAN_DISCOVERY_INTERVAL_MS, 900_000),
+    computerGrounding: groundingFrom(env),
+    computerStartUrl: env.MERIDIAN_COMPUTER_START_URL ?? null,
     localEndpoints: list(env.MERIDIAN_LOCAL_ENDPOINTS, [
       'http://localhost:11434',
       'http://host.docker.internal:11434',

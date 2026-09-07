@@ -345,6 +345,31 @@ export const api = {
   discoveryStatus: () => get<{ schedules: DiscoveryScheduleView[]; intervalMs: number }>('/api/models/discovery-status'),
   connections: () => get<{ connections: ConnectionView[] }>('/api/connections'),
 
+  /* Computer agent */
+  computerBackends: () => get<{ backends: ComputerBackendView[] }>('/api/computer/backends'),
+  computerVocabulary: () =>
+    get<{
+      permissions: string[];
+      approvalModes: string[];
+      presets: { readOnly: Record<string, boolean>; safe: Record<string, boolean> };
+      defaultEnabled: boolean;
+    }>('/api/computer/vocabulary'),
+  computerPlan: (body: { modelId?: string | null; backendId?: string | null; groundingMode?: string; privacyPreference?: string }) =>
+    post<{ decision: ComputerPlanView }>('/api/computer/plan', body),
+  computerDiagnostics: (backendId?: string) =>
+    post<{ checks: ComputerCheckView[]; ok: boolean }>('/api/computer/diagnostics', { backendId }),
+  computerSessions: () => get<{ live: ComputerSessionView[]; history: ComputerSessionView[] }>('/api/computer/sessions'),
+  computerSession: (id: string) =>
+    get<{ session: ComputerSessionView; actions: ComputerActionView[]; live: boolean }>(`/api/computer/sessions/${id}`),
+  startComputerSession: (body: Record<string, unknown>) => post<{ session: ComputerSessionView }>('/api/computer/sessions', body),
+  computerScreenshot: (id: string) => get<{ data: string; width: number; height: number; at: number }>(`/api/computer/sessions/${id}/screenshot`),
+  pauseComputerSession: (id: string) => post<{ paused: boolean }>(`/api/computer/sessions/${id}/pause`, {}),
+  resumeComputerSession: (id: string) => post<{ resumed: boolean }>(`/api/computer/sessions/${id}/resume`, {}),
+  stopComputerSession: (id: string) => post<{ stopped: boolean; session: ComputerSessionView }>(`/api/computer/sessions/${id}/stop`, {}),
+  approveComputerAction: (id: string, approvalId: string, scope: 'once' | 'task') =>
+    post<{ approved: boolean }>(`/api/computer/sessions/${id}/approve`, { approvalId, scope }),
+  denyComputerAction: (id: string, approvalId: string) => post<{ denied: boolean }>(`/api/computer/sessions/${id}/deny`, { approvalId }),
+
   /* Git / version control */
   ghInfo: () => get<{ gh: { installed: boolean; version: string | null; authenticated: boolean; detail: string | null } }>('/api/git/gh'),
   gitStatus: (workspaceId: string) => get<{ status: GitStatusView }>(`/api/git/${workspaceId}/status`),
@@ -741,4 +766,96 @@ export interface ConnectionView {
   lastVerifiedAt: number | null;
   grants: string;
   detail: string | null;
+}
+
+/* ---- Computer agent ------------------------------------------------- */
+
+export interface ComputerBackendView {
+  id: string;
+  name: string;
+  description: string;
+  surface: 'desktop' | 'browser' | 'remote';
+  supportedActions: string[];
+  health: { available: boolean; detail: string | null; remediation: string | null; version: string | null };
+  screen: { width: number; height: number; groundingWidth: number; groundingHeight: number; displays: number; singleDisplayOnly: boolean } | null;
+  needsGrounding: boolean;
+}
+export interface ComputerPlanView {
+  modelId: string | null;
+  backendId: string | null;
+  groundingModelId: string | null;
+  reason: string;
+  /** Why this choice, in the user's words. Never an opaque score. */
+  factors: string[];
+  fallbackModelIds: string[];
+  fallbackBackendIds: string[];
+  error: string | null;
+  ineligible: { modelId: string; reason: string }[];
+}
+export interface ComputerCheckView {
+  name: string;
+  status: 'pass' | 'fail' | 'skip';
+  detail: string;
+  remediation: string | null;
+}
+export interface ComputerVerdictView {
+  decision: 'allow' | 'ask' | 'reject';
+  risk: 'safe' | 'elevated' | 'destructive';
+  reason: string | null;
+  requiredPermission: string | null;
+}
+export interface ComputerApprovalView {
+  id: string;
+  sessionId: string;
+  action: Record<string, unknown> & { type: string };
+  verdict: ComputerVerdictView;
+  description: string;
+  requestedAt: number;
+  expiresAt: number;
+}
+export interface ComputerSessionConfigView {
+  task: string;
+  backendId: string;
+  modelId: string | null;
+  providerId: string | null;
+  groundingMode: string;
+  groundingModelId: string | null;
+  permissions: Record<string, boolean>;
+  approvalMode: string;
+  maxSteps: number;
+  actionTimeoutMs: number;
+  routingReason: string;
+  fallbackModelIds: string[];
+  fallbackBackendIds: string[];
+  profileId: string | null;
+  workspaceId: string | null;
+  privacyPreference: string;
+}
+export interface ComputerSessionView {
+  id: string;
+  state: string;
+  config: ComputerSessionConfigView;
+  userId: string | null;
+  activeBackendId: string;
+  activeModelId: string | null;
+  step: number;
+  createdAt: number;
+  updatedAt: number;
+  finishedAt: number | null;
+  summary: string | null;
+  error: string | null;
+  pendingApproval: ComputerApprovalView | null;
+}
+export interface ComputerActionView {
+  id: string;
+  sessionId: string;
+  step: number;
+  action: Record<string, unknown> & { type: string };
+  verdict: ComputerVerdictView;
+  status: string;
+  result: string | null;
+  error: string | null;
+  startedAt: number;
+  finishedAt: number | null;
+  screenshotId: string | null;
 }

@@ -62,6 +62,9 @@ importers:
       '@meridian/browser-sdk':
         specifier: workspace:*
         version: link:../../packages/browser-sdk
+      '@meridian/computer-sdk':
+        specifier: workspace:*
+        version: link:../../packages/computer-sdk
       '@meridian/docker-sdk':
         specifier: workspace:*
         version: link:../../packages/docker-sdk

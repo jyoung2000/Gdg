@@ -33,6 +33,22 @@ import type {
 const MAX_HISTORY = 500;
 const MAX_SCREENSHOTS = 40;
 const APPROVAL_TTL_MS = 5 * 60_000;
+const CAPTURE_TIMEOUT_MS = 15_000;
+
+/**
+ * Thrown when Stop, or an operation's own timeout, cut a call short.
+ *
+ * Distinguishable from a backend error so callers can tell "the user stopped
+ * this" apart from "this failed", which is the difference between a session
+ * that ended as asked and one that broke.
+ */
+export class OperationCancelled extends Error {
+  readonly cancelled = true;
+  constructor(message = 'the action was cancelled or timed out') {
+    super(message);
+    this.name = 'OperationCancelled';
+  }
+}
 
 export interface SessionHooks {
   onEvent?: (event: AgentEvent) => void;
@@ -45,6 +61,8 @@ export interface SessionHooks {
 export class ComputerSession {
   readonly id: string;
   readonly config: SessionConfig;
+  /** Who started it; null when the instance has no authentication. */
+  readonly userId: string | null;
   private readonly hooks: SessionHooks;
   private readonly now: () => number;
 
@@ -71,9 +89,10 @@ export class ComputerSession {
   private pauseGate: Promise<void> | null = null;
   private pauseRelease: (() => void) | null = null;
 
-  constructor(opts: { config: SessionConfig; backend: ComputerAgentBackend; hooks?: SessionHooks }) {
+  constructor(opts: { config: SessionConfig; backend: ComputerAgentBackend; userId?: string | null; hooks?: SessionHooks }) {
     this.id = `cs_${randomUUID().slice(0, 12)}`;
     this.config = opts.config;
+    this.userId = opts.userId ?? null;
     this.backend = opts.backend;
     this.activeModelId = opts.config.modelId;
     this.hooks = opts.hooks ?? {};
@@ -89,6 +108,7 @@ export class ComputerSession {
       id: this.id,
       state: this.state,
       config: this.config,
+      userId: this.userId,
       activeBackendId: this.backend.id,
       activeModelId: this.activeModelId,
       step: this.stepCount,
@@ -187,29 +207,61 @@ export class ComputerSession {
     this.pauseRelease = null;
     this.pauseGate = null;
     this.resolveApproval(false);
-    this.setState('stopped');
+    // Outcome first, then the state change: setState is what persists the row,
+    // so assigning these afterwards would store a finished session with no
+    // summary and no end time.
     this.finishedAt = this.now();
     this.summary = reason;
+    this.setState('stopped');
     this.emit({ type: 'agent.stopped', sessionId: this.id, at: this.now(), reason });
   }
 
   complete(success: boolean, summary: string): void {
     if (this.isTerminal()) return;
-    this.setState(success ? 'completed' : 'failed');
     this.finishedAt = this.now();
     this.summary = summary;
     if (!success) this.error = summary;
+    this.setState(success ? 'completed' : 'failed');
     this.emit({ type: 'agent.completed', sessionId: this.id, at: this.now(), success, summary });
   }
 
   fail(message: string): void {
     if (this.isTerminal()) return;
     this.error = message;
-    this.setState('failed');
     this.finishedAt = this.now();
     this.summary = message;
+    this.setState('failed');
     this.emit({ type: 'agent.error', sessionId: this.id, at: this.now(), message, recoverable: false });
     this.emit({ type: 'agent.completed', sessionId: this.id, at: this.now(), success: false, summary: message });
+  }
+
+  /**
+   * Run an abortable operation under the session's kill switch.
+   *
+   * Every call a session waits on — capturing the screen, asking a model for
+   * the next step, executing an action — goes through here, and that is what
+   * makes Stop real rather than cosmetic. Registering only the action
+   * execution is not enough: a Stop pressed while the model was thinking would
+   * move the session to `stopped` while the request stayed in flight and the
+   * backend process stayed alive until the provider happened to answer.
+   */
+  async runOp<T>(timeoutMs: number | null, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    // If Stop landed between the caller's terminal check and this call, never
+    // begin at all rather than opening a window the kill switch just missed.
+    if (this.isTerminal()) throw new OperationCancelled('the session was stopped');
+    const controller = new AbortController();
+    this.currentOp = controller;
+    const timer = timeoutMs === null ? null : setTimeout(() => controller.abort(), timeoutMs);
+    timer?.unref?.();
+    try {
+      return await fn(controller.signal);
+    } catch (e) {
+      if (controller.signal.aborted) throw new OperationCancelled();
+      throw e;
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (this.currentOp === controller) this.currentOp = null;
+    }
   }
 
   /** Block while paused. Returns false when the session ended while waiting. */
@@ -350,22 +402,13 @@ export class ComputerSession {
     record.status = 'executing';
     this.emit({ type: 'agent.action.started', sessionId: this.id, at: this.now(), recordId: record.id });
 
-    const controller = new AbortController();
-    this.currentOp = controller;
-    const timer = setTimeout(() => controller.abort(), this.config.actionTimeoutMs);
     try {
-      record.result = (await this.backend.execute(action, controller.signal)).slice(0, 2000);
+      const result = await this.runOp(this.config.actionTimeoutMs, (signal) => this.backend.execute(action, signal));
+      record.result = result.slice(0, 2000);
       record.status = 'completed';
     } catch (e) {
       record.status = 'failed';
-      record.error = controller.signal.aborted
-        ? 'the action was cancelled or timed out'
-        : e instanceof Error
-          ? e.message
-          : String(e);
-    } finally {
-      clearTimeout(timer);
-      this.currentOp = null;
+      record.error = e instanceof Error ? e.message : String(e);
     }
     record.finishedAt = this.now();
     return this.finishRecord(record);
@@ -383,15 +426,16 @@ export class ComputerSession {
   /** Capture the screen and publish it, keeping only a bounded window. */
   async capture(): Promise<Screenshot | null> {
     if (this.isTerminal()) return null;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15_000);
     try {
-      const shot = await this.backend.screenshot(controller.signal);
+      const shot = await this.runOp(CAPTURE_TIMEOUT_MS, (signal) => this.backend.screenshot(signal));
       this.screenshots.push(shot);
       if (this.screenshots.length > MAX_SCREENSHOTS) this.screenshots.splice(0, this.screenshots.length - MAX_SCREENSHOTS);
       this.emit({ type: 'agent.screenshot', sessionId: this.id, at: this.now(), screenshotId: shot.id, width: shot.width, height: shot.height });
       return shot;
     } catch (e) {
+      // A capture cut short by Stop is the kill switch working, not a fault
+      // worth reporting to someone who just asked the session to end.
+      if (this.isTerminal()) return null;
       this.emit({
         type: 'agent.error',
         sessionId: this.id,
@@ -400,8 +444,6 @@ export class ComputerSession {
         recoverable: true,
       });
       return null;
-    } finally {
-      clearTimeout(timer);
     }
   }
 
@@ -445,8 +487,32 @@ export class SessionRegistry {
     await s.dispose();
   }
 
+  /**
+   * Drop finished sessions that nobody is reading any more.
+   *
+   * A session holds up to forty full screenshots, so keeping every completed
+   * run in memory for the life of the process is a slow leak. Their history is
+   * already in the database and the API falls back to it, so eviction costs the
+   * UI nothing.
+   */
+  sweep(now = Date.now(), retentionMs = FINISHED_RETENTION_MS): number {
+    let removed = 0;
+    for (const [id, session] of [...this.sessions]) {
+      if (!session.isTerminal()) continue;
+      const finishedAt = session.info().finishedAt;
+      if (finishedAt !== null && now - finishedAt < retentionMs) continue;
+      this.sessions.delete(id);
+      void session.dispose().catch(() => undefined);
+      removed += 1;
+    }
+    return removed;
+  }
+
   /** Stop everything: called on shutdown so no backend process is orphaned. */
   async closeAll(): Promise<void> {
     await Promise.all([...this.sessions.keys()].map((id) => this.remove(id)));
   }
 }
+
+/** How long a finished session stays in memory for the UI to read back. */
+const FINISHED_RETENTION_MS = 15 * 60_000;

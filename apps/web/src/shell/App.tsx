@@ -28,6 +28,7 @@ import {
   IconGlobe,
   IconHome,
   IconImage,
+  IconMonitor,
   IconLayers,
   IconMenu,
   IconMessageSquare,
@@ -65,6 +66,7 @@ import { McpScreen } from '../screens/McpScreen.js';
 import { DevOpsScreen } from '../screens/DevOpsScreen.js';
 import { AIControlScreen } from '../screens/AIControlScreen.js';
 import { SkillsScreen } from '../screens/SkillsScreen.js';
+import { ComputerScreen } from '../screens/ComputerScreen.js';
 
 /** The identity mark: a meridian line crossing a circle. */
 function Mark({ className }: { className?: string }): React.JSX.Element {
@@ -84,6 +86,7 @@ const NAV: { id: ScreenId; label: string; icon: React.JSX.Element; section: 'wor
   { id: 'tasks', label: 'Tasks', icon: <IconActivity />, section: 'work' },
   { id: 'agents', label: 'Agents', icon: <IconRobot />, section: 'work' },
   { id: 'browser', label: 'Browser', icon: <IconGlobe />, section: 'work' },
+  { id: 'computer', label: 'Computer', icon: <IconMonitor />, section: 'work' },
   { id: 'versioncontrol', label: 'Version Control', icon: <IconGitBranch />, section: 'work' },
   { id: 'generations', label: 'Generations', icon: <IconImage />, section: 'work' },
   { id: 'ai', label: 'AI', icon: <IconCpu />, section: 'infrastructure' },
@@ -104,6 +107,7 @@ const SCREENS: Record<ScreenId, () => React.JSX.Element> = {
   tasks: TasksScreen,
   agents: AgentsScreen,
   browser: BrowserScreen,
+  computer: ComputerScreen,
   versioncontrol: VersionControlScreen,
   ai: AIControlScreen,
   skills: SkillsScreen,

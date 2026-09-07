@@ -19,6 +19,7 @@ export type ScreenId =
   | 'tasks'
   | 'agents'
   | 'browser'
+  | 'computer'
   | 'versioncontrol'
   | 'generations'
   | 'ai'

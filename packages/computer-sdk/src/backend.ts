@@ -34,12 +34,45 @@ export interface ComputerAgentBackend {
   /** Prepare for a session. Called once before any action. */
   open(): Promise<void>;
 
+  /**
+   * The instance a new session should drive.
+   *
+   * Backends whose surface can exist many times over — a browser viewport —
+   * return a fresh instance, so two sessions never share one page and one
+   * session's close cannot pull the surface out from under another. A backend
+   * with exactly one surface, like the machine's own desktop, returns itself
+   * and relies on the service to refuse a second concurrent session.
+   */
+  forSession?(): ComputerAgentBackend;
+
   execute(action: ComputerAction, signal: AbortSignal): Promise<string>;
 
   screenshot(signal: AbortSignal): Promise<Screenshot>;
 
   /** Release everything. Must be safe to call twice. */
   close(): Promise<void>;
+}
+
+/**
+ * Sleep that Stop can interrupt.
+ *
+ * A `wait` implemented with a bare timer is a minute during which the kill
+ * switch does nothing, which makes Stop feel broken exactly when someone is
+ * reaching for it. Backends use this so a waiting session ends immediately.
+ */
+export function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(new Error('the wait was cancelled'));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(new Error('the wait was cancelled'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 export class BackendRegistry {

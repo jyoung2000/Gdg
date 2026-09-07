@@ -196,7 +196,30 @@ class Agent:
         return binary
 
 
+def die_with_parent():
+    """
+    Ask the kernel to kill this process when the gateway dies.
+
+    Closing stdin already ends the loop on a clean shutdown, but a gateway that
+    is killed outright would otherwise leave this helper running with an open X
+    connection and the ability to synthesise keystrokes — a process nobody knows
+    about, holding exactly the capability that most needs an owner. PDEATHSIG
+    closes that window; it is Linux-only and simply does nothing elsewhere.
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        import ctypes
+
+        PR_SET_PDEATHSIG = 1
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(PR_SET_PDEATHSIG, 15, 0, 0, 0)
+    except Exception:
+        # Best effort. The stdin-EOF path is still the normal way this ends.
+        pass
+
+
 def main():
+    die_with_parent()
     display_name = os.environ.get("MERIDIAN_DISPLAY") or os.environ.get("DISPLAY") or ":0"
     try:
         agent = Agent(display_name)

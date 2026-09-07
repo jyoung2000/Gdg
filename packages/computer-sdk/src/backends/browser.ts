@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { MeridianError } from '@meridian/shared';
 import type { BrowserManager } from '@meridian/browser-sdk';
-import type { ComputerAgentBackend } from '../backend.js';
+import { abortableSleep, type ComputerAgentBackend } from '../backend.js';
 import { toScreenPoint, type ActionType, type BackendHealth, type ComputerAction, type Screenshot, type ScreenContext } from '../types.js';
 
 /**
@@ -19,6 +19,14 @@ import { toScreenPoint, type ActionType, type BackendHealth, type ComputerAction
  * Coordinates address the viewport, so the same grounded click that would land
  * on a desktop window lands on the page.
  */
+export interface BrowserComputerBackendOptions {
+  manager: BrowserManager;
+  viewport?: { width: number; height: number };
+  groundingWidth?: number;
+  groundingHeight?: number;
+  startUrl?: string | null;
+}
+
 export class BrowserComputerBackend implements ComputerAgentBackend {
   readonly id = 'browser';
   readonly name = 'Browser viewport';
@@ -31,14 +39,11 @@ export class BrowserComputerBackend implements ComputerAgentBackend {
   private readonly groundingHeight: number | null;
   private sessionId: string | null = null;
   private readonly startUrl: string | null;
+  /** Kept so `forSession` can build an identically configured instance. */
+  private readonly opts: BrowserComputerBackendOptions;
 
-  constructor(opts: {
-    manager: BrowserManager;
-    viewport?: { width: number; height: number };
-    groundingWidth?: number;
-    groundingHeight?: number;
-    startUrl?: string | null;
-  }) {
+  constructor(opts: BrowserComputerBackendOptions) {
+    this.opts = opts;
     this.manager = opts.manager;
     this.viewport = opts.viewport ?? { width: 1280, height: 800 };
     this.groundingWidth = opts.groundingWidth ?? null;
@@ -77,6 +82,15 @@ export class BrowserComputerBackend implements ComputerAgentBackend {
       displays: 1,
       singleDisplayOnly: true,
     };
+  }
+
+  /**
+   * A browser surface can exist many times over, so each computer session gets
+   * its own page. Sharing one would mean two agents typing into the same tab,
+   * and the first to finish closing it out from under the other.
+   */
+  forSession(): ComputerAgentBackend {
+    return new BrowserComputerBackend(this.opts);
   }
 
   async open(): Promise<void> {
@@ -154,7 +168,7 @@ export class BrowserComputerBackend implements ComputerAgentBackend {
         return `scrolled ${action.direction}`;
       }
       case 'wait':
-        await new Promise((r) => setTimeout(r, Math.min(action.ms, 60_000)));
+        await abortableSleep(Math.min(action.ms, 60_000), signal);
         return `waited ${action.ms}ms`;
       case 'open_application':
       case 'close_application':

@@ -20,6 +20,7 @@ import { registerMcpServerEndpoint } from './routes/mcp-server.js';
 import { registerDockerRoutes } from './routes/docker.js';
 import { registerGitRoutes } from './routes/git.js';
 import { registerControlPlaneRoutes } from './routes/control-plane.js';
+import { registerComputerRoutes } from './routes/computer.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -319,6 +320,7 @@ export async function createServer(app: App): Promise<FastifyInstance> {
   await registerDockerRoutes(server, app);
   await registerGitRoutes(server, app);
   await registerControlPlaneRoutes(server, app);
+  await registerComputerRoutes(server, app);
 
   /* ---- Static assets and the web client --------------------------- */
 

@@ -235,6 +235,14 @@ export interface ComputerSessionInfo {
   id: string;
   state: SessionState;
   config: SessionConfig;
+  /**
+   * Who started it. Null on a single-user instance with no authentication.
+   *
+   * Carried on the session rather than attached by whoever happens to persist
+   * it, so the very first stored row already records the owner and no later
+   * write can quietly drop it.
+   */
+  userId: string | null;
   /** The backend and model actually in use, which fallback can change. */
   activeBackendId: string;
   activeModelId: string | null;

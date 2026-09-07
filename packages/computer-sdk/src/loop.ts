@@ -52,6 +52,31 @@ export interface LoopOptions {
 }
 
 const HISTORY_WINDOW = 8;
+/**
+ * How many identical consecutive actions count as stuck.
+ *
+ * A model that cannot tell its last action had no effect will happily repeat
+ * it until the step budget is gone, which wastes the user's money and ends in
+ * an unhelpful "step limit reached". Detecting it lets the session stop with
+ * an accurate reason instead.
+ */
+const REPEAT_LIMIT = 3;
+/**
+ * How long one planning call may take before it is abandoned.
+ *
+ * Generous, because vision planning over a full screenshot is slow. Not
+ * unbounded, because a provider that accepts a request and never answers would
+ * otherwise pin the session and its backend open for as long as the socket
+ * stayed alive.
+ */
+const PLAN_TIMEOUT_MS = 120_000;
+
+function sameAction(a: ComputerAction, b: ComputerAction): boolean {
+  // Compared by value rather than identity, and ignoring the rationale, since
+  // a model often rewords the same step while proposing it unchanged.
+  const strip = (x: ComputerAction): string => JSON.stringify({ ...x, rationale: undefined });
+  return strip(a) === strip(b);
+}
 
 /**
  * Build the prompt-side view of what the agent may do.
@@ -140,6 +165,9 @@ export async function runLoop(opts: LoopOptions): Promise<void> {
     session.start();
     await session.currentBackend().open();
 
+    let lastAction: ComputerAction | null = null;
+    let repeats = 0;
+
     for (let step = 0; step < config.maxSteps; step++) {
       if (session.isTerminal()) return;
       if (!(await session.waitWhilePaused())) return;
@@ -164,10 +192,15 @@ export async function runLoop(opts: LoopOptions): Promise<void> {
       };
 
       let plan: PlanResult;
-      const controller = new AbortController();
       try {
-        plan = await planner(request, controller.signal);
+        // Through the session, so Stop aborts the model call itself. A planner
+        // awaited outside the kill switch is how a "stopped" session keeps a
+        // request in flight and a backend process alive.
+        plan = await session.runOp(PLAN_TIMEOUT_MS, (signal) => planner(request, signal));
       } catch (e) {
+        // A Stop that landed mid-plan is not a planner failure and must not be
+        // reported as one, nor trigger a fallback to another model.
+        if (session.isTerminal()) return;
         const error = e instanceof Error ? e : new Error(String(e));
         const retry = opts.onPlannerError ? await opts.onPlannerError(error, step) : false;
         if (retry) continue;
@@ -178,6 +211,20 @@ export async function runLoop(opts: LoopOptions): Promise<void> {
       if (session.isTerminal()) return;
       session.think(plan.summary);
       session.setActiveModel(plan.modelId);
+
+      // Stop a model that is going in circles, before it spends the budget.
+      if (plan.action.type !== 'finish' && plan.action.type !== 'wait') {
+        if (lastAction && sameAction(lastAction, plan.action)) repeats += 1;
+        else repeats = 0;
+        lastAction = plan.action;
+        if (repeats + 1 >= REPEAT_LIMIT) {
+          session.complete(
+            false,
+            `Stopped after proposing the same ${plan.action.type} action ${REPEAT_LIMIT} times in a row without making progress.`,
+          );
+          return;
+        }
+      }
 
       const record = await session.perform(plan.action);
 

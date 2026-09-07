@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { MeridianError } from '@meridian/shared';
-import type { ComputerAgentBackend } from '../backend.js';
+import { abortableSleep, type ComputerAgentBackend } from '../backend.js';
 import { toScreenPoint, type ActionType, type BackendHealth, type ComputerAction, type Screenshot, type ScreenContext } from '../types.js';
 
 /**
@@ -71,6 +71,14 @@ export class NativeComputerBackend implements ComputerAgentBackend {
   private ready: Promise<{ width: number; height: number }> | null = null;
   private size: { width: number; height: number } | null = null;
   private closed = false;
+  /**
+   * Sessions currently holding the helper open.
+   *
+   * Without this, probing health would spawn a helper and leave it running for
+   * the life of the gateway — a process able to synthesise keystrokes, alive
+   * while the UI truthfully says no session is running.
+   */
+  private users = 0;
 
   constructor(opts: NativeBackendOptions = {}) {
     this.opts = opts;
@@ -118,6 +126,8 @@ export class NativeComputerBackend implements ComputerAgentBackend {
     }
     try {
       const size = await this.start();
+      // A probe must leave the machine as it found it.
+      if (this.users === 0) await this.shutdown();
       return { available: true, detail: null, remediation: null, version: `X11 ${size.width}x${size.height} on ${display}` };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -133,7 +143,9 @@ export class NativeComputerBackend implements ComputerAgentBackend {
   }
 
   async screen(): Promise<ScreenContext> {
-    const size = await this.start();
+    // The geometry is remembered across a probe, so describing the backend does
+    // not have to start a second helper just to restate the screen size.
+    const size = this.size ?? (await this.probeSize());
     return {
       width: size.width,
       height: size.height,
@@ -148,7 +160,20 @@ export class NativeComputerBackend implements ComputerAgentBackend {
   }
 
   async open(): Promise<void> {
+    this.users += 1;
     await this.start();
+  }
+
+  /** There is one desktop, so every session drives this same instance. */
+  forSession(): ComputerAgentBackend {
+    return this;
+  }
+
+  /** Read the geometry without taking ownership of the helper. */
+  private async probeSize(): Promise<{ width: number; height: number }> {
+    const size = await this.start();
+    if (this.users === 0) await this.shutdown();
+    return size;
   }
 
   private start(): Promise<{ width: number; height: number }> {
@@ -314,7 +339,7 @@ export class NativeComputerBackend implements ComputerAgentBackend {
         return `scrolled ${action.direction}`;
       }
       case 'wait':
-        await new Promise((r) => setTimeout(r, Math.min(action.ms, 60_000)));
+        await abortableSleep(Math.min(action.ms, 60_000), signal);
         return `waited ${action.ms}ms`;
       case 'open_application': {
         const res = await this.request('open', { name: action.name }, signal);
@@ -339,7 +364,15 @@ export class NativeComputerBackend implements ComputerAgentBackend {
   }
 
   async close(): Promise<void> {
-    if (this.closed) return;
+    this.users = Math.max(0, this.users - 1);
+    // Another session still needs the helper; tearing it down here would end
+    // that session's control mid-task.
+    if (this.users > 0) return;
+    await this.shutdown();
+  }
+
+  private async shutdown(): Promise<void> {
+    if (!this.child) return;
     this.closed = true;
     this.failAll(new MeridianError('cancelled', 'Backend closed'));
     this.rl?.close();

@@ -18,7 +18,8 @@ export type ServerEvent =
   | { type: 'notice'; level: 'info' | 'warn' | 'error'; message: string }
   | { type: 'browser'; sessionId: string; entry: { at: number; kind: string; message: string } }
   | { type: 'model-change'; change: Omit<import('@meridian/shared').ModelChange, 'id'> }
-  | { type: 'control-plane'; kind: 'skill' | 'assignment' | 'profile'; detail: string };
+  | { type: 'control-plane'; kind: 'skill' | 'assignment' | 'profile'; detail: string }
+  | { type: 'computer'; event: import('@meridian/computer-sdk').AgentEvent };
 
 export type Subscriber = (event: ServerEvent) => void;
 

@@ -1222,6 +1222,124 @@ export class Store implements CredentialStore {
     }));
   }
 
+  /* ---------------------------------------------------------------- */
+  /* Computer agent sessions                                          */
+  /* ---------------------------------------------------------------- */
+
+  saveComputerSession(row: {
+    id: string;
+    state: string;
+    task: string;
+    config: unknown;
+    activeBackendId: string;
+    activeModelId: string | null;
+    step: number;
+    summary: string | null;
+    error: string | null;
+    userId: string | null;
+    workspaceId: string | null;
+    createdAt: number;
+    updatedAt: number;
+    finishedAt: number | null;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO computer_sessions
+           (id, state, task, config, active_backend_id, active_model_id, step, summary, error, user_id, workspace_id, created_at, updated_at, finished_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         -- Ownership, the task and the config snapshot are set once and never
+         -- updated: who started a session and what it was allowed to do must
+         -- stay as recorded, whoever writes the next progress update.
+         ON CONFLICT(id) DO UPDATE SET
+           state = excluded.state, active_backend_id = excluded.active_backend_id,
+           active_model_id = excluded.active_model_id, step = excluded.step,
+           summary = excluded.summary, error = excluded.error,
+           updated_at = excluded.updated_at, finished_at = excluded.finished_at`,
+      )
+      .run(
+        row.id,
+        row.state,
+        row.task,
+        JSON.stringify(row.config),
+        row.activeBackendId,
+        row.activeModelId,
+        row.step,
+        row.summary,
+        row.error,
+        row.userId,
+        row.workspaceId,
+        row.createdAt,
+        row.updatedAt,
+        row.finishedAt,
+      );
+  }
+
+  listComputerSessions(userId: string | null, limit = 50): Record<string, unknown>[] {
+    const rows = userId
+      ? (this.db
+          .prepare('SELECT * FROM computer_sessions WHERE user_id IS NULL OR user_id = ? ORDER BY created_at DESC LIMIT ?')
+          .all(userId, Math.min(limit, 200)) as Row[])
+      : (this.db.prepare('SELECT * FROM computer_sessions ORDER BY created_at DESC LIMIT ?').all(Math.min(limit, 200)) as Row[]);
+    return rows.map(toComputerSession);
+  }
+
+  getComputerSession(id: string): Record<string, unknown> | null {
+    const row = this.db.prepare('SELECT * FROM computer_sessions WHERE id = ?').get(id) as Row | undefined;
+    return row ? toComputerSession(row) : null;
+  }
+
+  saveComputerAction(row: {
+    id: string;
+    sessionId: string;
+    step: number;
+    action: unknown;
+    verdict: unknown;
+    status: string;
+    result: string | null;
+    error: string | null;
+    startedAt: number;
+    finishedAt: number | null;
+    screenshotId: string | null;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO computer_actions (id, session_id, step, action, verdict, status, result, error, started_at, finished_at, screenshot_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET status = excluded.status, result = excluded.result,
+           error = excluded.error, finished_at = excluded.finished_at, screenshot_id = excluded.screenshot_id`,
+      )
+      .run(
+        row.id,
+        row.sessionId,
+        row.step,
+        JSON.stringify(row.action),
+        JSON.stringify(row.verdict),
+        row.status,
+        row.result,
+        row.error,
+        row.startedAt,
+        row.finishedAt,
+        row.screenshotId,
+      );
+  }
+
+  listComputerActions(sessionId: string): Record<string, unknown>[] {
+    const rows = this.db.prepare('SELECT * FROM computer_actions WHERE session_id = ? ORDER BY step').all(sessionId) as Row[];
+    return rows.map((r) => ({
+      id: String(r.id),
+      sessionId: String(r.session_id),
+      step: Number(r.step),
+      action: json<unknown>(r.action as string, null),
+      verdict: json<unknown>(r.verdict as string, null),
+      status: String(r.status),
+      result: (r.result as string) ?? null,
+      error: (r.error as string) ?? null,
+      startedAt: Number(r.started_at),
+      finishedAt: (r.finished_at as number) ?? null,
+      screenshotId: (r.screenshot_id as string) ?? null,
+    }));
+  }
+
   /** Prune history so a long-running instance does not grow without bound. */
   pruneModelChanges(keep = 2000): number {
     return this.db.prepare('DELETE FROM model_changes WHERE id NOT IN (SELECT id FROM model_changes ORDER BY at DESC LIMIT ?)').run(keep)
@@ -1315,6 +1433,25 @@ function toGeneration(r: Row): GenerationJob {
     cost: Number(r.cost),
     createdAt: Number(r.created_at),
     startedAt: (r.started_at as number) ?? null,
+    finishedAt: (r.finished_at as number) ?? null,
+  };
+}
+
+function toComputerSession(r: Row): Record<string, unknown> {
+  return {
+    id: String(r.id),
+    state: String(r.state),
+    task: String(r.task),
+    config: json<unknown>(r.config as string, null),
+    activeBackendId: String(r.active_backend_id),
+    activeModelId: (r.active_model_id as string) ?? null,
+    step: Number(r.step),
+    summary: (r.summary as string) ?? null,
+    error: (r.error as string) ?? null,
+    userId: (r.user_id as string) ?? null,
+    workspaceId: (r.workspace_id as string) ?? null,
+    createdAt: Number(r.created_at),
+    updatedAt: Number(r.updated_at),
     finishedAt: (r.finished_at as number) ?? null,
   };
 }

@@ -19,6 +19,7 @@
     "zod": "^3.24.1",
     "@meridian/browser-sdk": "workspace:*",
     "@meridian/mcp-sdk": "workspace:*",
-    "@meridian/docker-sdk": "workspace:*"
+    "@meridian/docker-sdk": "workspace:*",
+    "@meridian/computer-sdk": "workspace:*"
   }
 }

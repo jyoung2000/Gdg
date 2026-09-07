@@ -33,6 +33,7 @@ import { Discovery } from './discovery.js';
 import { EventBus, type ServerEvent } from './events.js';
 import { browserTools, createControlPlane, type ControlPlane } from './control.js';
 import { createAIControlPlane, type ControlPlane as AIControlPlane } from './control-plane.js';
+import { ComputerService } from './computer.js';
 
 export interface Warning {
   level: 'info' | 'warn';
@@ -60,6 +61,7 @@ interface AppParts {
   discovery: Discovery;
   control: ControlPlane;
   ai: AIControlPlane;
+  computer: ComputerService;
   warnings: Warning[];
 }
 
@@ -93,6 +95,8 @@ export class App {
   readonly control: ControlPlane;
   /** Skills, AI profiles and scoped assignments. */
   readonly ai: AIControlPlane;
+  /** Computer-control backends and sessions. Off unless a session is started. */
+  readonly computer: ComputerService;
   readonly warnings: Warning[];
 
   /** Live workspaces, keyed by workspace id, so change state survives requests. */
@@ -122,6 +126,7 @@ export class App {
     this.discovery = parts.discovery;
     this.control = parts.control;
     this.ai = parts.ai;
+    this.computer = parts.computer;
     this.warnings = parts.warnings;
   }
 
@@ -315,6 +320,44 @@ export class App {
       onModelChange: (change) => events.publish({ type: 'model-change', change }),
     });
 
+    // The computer agent is constructed but idle: registering backends probes
+    // nothing and starts nothing, so a gateway that never runs a session pays
+    // no cost and holds no control over the machine.
+    const computer = new ComputerService({
+      executor,
+      models,
+      providers,
+      credentials,
+      health,
+      browser: control.browser,
+      logger,
+      grounding: config.computerGrounding,
+      startUrl: config.computerStartUrl,
+      onEvent: (event) => events.publish({ type: 'computer', event }),
+      persistSession: (info) =>
+        store.saveComputerSession({
+          id: info.id,
+          state: info.state,
+          task: info.config.task,
+          config: info.config,
+          activeBackendId: info.activeBackendId,
+          activeModelId: info.activeModelId,
+          step: info.step,
+          summary: info.summary,
+          error: info.error,
+          userId: info.userId,
+          workspaceId: info.config.workspaceId,
+          createdAt: info.createdAt,
+          updatedAt: info.updatedAt,
+          finishedAt: info.finishedAt,
+        }),
+      persistAction: (record) => store.saveComputerAction(record),
+      skillPrompt: (modelId) => {
+        const effective = ai.profiles.effectiveConfig({ modelId });
+        return ai.profiles.skillPrompt(effective);
+      },
+    });
+
     return new App({
       config,
       logger,
@@ -336,6 +379,7 @@ export class App {
       discovery,
       control,
       ai,
+      computer,
       warnings,
     });
   }
@@ -511,6 +555,9 @@ export class App {
   async stop(): Promise<void> {
     for (const t of this.timers) clearInterval(t);
     this.timers.length = 0;
+    // Stop every computer session first: an orphaned backend process holding
+    // a display or a browser is the worst thing to leave behind.
+    await this.computer.stopAll().catch(() => undefined);
     await this.control.browser.closeAll().catch(() => undefined);
     await this.control.mcp.disconnectAll().catch(() => undefined);
     await this.control.docker.cleanupSession().catch(() => undefined);

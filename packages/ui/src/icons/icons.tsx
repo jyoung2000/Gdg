@@ -185,6 +185,14 @@ export const IconClock = glyph(
     <path d="M12 7.5V12l3.25 2" />
   </>,
 );
+/** A display on a stand: the screen a computer agent looks at and drives. */
+export const IconMonitor = glyph(
+  'Monitor',
+  <>
+    <rect x="3" y="4" width="18" height="12.5" rx="2" />
+    <path d="M9 20.5h6M12 16.5v4" />
+  </>,
+);
 export const IconPlay = glyph('Play', <path d="M7.5 5.25 19 12 7.5 18.75Z" />);
 export const IconPause = glyph('Pause', <path d="M9.5 5.5v13M14.5 5.5v13" />);
 export const IconStop = glyph('Stop', <rect x="6" y="6" width="12" height="12" rx="2.5" />);
@@ -751,6 +759,7 @@ export const Icons = {
   CircleDot: IconCircleDot,
   CircleSlash: IconCircleSlash,
   CircleHalf: IconCircleHalf,
+  Monitor: IconMonitor,
   AlertTriangle: IconAlertTriangle,
   AlertCircle: IconAlertCircle,
   Info: IconInfo,
