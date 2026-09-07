@@ -174,6 +174,15 @@ importers:
         specifier: ^1.63.0
         version: 1.63.0
 
+  packages/computer-sdk:
+    dependencies:
+      '@meridian/browser-sdk':
+        specifier: workspace:*
+        version: link:../browser-sdk
+      '@meridian/shared':
+        specifier: workspace:*
+        version: link:../shared
+
   packages/control-sdk:
     dependencies:
       '@meridian/shared':

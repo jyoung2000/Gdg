@@ -428,6 +428,35 @@ export class BrowserManager {
     return this.simpleOp(id, `scroll ${direction}`, (s, sig) => s.scroll(direction, sig));
   }
 
+  /**
+   * Coordinate-addressed input, for a computer agent driving the viewport as a
+   * screen. These deliberately do not return a snapshot: a computer agent
+   * observes by screenshot, and re-serialising the DOM after every pointer
+   * move would cost far more than the action itself.
+   */
+  async pointerMove(id: string, x: number, y: number): Promise<void> {
+    const managed = this.get(id);
+    await this.withOp(managed, undefined, (signal) => managed.session!.pointerMove(x, y, signal));
+  }
+
+  async pointerClick(id: string, x: number, y: number, opts: { button?: 'left' | 'middle' | 'right'; clickCount?: number } = {}): Promise<void> {
+    const managed = this.get(id);
+    this.record(managed, 'action', `click ${x},${y}`);
+    await this.withOp(managed, undefined, (signal) => managed.session!.pointerClick(x, y, opts, signal));
+  }
+
+  async pointerDrag(id: string, from: { x: number; y: number }, to: { x: number; y: number }): Promise<void> {
+    const managed = this.get(id);
+    this.record(managed, 'action', `drag ${from.x},${from.y} -> ${to.x},${to.y}`);
+    await this.withOp(managed, undefined, (signal) => managed.session!.pointerDrag(from, to, signal));
+  }
+
+  async typeText(id: string, text: string): Promise<void> {
+    const managed = this.get(id);
+    this.record(managed, 'action', `type ${text.length} chars`);
+    await this.withOp(managed, undefined, (signal) => managed.session!.typeText(text, signal));
+  }
+
   async wait(id: string, opts: WaitOptions): Promise<PageSnapshot> {
     return this.simpleOp(id, 'wait', (s, sig) => s.wait(opts, sig));
   }

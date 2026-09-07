@@ -61,6 +61,19 @@ export interface ProviderSession {
   hover(ref: string, signal: AbortSignal): Promise<void>;
   press(key: string, signal: AbortSignal): Promise<void>;
   scroll(direction: 'up' | 'down', signal: AbortSignal): Promise<void>;
+
+  /**
+   * Raw coordinate input.
+   *
+   * The ref-based methods above are how an agent acts on a page it has
+   * snapshotted. These are how a *computer* agent acts: it grounds against
+   * pixels in a screenshot and addresses them directly, exactly as it would on
+   * a desktop. Both are needed; neither replaces the other.
+   */
+  pointerMove(x: number, y: number, signal: AbortSignal): Promise<void>;
+  pointerClick(x: number, y: number, opts: { button?: 'left' | 'middle' | 'right'; clickCount?: number }, signal: AbortSignal): Promise<void>;
+  pointerDrag(from: { x: number; y: number }, to: { x: number; y: number }, signal: AbortSignal): Promise<void>;
+  typeText(text: string, signal: AbortSignal): Promise<void>;
   wait(opts: WaitOptions, signal: AbortSignal): Promise<void>;
 
   /**

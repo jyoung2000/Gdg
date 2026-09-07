@@ -24,6 +24,8 @@
     "paths": {
       "@meridian/browser-sdk": ["packages/browser-sdk/src/index.ts"],
       "@meridian/browser-sdk/*": ["packages/browser-sdk/src/*"],
+      "@meridian/computer-sdk": ["packages/computer-sdk/src/index.ts"],
+      "@meridian/computer-sdk/*": ["packages/computer-sdk/src/*"],
       "@meridian/control-sdk": ["packages/control-sdk/src/index.ts"],
       "@meridian/control-sdk/*": ["packages/control-sdk/src/*"],
       "@meridian/mcp-sdk": ["packages/mcp-sdk/src/index.ts"],

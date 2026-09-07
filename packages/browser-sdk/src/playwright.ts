@@ -303,6 +303,39 @@ class PlaywrightSession implements ProviderSession {
     await this.page().evaluate((dir) => window.scrollBy(0, dir === 'down' ? window.innerHeight * 0.8 : -window.innerHeight * 0.8), direction);
   }
 
+  async pointerMove(x: number, y: number, signal: AbortSignal): Promise<void> {
+    this.budget(signal);
+    await this.page().mouse.move(x, y);
+  }
+
+  async pointerClick(
+    x: number,
+    y: number,
+    opts: { button?: 'left' | 'middle' | 'right'; clickCount?: number },
+    signal: AbortSignal,
+  ): Promise<void> {
+    this.budget(signal);
+    await this.page().mouse.click(x, y, { button: opts.button ?? 'left', clickCount: opts.clickCount ?? 1 });
+  }
+
+  async pointerDrag(from: { x: number; y: number }, to: { x: number; y: number }, signal: AbortSignal): Promise<void> {
+    this.budget(signal);
+    const mouse = this.page().mouse;
+    await mouse.move(from.x, from.y);
+    await mouse.down();
+    // Intermediate points: a press-then-teleport-then-release reads as a click
+    // to anything that tracks movement.
+    for (let i = 1; i <= 12; i++) {
+      await mouse.move(from.x + ((to.x - from.x) * i) / 12, from.y + ((to.y - from.y) * i) / 12);
+    }
+    await mouse.up();
+  }
+
+  async typeText(text: string, signal: AbortSignal): Promise<void> {
+    this.budget(signal);
+    await this.page().keyboard.type(text, { delay: 8 });
+  }
+
   async wait(opts: WaitOptions, signal: AbortSignal): Promise<void> {
     const page = this.page();
     if (opts.forText) {
