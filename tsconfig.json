@@ -22,6 +22,12 @@
     "types": ["node"],
     "baseUrl": ".",
     "paths": {
+      "@meridian/browser-sdk": ["packages/browser-sdk/src/index.ts"],
+      "@meridian/browser-sdk/*": ["packages/browser-sdk/src/*"],
+      "@meridian/mcp-sdk": ["packages/mcp-sdk/src/index.ts"],
+      "@meridian/mcp-sdk/*": ["packages/mcp-sdk/src/*"],
+      "@meridian/docker-sdk": ["packages/docker-sdk/src/index.ts"],
+      "@meridian/docker-sdk/*": ["packages/docker-sdk/src/*"],
       "@meridian/shared": ["packages/shared/src/index.ts"],
       "@meridian/shared/*": ["packages/shared/src/*"],
       "@meridian/provider-sdk": ["packages/provider-sdk/src/index.ts"],

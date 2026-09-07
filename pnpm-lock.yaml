@@ -156,6 +156,27 @@ importers:
         specifier: workspace:*
         version: link:../shared
 
+  packages/browser-sdk:
+    dependencies:
+      '@meridian/shared':
+        specifier: workspace:*
+        version: link:../shared
+      playwright-core:
+        specifier: ^1.63.0
+        version: 1.63.0
+
+  packages/docker-sdk:
+    dependencies:
+      '@meridian/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/mcp-sdk:
+    dependencies:
+      '@meridian/shared':
+        specifier: workspace:*
+        version: link:../shared
+
   packages/media-sdk:
     dependencies:
       '@meridian/routing-sdk':
