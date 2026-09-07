@@ -1,8 +1,11 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import {
   MeridianError,
+  MODEL_ALIASES,
   REASONING_EFFORTS,
   isFree,
+  isUnknownMeridianAlias,
+  resolveAlias,
   type AIRequest,
   type ChatMessage,
   type ContentPart,
@@ -72,9 +75,30 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
 
   server.get('/v1/models', async (req) => {
     const models = app.models.all().filter((m) => app.providers.supportState(m.providerId) !== 'unavailable');
+    // Aliases are listed first and marked as such. A client browsing the list
+    // should be able to find "the best free coding model" without knowing any
+    // provider's naming, and should be able to tell that it is choosing an
+    // intent rather than a specific model.
+    const aliasEntries = MODEL_ALIASES.map((a) => ({
+      id: a.id,
+      object: 'model' as const,
+      created: 0,
+      owned_by: 'meridian',
+      meridian: {
+        alias: true,
+        description: a.description,
+        resolves_dynamically: true,
+        mode: a.mode ?? null,
+        free_only: a.freeOnly ?? false,
+        local_only: a.localOnly ?? false,
+        task_type: a.taskType ?? null,
+        required_capabilities: a.requiredCapabilities ?? [],
+      },
+    }));
+
     return {
       object: 'list',
-      data: models.map((m) => ({
+      data: [...aliasEntries, ...models.map((m) => ({
         id: m.id,
         object: 'model',
         created: Math.floor(m.updatedAt / 1000),
@@ -90,8 +114,13 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
           free: isFree(m.pricing),
           status: app.models.getStatus(m.id),
         },
-      })),
-      meridian: { request_id: req.requestId, total: models.length },
+      }))],
+      meridian: {
+        request_id: req.requestId,
+        total: models.length + aliasEntries.length,
+        models: models.length,
+        aliases: aliasEntries.length,
+      },
     };
   });
 
@@ -510,7 +539,18 @@ export function buildAIRequest(
   taskType: AIRequest['taskType'] = 'chat',
 ): AIRequest {
   const ext = body.meridian ?? {};
-  const model = body.model && body.model !== 'auto' && body.model !== 'meridian' ? body.model : null;
+  // An alias names an intent, not a model. Resolving it here turns
+  // `meridian/free-coder` into the same constraints a caller could have set by
+  // hand, so it goes through exactly one routing path and re-resolves on every
+  // request rather than being pinned to whatever was best when it was written.
+  const alias = resolveAlias(body.model);
+  if (isUnknownMeridianAlias(body.model)) {
+    throw new MeridianError(
+      'invalid_request',
+      `Unknown alias "${body.model}". Known aliases: ${MODEL_ALIASES.map((a) => a.id).join(', ')}`,
+    );
+  }
+  const model = !alias && body.model ? body.model : null;
   // These are hard routing constraints, and they come from the request itself:
   // a call that offers tools must land on a model that can call them, and a
   // message carrying an image must land on a model that can see it. Hardcoding
@@ -520,23 +560,29 @@ export function buildAIRequest(
   const hasImages = messages.some(
     (m) => Array.isArray(m.content) && m.content.some((part) => typeof part === 'object' && part !== null && (part as { type?: string }).type === 'image'),
   );
+  // An explicit `meridian` extension always outranks the alias: the caller
+  // said it on this request, the alias is a default. And note what an alias
+  // cannot do — it never sets allowPaid, so naming one can narrow what is
+  // acceptable but never widen what the operator's policy permits.
+  const aliasCaps = alias?.requiredCapabilities ?? [];
+  const required = [...new Set([...(hasImages ? ['vision'] : []), ...aliasCaps])] as AIRequest['requiredCapabilities'];
   return {
-    modality,
-    taskType: ext.task_type ?? taskType,
+    modality: alias?.modality ?? modality,
+    taskType: ext.task_type ?? alias?.taskType ?? taskType,
     messages: messages.length ? messages : undefined,
     model,
     provider: ext.provider ?? null,
     pool: ext.pool ?? null,
-    mode: normalizeMode(ext.mode),
-    freeOnly: ext.free_only,
-    localOnly: ext.local_only,
+    mode: normalizeMode(ext.mode) ?? alias?.mode,
+    freeOnly: ext.free_only ?? alias?.freeOnly,
+    localOnly: ext.local_only ?? alias?.localOnly,
     allowPaid: ext.allow_paid,
     budget: ext.budget ?? null,
     sensitive: ext.sensitive,
     userId,
     workspaceId: ext.workspace_id ?? null,
     toolsRequired,
-    requiredCapabilities: hasImages ? ['vision'] : undefined,
+    requiredCapabilities: required && required.length ? required : undefined,
   };
 }
 
