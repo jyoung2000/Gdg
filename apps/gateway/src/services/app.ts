@@ -587,7 +587,7 @@ export class App {
 
   /** Persist models from the in-memory registry into the database. */
   reloadModels(): void {
-    this.store.upsertModels(this.models.all().map(enrich));
+    this.store.upsertModels(this.models.all().map((m) => enrich(m)));
   }
 
   /** Recompute which providers have a usable credential. */

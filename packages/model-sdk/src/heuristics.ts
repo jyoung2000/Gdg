@@ -1,4 +1,4 @@
-import type { Capability, Modality, ModelDescriptor } from '@meridian/shared';
+import { mergeClaim, mergeClaims, type Capability, type CapabilityClaims, type Modality, type ModelDescriptor } from '@meridian/shared';
 
 /**
  * Capability priors inferred from a model's identifier.
@@ -93,12 +93,26 @@ export function inferFromName(modelId: string): Inference {
  * Merge inferred hints into a discovered descriptor without ever overwriting
  * something the provider told us directly.
  */
-export function enrich(model: ModelDescriptor): ModelDescriptor {
+export function enrich(model: ModelDescriptor, opts: EnrichOptions = {}): ModelDescriptor {
   const hint = inferFromName(model.providerModelId);
   const modalities = [...new Set([...model.modalities, ...hint.modalities])];
   const isMediaOnly =
     hint.modalities.some((m) => m === 'image' || m === 'video' || m === 'speech' || m === 'transcription' || m === 'embedding') &&
     !hint.modalities.includes('vision');
+
+  const at = opts.now ?? Date.now();
+  // Two sources meet here and the difference between them is the whole point of
+  // provenance: what the provider listed is its own claim, what the name
+  // matched is our guess. Merging them into one flat array — as this used to —
+  // makes a heuristic indistinguishable from a fact.
+  const claims: CapabilityClaims = {};
+  const declaredSource = opts.declaredSource ?? (model.discovered ? `${model.providerId} listing` : 'shipped catalog');
+  for (const cap of model.capabilities) {
+    claims[cap] = { state: 'provider_declared', source: declaredSource, confidence: 0.9, at };
+  }
+  for (const cap of hint.capabilities) {
+    claims[cap] = mergeClaim(claims[cap], { state: 'inferred', source: 'model-name heuristic', confidence: 0.5, at });
+  }
 
   return {
     ...model,
@@ -108,5 +122,16 @@ export function enrich(model: ModelDescriptor): ModelDescriptor {
     capabilities: [...new Set([...model.capabilities, ...hint.capabilities])],
     tags: [...new Set([...model.tags, ...hint.tags])],
     contextLength: model.contextLength ?? hint.contextLength,
+    // Anything already established (a probe result, an operator's confirmation)
+    // outranks both of the above and survives re-enrichment.
+    capabilityClaims: mergeClaims(claims, model.capabilityClaims ?? {}),
+    discoveredAt: model.discoveredAt ?? at,
+    lastVerifiedAt: model.discovered ? at : model.lastVerifiedAt,
   };
+}
+
+export interface EnrichOptions {
+  /** Names the provider listing, for the provenance record. */
+  declaredSource?: string;
+  now?: number;
 }

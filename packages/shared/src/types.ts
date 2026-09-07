@@ -283,6 +283,18 @@ export interface ModelDescriptor {
   /** Free-form tags used by pools and the UI. */
   tags: string[];
   updatedAt: number;
+  /**
+   * Per-capability evidence. `capabilities` above stays the fast path every
+   * routing decision reads; this records how each entry was established, so
+   * the UI can show a provider's own claim differently from a name guess.
+   * Optional because catalog entries predate it and a missing claim simply
+   * reads as "unknown" rather than "no".
+   */
+  capabilityClaims?: import('./control.js').CapabilityClaims;
+  /** First time Meridian saw this model. Drives the "recently discovered" view. */
+  discoveredAt?: number;
+  /** Last time a provider listing or probe confirmed it still exists. */
+  lastVerifiedAt?: number;
 }
 
 /** Quality scores in [0,100]; null when never measured. */
