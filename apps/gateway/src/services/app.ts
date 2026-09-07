@@ -30,6 +30,7 @@ import { openDatabase } from '../db/database.js';
 import { SecretBox } from '../db/crypto.js';
 import { Store, defaultPreferences } from '../db/store.js';
 import { Discovery } from './discovery.js';
+import { CatalogSync } from './catalog-sync.js';
 import { EventBus, type ServerEvent } from './events.js';
 import { browserTools, createControlPlane, type ControlPlane } from './control.js';
 import { createAIControlPlane, type ControlPlane as AIControlPlane } from './control-plane.js';
@@ -59,6 +60,7 @@ interface AppParts {
   sandboxDegradedReason: string | null;
   events: EventBus;
   discovery: Discovery;
+  catalogSync: CatalogSync;
   control: ControlPlane;
   ai: AIControlPlane;
   computer: ComputerService;
@@ -92,6 +94,8 @@ export class App {
   readonly sandboxDegradedReason: string | null;
   readonly events: EventBus;
   readonly discovery: Discovery;
+  /** Keeps the provider catalog in step with the free-model dataset. */
+  readonly catalogSync: CatalogSync;
   readonly control: ControlPlane;
   /** Skills, AI profiles and scoped assignments. */
   readonly ai: AIControlPlane;
@@ -124,6 +128,7 @@ export class App {
     this.sandboxDegradedReason = parts.sandboxDegradedReason;
     this.events = parts.events;
     this.discovery = parts.discovery;
+    this.catalogSync = parts.catalogSync;
     this.control = parts.control;
     this.ai = parts.ai;
     this.computer = parts.computer;
@@ -174,6 +179,22 @@ export class App {
       if (o.enabled === false) providers.setEnabled(d.id, false);
       if (o.verifiedAt != null) providers.setVerifiedAt(d.id, o.verifiedAt);
     }
+
+    /* ---- Synced provider catalog ---------------------------------- */
+    // Registered from the on-disk cache before anything reconciles models
+    // against the provider set: a synced provider that vanished here would
+    // take its previously-discovered models down with it as "orphaned".
+    //
+    // Offline on purpose. Boot must not wait on GitHub, and must not fail
+    // because it is unreachable; a refresh over the network is a separate,
+    // scheduled concern.
+    const catalogSync = new CatalogSync({
+      providers,
+      logger,
+      config,
+      onNotice: (level, message) => warnings.push({ level, message }),
+    });
+    await catalogSync.runOnce({ offline: true });
 
     // Persisted models are only trustworthy while their provider exists. A
     // dynamically-discovered local server from a previous run leaves its models
@@ -377,6 +398,7 @@ export class App {
       sandboxDegradedReason: degraded ? reason : null,
       events,
       discovery,
+      catalogSync,
       control,
       ai,
       computer,

@@ -6,6 +6,11 @@ export interface MeridianConfig {
   host: string;
   /** Absolute path to the SQLite database file. */
   databasePath: string;
+  /**
+   * Root for Meridian's own state. Synced catalogs cache here, so an instance
+   * that boots without a network still knows which providers exist.
+   */
+  dataDir: string;
   /** Root under which agent workspaces are created. */
   workspaceRoot: string;
   /** Where generated images/video/audio are written. */
@@ -108,6 +113,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): MeridianConfig
   return {
     port: num(env.PORT ?? env.MERIDIAN_PORT, DEFAULT_PORT),
     host: env.MERIDIAN_HOST ?? '0.0.0.0',
+    dataDir,
     databasePath: env.MERIDIAN_DB ?? `${dataDir}/meridian.db`,
     workspaceRoot: env.MERIDIAN_WORKSPACE_ROOT ?? './workspaces',
     assetRoot: env.MERIDIAN_ASSET_ROOT ?? `${dataDir}/assets`,

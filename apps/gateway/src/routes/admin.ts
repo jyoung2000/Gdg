@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import {
   MeridianError,
   isFree,
+  isZeroCost,
   newId,
   type AIRequest,
   type InferencePool,
@@ -39,9 +40,73 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
         freeModels: free,
         paidModels: models.length - free,
         verifiedCapabilities: app.providers.verifiedCapabilities(d.id),
+        // Access and economics from the synced dataset, when it covers this
+        // provider. Null is a real answer: most locally-configured endpoints
+        // are not in any public catalog.
+        intelligence: app.catalogSync.for(d.id),
       };
     }),
   }));
+
+  /* ---------------- Synced catalog ---------------- */
+
+  /**
+   * What the provider catalog knows, where it came from, and how old it is.
+   *
+   * The freshness fields are not decoration: an operator choosing a provider on
+   * the strength of "free tier, no card" deserves to know that claim was last
+   * checked months ago and could not be refreshed today.
+   */
+  server.get('/api/catalog/status', async () => ({ status: app.catalogSync.status() }));
+
+  /**
+   * Force a refresh from the upstream dataset.
+   *
+   * Admin-only and explicitly triggered: it reaches out to a third-party host,
+   * and it can change which providers this instance will route to.
+   */
+  server.post('/api/catalog/sync', async (req) => {
+    requireAdmin(req);
+    const status = await app.catalogSync.runOnce();
+    // A sync can register providers, which changes what discovery is allowed to
+    // ask. Tell the clients so the model menus refresh themselves.
+    app.events.publish({
+      type: 'discovery',
+      providerId: status.source,
+      added: status.registered,
+      removed: 0,
+      total: app.providers.list().length,
+    });
+    return { status };
+  });
+
+  /**
+   * The access picture for every provider the dataset covers.
+   *
+   * `free=true` filters to access kinds that cost nothing at the moment of the
+   * call — which deliberately excludes trial credit, because a finite balance
+   * is cheap, not free.
+   */
+  server.get<{ Querystring: { free?: string; noCard?: string; commercial?: string } }>(
+    '/api/catalog/intelligence',
+    async (req) => {
+      let rows = app.catalogSync.all();
+      if (req.query.free === 'true') rows = rows.filter((r) => isZeroCost(r.freeAccess));
+      // 'no' only — an unconfirmed card requirement must not pass a "no card"
+      // filter, or the filter becomes a promise Meridian cannot keep.
+      if (req.query.noCard === 'true') rows = rows.filter((r) => r.requirements.card === 'no');
+      if (req.query.commercial === 'true') rows = rows.filter((r) => r.commercialUse === 'yes');
+      return { providers: rows, total: rows.length };
+    },
+  );
+
+  /** What changed at the last sync, most consequential first. */
+  server.get('/api/catalog/changes', async () => {
+    const { lastChanges } = app.catalogSync.status();
+    return {
+      changes: [...lastChanges].sort((a, b) => Number(b.significant) - Number(a.significant)),
+    };
+  });
 
   server.patch<{ Params: { id: string }; Body: { trust?: TrustLevel; baseUrl?: string; enabled?: boolean; dataUse?: unknown } }>(
     '/api/providers/:id',
