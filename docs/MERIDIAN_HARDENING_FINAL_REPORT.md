@@ -108,8 +108,10 @@ Everything below was executed, not reasoned about.
 | A server-rendered page skips Chromium | Live against a real socket: `transport=http`, 1,465 chars, **0 browser launches** |
 | The probe→evidence→listing loop closes | `uag models` shows `declared`, `uag verify` runs, listing shows `probed` |
 
-**Suites:** unit 291, e2e 94, integration 27, router 73, contract 24, chaos 12,
-UI 28. All passing, 0 failures, 1 skipped (needs Chromium).
+**Suites at the time of this report:** unit 291, e2e 94, integration 27, router
+73, contract 24, chaos 12, UI 28. All passing, 0 failures, 1 skipped (needed
+Chromium). Superseded by
+[Phase 4](MERIDIAN_PHASE4_IMPLEMENTATION.md): 594 tests, 0 failures.
 
 ---
 
@@ -117,15 +119,16 @@ UI 28. All passing, 0 failures, 1 skipped (needs Chromium).
 
 Real code, not exercisable here.
 
-- **Every hosted provider.** The network allowlist reaches github.com and not a
-  single provider API. All eleven adapter implementations, the probes
-  against them, and the price book's real rates are exercised only against the
-  local inference server and cached data.
+- **Every hosted provider.** Two APIs turned out to be reachable — see
+  [Phase 4](MERIDIAN_PHASE4_IMPLEMENTATION.md) — but only unauthenticated, which
+  proves transport and error classification and nothing about capability. The
+  other nine adapters, the probes against them, and the price book's real rates
+  are exercised only against the local inference server and cached data.
 - **Lightpanda and remote-CDP browser engines.** No binary or endpoint has ever
   been available in this environment.
-- **MCP tools inside a live agent run.** The join is unit-tested with a fake
-  manager and the transport is e2e-tested separately; the two have not been
-  exercised together, because that needs an MCP server and a model in one run.
+- ~~**MCP tools inside a live agent run.**~~ Verified in Phase 4 against an MCP
+  server written into the repository, so the join no longer needs a published
+  server or a network to exercise.
 - **Docker sandbox mode.** `MERIDIAN_SANDBOX=process` throughout.
 
 ---
@@ -161,7 +164,8 @@ concrete references a dropped turn named into the marker it leaves. 0% → 89%.
 | Adapter implementations registered | 11 |
 | Providers in the shipped catalog | 24 |
 | After a live free-model sync | 52 |
-| Providers verified against a real API here | **0** (network policy) |
+| Providers reached at their real API here | **2** — Anthropic and Google, unauthenticated only. See [Phase 4](MERIDIAN_PHASE4_IMPLEMENTATION.md) |
+| Providers verified with a credential here | **0** (no credential exists in this environment) |
 | Models with `probe_verified` evidence here | 4 (the local inference server) |
 
 ---
@@ -198,9 +202,10 @@ concrete references a dropped turn named into the marker it leaves. 0% → 89%.
 
 Ordered by what would matter most next.
 
-1. **Live quota.** Nothing constructs a `QuotaState`. Free-first routing cannot
-   avoid a route whose daily allowance is spent. The rate-limit header names are
-   already carried as metadata, waiting for a reader.
+1. ~~**Live quota.**~~ Done in Phase 4, per account rather than per provider:
+   response headers are parsed into a per-credential allowance, and an account
+   with a spent published quota is not offered to the router. An unpublished
+   quota is still never read as "plenty".
 2. **Re-verification scheduling.** A claim older than 90 days is now discounted,
    but nothing decides when to spend quota re-probing it. That is a policy
    question with a real bill attached.
@@ -216,9 +221,9 @@ Ordered by what would matter most next.
    providers return are parsed and discarded; `Usage` and `Pricing` have no
    fields for either. The current assembly order puts the most volatile content
    first, which is backwards for prefix caching.
-7. **`setVerified` stores compile-time introspection.**
-   `adapter.capabilities()` reports which methods were written, not which work.
-   It should be named `adapterSurface` so no caller mistakes it for evidence.
+7. ~~**`setVerified` stores compile-time introspection.**~~ Done in Phase 4:
+   `adapter.surface()`, `recordLiveContact`, and an `adapterSurface` field, with
+   the ceiling and the evidence shown side by side in the capability matrix.
 8. **Probe coverage.** Four capabilities have probes. JSON mode, structured
    output, reasoning, audio and video do not.
 9. **Agent-loop unit tests.** No test constructs an `AgentLoop` or

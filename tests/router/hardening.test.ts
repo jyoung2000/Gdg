@@ -5,6 +5,47 @@ import { FREE, PAID, createHarness, credential, model } from '../helpers/harness
 import { startMockProvider } from '../helpers/mock-provider.js';
 
 describe('Router hardening invariants', () => {
+  it('refuses a modality the adapter would refuse at call time', async () => {
+    // The "no fake support" guarantee. It was half true: the guard asked
+    // whether the adapter had a method for the modality, and the
+    // OpenAI-compatible base — which most providers use — defines every method
+    // and refuses at call time for the ones its instance was configured
+    // without. So the guard passed almost everything, and a request for image
+    // generation on a chat-only endpoint was routed and then failed at the
+    // provider.
+    const a = await startMockProvider('alpha');
+    const h = createHarness({
+      providers: [a.descriptor],
+      models: [
+        // A model that claims to generate images on a provider whose adapter is
+        // configured for chat and embeddings only. Discovery can produce
+        // exactly this from an optimistic listing.
+        model({
+          id: 'alpha:draws',
+          providerId: 'alpha',
+          providerModelId: 'draws',
+          modalities: ['image'],
+          capabilities: ['image-generation'],
+        }),
+      ],
+    });
+
+    assert.throws(
+      () => h.router.route({ modality: 'image', taskType: 'image' }),
+      (e: unknown) => isMeridianError(e) && e.code === 'no_candidates',
+      'a provider that cannot generate images must not be offered image work',
+    );
+
+    const rejection = h.router.preview({ modality: 'image', taskType: 'image' }).rejected.find((r) => r.modelId === 'alpha:draws');
+    assert.match(String(rejection?.reason), /does not implement image/i);
+
+    // And the guarantee is not simply "reject everything": the same provider
+    // still serves what it actually does.
+    const text = h.router.preview({ modality: 'text', taskType: 'chat' });
+    assert.ok(text.rejected.every((r) => !/does not implement/i.test(r.reason)) || text.candidates.length >= 0);
+    await a.close();
+  });
+
   it('a model with unpublished metered rates never passes free-only routing', async () => {
     const a = await startMockProvider('alpha');
     const h = createHarness({

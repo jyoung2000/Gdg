@@ -135,8 +135,20 @@ describe('Router invariants', async () => {
   }
 
   it('exercises both outcomes, so the properties below are not vacuous', () => {
-    assert.ok(decisions.length > 40, `expected many routable scenarios, saw ${decisions.length}`);
+    // The routable count moved down when the "no fake support" guard was
+    // corrected, and the drop is the guard working rather than coverage
+    // shrinking. The scenario space includes `image` and `transcription`, the
+    // mock provider serves neither, and its OpenAI-compatible adapter defines
+    // the methods anyway and refuses at call time — so those scenarios used to
+    // route and then fail at the provider. They are now refused up front.
+    assert.ok(decisions.length > 25, `expected many routable scenarios, saw ${decisions.length}`);
     assert.ok(refusals.length > 5, `expected some unroutable ones, saw ${refusals.length}`);
+    // Both halves of the space are still exercised: refusals are not all one
+    // reason, which would mean the run stopped testing anything else.
+    assert.ok(
+      decisions.some((d) => d.s.request.modality === 'text'),
+      'text must still route, or the guard has gone too far',
+    );
   });
 
   it('never selects a model that cannot serve the requested modality', () => {

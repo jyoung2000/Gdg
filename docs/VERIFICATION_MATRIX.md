@@ -144,6 +144,61 @@ on a phone without anything failing to build.
 | CodeMirror editor and xterm terminal | IMPLEMENTED_UNVERIFIED | Themed from the same tokens; not driven |
 | Screenshots as artifacts | VERIFIED | `docs/evidence/screens/` is written on every run (git-ignored, since it changes every time) |
 
+## Accounts, quota and the request trace (Phase 4)
+
+Full write-up in [MERIDIAN_PHASE4_IMPLEMENTATION.md](MERIDIAN_PHASE4_IMPLEMENTATION.md).
+
+| Capability | Status | Evidence |
+| --- | --- | --- |
+| An account fault stays on the account, not the provider | VERIFIED | Two users, one revoked key, a real socket: the provider's breaker stays closed and the other user is still served. The counterfactual is asserted in the same test |
+| A service fault stays on the provider, not the account | VERIFIED | A 503 leaves the account's cooldown null and it stays available |
+| An anonymous rate limit still blames the provider | VERIFIED | No credential, so there is no account to blame |
+| Routing skips a cooling-down account and recovers | VERIFIED | Deterministic clock: the spare is chosen, then the primary returns by itself |
+| A rejection distinguishes "busy" from "not configured" | VERIFIED | Asserted on the router's own rejection text |
+| Rate-limit headers become an account allowance | VERIFIED | Against a real socket, and through the whole gateway with a real credential |
+| Silence is never read as a full allowance | VERIFIED | A provider that publishes nothing records nothing |
+| A spent window that has since reset stops applying | VERIFIED | Clock advanced past the reset |
+| Account standing survives a restart | VERIFIED | A second `App` over the same directory returns state, cooldown and allowance |
+| `health` credential-pool strategy | VERIFIED | Was a STUB identical to `priority`; now sorts by which key is working |
+| Account standing on the API, CLI and UI | VERIFIED | `/api/credentials`, `uag accounts`, and the provider dialog; the reset route is owner-gated and exercised |
+| A usage row names the agent step that produced it | VERIFIED | A real agent run: every row's step id matches a step in the task |
+| A verification verdict lands on the step that earned it | VERIFIED | Store-level, asserting both halves — role matching returns two runs, step matching returns one |
+| The routing decision survives the request | VERIFIED | The snapshot carries the applied mode, the requested mode and the winner |
+| A request id can be traded for what happened | VERIFIED | `/api/trace/:id` returns every attempt and leads back to the task; an unknown id is a 404 |
+| Trace scoping | VERIFIED | Non-admins see only their own rows, exactly as on `/api/usage` |
+| Context savings recorded durably | VERIFIED | Written per attempt; null where nothing measured it, never zero |
+| Trace on the CLI and the Usage screen | VERIFIED | `uag trace` against a running gateway; the panel driven in Chromium |
+| Quota against a real provider's own headers | BLOCKED_EXTERNAL | No reachable provider publishes them without a credential |
+
+## Capability truth (Phase 4)
+
+| Capability | Status | Evidence |
+| --- | --- | --- |
+| Adapter surface reported as a ceiling, not as evidence | VERIFIED | `adapter.surface()`, `recordLiveContact`, `adapterSurface`; the old `verifiedCapabilities` field published method introspection under a name that promised a live call |
+| `GET /api/capabilities` separates ceiling from evidence | VERIFIED | The sim executes chat and embeddings and not video; `text` reads `probe_verified` from a probe earlier in the same suite |
+| No provider claims evidence for a modality it cannot execute | VERIFIED | Asserted across every provider in the matrix |
+| An unspoken capability counts zero models rather than all of them | VERIFIED | Asserted on a capability nothing has claimed |
+| The Matrix tab labels both halves | VERIFIED | Driven in Chromium |
+| The router's "no fake support" guard | VERIFIED | Red-then-green. It asked only whether a method existed, and the OpenAI-compatible base defines every method and refuses at call time — so a chat-only endpoint was routed image work. The guard now asks the adapter's own surface too |
+
+## Provider reachability (Phase 4)
+
+| Capability | Status | Evidence |
+| --- | --- | --- |
+| The Anthropic adapter reaches the real API | VERIFIED | Unauthenticated: a typed `authentication_failed`, and the probe key never survives into the error |
+| The Google adapter reaches the real API | VERIFIED | Unauthenticated, and it found the defect below |
+| Google's 400 `API_KEY_INVALID` classified as an auth failure | VERIFIED | Red against the live API before the fix; `invalid_request` meant no failover and no account cooldown |
+| A real provider's auth failure lands on the account | VERIFIED | Provider breaker still closed afterwards |
+| Any authenticated call to a hosted provider | BLOCKED_EXTERNAL | No credential exists here, and fabricating one is out of bounds |
+| The other nine hosted adapters | BLOCKED_EXTERNAL | Refused at CONNECT by the egress policy — OpenAI, Groq, OpenRouter, Mistral, DeepSeek, Together, Cohere, HuggingFace, Cloudflare, Replicate, fal, Pollinations, AI Horde |
+
+## Test harness honesty (Phase 4)
+
+| Capability | Status | Evidence |
+| --- | --- | --- |
+| The browser suite tests the sources, not a stale bundle | VERIFIED | Found by a test written for markup the bundle did not contain; the suite now rebuilds when `apps/web/src` or `packages/ui/src` is newer than `dist/web` |
+| MCP tools reach a real model in a real run | VERIFIED | A dependency-free MCP server in the repository, assigned to a workspace; the model's call is answered by the server and recorded in the task |
+
 ## CLI
 
 Exercised as a real process against a running gateway
@@ -159,4 +214,6 @@ differently from the way the help text describes.
 | `code` | VERIFIED | Runs the pipeline and names the files it changed; the file exists on disk afterwards |
 | `compare` | VERIFIED | Refuses a missing option with the correct usage rather than failing silently |
 | `help` | VERIFIED | Names every command that is implemented |
+| `trace` | VERIFIED | Run against a live gateway: prints every attempt and the applied routing policy, and reports an unknown id as not found rather than as an empty trace |
+| `accounts` | VERIFIED | Run against a live gateway: an allowance nobody published reads "not published", never a number |
 | `task`, `usage`, `configure`, `benchmark`, `research`, `image`, `video`, `audio` | IMPLEMENTED_UNVERIFIED | Real implementations; not exercised in this pass |

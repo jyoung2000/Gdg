@@ -22,7 +22,7 @@ import {
   type UserPreferences,
 } from '@meridian/shared';
 import { ModelRegistry, recommendationScore } from '@meridian/model-sdk';
-import type { ProviderRegistry } from '@meridian/provider-sdk';
+import type { AdapterSurface, ProviderRegistry } from '@meridian/provider-sdk';
 import type { CredentialResolver } from './credentials.js';
 import type { HealthStore } from './health.js';
 import type { PoolManager } from './pools.js';
@@ -88,6 +88,31 @@ export const ADAPTER_METHOD_FOR_MODALITY: Record<Modality, keyof AdapterMethodPr
   audio: 'speech',
   embedding: 'embed',
 };
+
+/**
+ * Which surface flag a modality needs.
+ *
+ * Separate from the method map because they answer different halves of the same
+ * question: the method map says "is there code for this at all", this says
+ * "does this instance actually serve it". `vision` needs `chat` — an image
+ * arrives as part of a completion, and whether the MODEL can see is capability
+ * evidence, not an adapter fact.
+ */
+const SURFACE_FLAG_FOR_MODALITY: Record<Modality, keyof AdapterSurface> = {
+  text: 'chat',
+  vision: 'chat',
+  image: 'image',
+  video: 'video',
+  speech: 'speech',
+  audio: 'speech',
+  transcription: 'transcription',
+  embedding: 'embedding',
+};
+
+/** Does this adapter instance serve this modality, by its own account? */
+export function adapterServes(surface: AdapterSurface, modality: Modality): boolean {
+  return surface[SURFACE_FLAG_FOR_MODALITY[modality]] === true;
+}
 
 interface AdapterMethodProbe {
   chat: unknown;
@@ -258,8 +283,19 @@ export class Router {
     if (support === 'unavailable') return no('No adapter is implemented for this provider');
     const adapter = this.deps.providers.get(m.providerId);
     if (!adapter) return no('Provider adapter could not be constructed');
+    // Two checks, because either alone lets a model through that cannot be
+    // served. The method has to exist — an adapter class without a `video`
+    // method can never generate video — and the adapter has to say it supports
+    // it, because the OpenAI-compatible base defines every method and then
+    // refuses at call time for the ones its instance was configured without.
+    // That family covers most providers, so the `typeof` check alone passed
+    // almost everything and the "no fake support" guarantee held only for the
+    // handful of adapters that omit methods outright.
     const method = ADAPTER_METHOD_FOR_MODALITY[req.modality];
     if (typeof (adapter as unknown as AdapterMethodProbe)[method] !== 'function') {
+      return no(`Adapter does not implement ${req.modality}`);
+    }
+    if (!adapterServes(adapter.surface(), req.modality)) {
       return no(`Adapter does not implement ${req.modality}`);
     }
 

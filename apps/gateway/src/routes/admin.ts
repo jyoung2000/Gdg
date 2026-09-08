@@ -27,7 +27,7 @@ import {
   summarise,
   type RouteContext,
 } from '@meridian/model-sdk';
-import { ADAPTER_METHOD_FOR_MODALITY } from '@meridian/routing-sdk';
+import { ADAPTER_METHOD_FOR_MODALITY, adapterServes } from '@meridian/routing-sdk';
 import { mayUseCredential, requireAdmin, requireCredentialOwner, requireScope } from './authz.js';
 import type { App } from '../services/app.js';
 import { intParam } from './shared.js';
@@ -114,9 +114,15 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
           executable: Object.fromEntries(
             MODALITIES.map((modality) => [
               modality,
-              adapter
-                ? typeof (adapter as unknown as Record<string, unknown>)[ADAPTER_METHOD_FOR_MODALITY[modality]] === 'function'
-                : false,
+              // The same two-part answer the router enforces: the method has to
+              // exist, and the adapter instance has to say it serves this. The
+              // OpenAI-compatible base defines every method and refuses at call
+              // time for the ones it was configured without, so asking only
+              // whether the method exists would report almost every provider as
+              // able to generate images.
+              adapter != null &&
+                typeof (adapter as unknown as Record<string, unknown>)[ADAPTER_METHOD_FOR_MODALITY[modality]] === 'function' &&
+                adapterServes(adapter.surface(), modality),
             ]),
           ),
           evidence: CAPABILITIES.map((capability) => {
