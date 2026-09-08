@@ -465,6 +465,14 @@ export const api = {
   modelCapabilities: (modelId: string) => get<ModelCapabilitiesView>(`/api/models/${encodeURIComponent(modelId)}/capabilities`),
   confirmCapability: (modelId: string, capability: string, supported: boolean) =>
     post<{ model: unknown }>(`/api/models/${encodeURIComponent(modelId)}/capabilities`, { capability, supported }),
+  /** Probe one model with real requests and record what came back. */
+  verifyModel: (modelId: string) =>
+    post<{
+      probed: number;
+      claimsWritten: number;
+      inconclusive: number;
+      models: { modelId: string; results: { capability: string; outcome: string; detail: string; latencyMs: number }[] }[];
+    }>('/api/verification/run', { modelIds: [modelId] }),
   discoverModels: (force = false) => post<{ providers: number; models: number; skipped: string[] }>('/api/models/discover', { force }),
   modelChanges: (limit = 50) => get<{ changes: ModelChangeView[] }>(`/api/models/changes?limit=${limit}`),
   discoveryStatus: () => get<{ schedules: DiscoveryScheduleView[]; intervalMs: number }>('/api/models/discovery-status'),

@@ -357,6 +357,37 @@ function CapabilityInspector({
     unknown: 'Unknown',
   };
 
+  const [probing, setProbing] = useState(false);
+
+  /**
+   * Ask the model, rather than asking the catalogue.
+   *
+   * Until recently `probe_verified` was a state nothing could produce — this
+   * dialog rendered "Verified by a live call" for a label no model could ever
+   * earn. This button is the live call.
+   */
+  const probe = async () => {
+    setProbing(true);
+    try {
+      const res = await api.verifyModel(data.modelId);
+      const verdicts = res.models[0]?.results ?? [];
+      const verified = verdicts.filter((r) => r.outcome === 'supported').length;
+      const undecided = verdicts.filter((r) => r.outcome === 'inconclusive').length;
+      toast({
+        level: verified > 0 ? 'success' : 'info',
+        message: `${verified} capabilit${verified === 1 ? 'y' : 'ies'} verified by a live call`,
+        // An inconclusive probe changed nothing, and saying so is the
+        // difference between "we checked and it cannot" and "we could not tell".
+        detail: undecided ? `${undecided} probe(s) reached no verdict and recorded nothing` : undefined,
+      });
+      onChanged();
+    } catch (e) {
+      toast({ level: 'error', message: 'Could not probe this model', detail: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setProbing(false);
+    }
+  };
+
   const confirm = async (capability: string, supported: boolean) => {
     try {
       await api.confirmCapability(data.modelId, capability, supported);
@@ -379,9 +410,16 @@ function CapabilityInspector({
         {data.availability.detail && <p className="mrd-caption">{data.availability.detail}</p>}
 
         <div>
-          <h3 className="mrd-heading">Capabilities</h3>
+          <div className="mrd-hstack" style={{ gap: 'var(--space-2)', alignItems: 'baseline' }}>
+            <h3 className="mrd-heading">Capabilities</h3>
+            <div className="mrd-spacer" />
+            <Button size="sm" variant="secondary" onClick={() => void probe()} disabled={probing}>
+              {probing ? 'Probing…' : 'Verify with a live call'}
+            </Button>
+          </div>
           <p className="mrd-caption mrd-secondary">
-            Unknown means nobody has told us — it is not the same as unsupported. Confirm one to record it deliberately.
+            Unknown means nobody has told us — it is not the same as unsupported. Confirm one to record it deliberately,
+            or probe the model to find out. A probe sends a real, tiny request and costs whatever this model charges.
           </p>
           <Stack gap={2} style={{ marginTop: 'var(--space-2)' }}>
             {data.capabilities.map((c) => (

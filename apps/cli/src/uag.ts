@@ -204,6 +204,23 @@ function parseArgs(argv: string[]): Args {
 }
 
 const str = (v: string | boolean | undefined): string | undefined => (typeof v === 'string' ? v : undefined);
+
+/**
+ * How much of what we believe about this model was actually checked.
+ *
+ * The listing used to show only what a model claims to be, with no way to tell
+ * a capability someone verified from one guessed off the model's name. This
+ * summarises the strongest evidence on record — `uag verify <model>` is what
+ * moves it.
+ */
+function evidenceLabel(claims: Record<string, { state?: string }> | undefined): string {
+  const states = Object.values(claims ?? {}).map((v) => v?.state);
+  if (!states.length) return c.dim('none');
+  if (states.includes('probe_verified')) return c.green('probed');
+  if (states.includes('user_confirmed')) return 'confirmed';
+  if (states.includes('provider_declared')) return c.dim('declared');
+  return c.dim('guessed');
+}
 /** The routing-mode flag, uppercased so `--mode fast` means FAST rather than silently AUTO. */
 const modeFlag = (flags: Record<string, string | boolean | undefined>): string | undefined => {
   const raw = str(flags.mode);
@@ -481,7 +498,7 @@ async function main(): Promise<number> {
       }
       out();
       table(
-        ['MODEL', 'PROVIDER', 'CONTEXT', 'PRICING', 'LATENCY', 'STATUS'],
+        ['MODEL', 'PROVIDER', 'CONTEXT', 'PRICING', 'EVIDENCE', 'LATENCY', 'STATUS'],
         res.models.slice(0, 60).map((m) => {
           const pricing = m.pricing as { kind: string };
           const perf = m.performance as { latencyMs: number | null } | null;
@@ -490,6 +507,7 @@ async function main(): Promise<number> {
             String(m.providerId),
             m.contextLength ? formatContext(Number(m.contextLength)) : c.dim('—'),
             m.free ? c.green(pricing.kind) : pricing.kind,
+            evidenceLabel(m.capabilityClaims as Record<string, { state?: string }> | undefined),
             perf?.latencyMs ? `${(perf.latencyMs / 1000).toFixed(1)}s` : c.dim('—'),
             String(m.status),
           ];
