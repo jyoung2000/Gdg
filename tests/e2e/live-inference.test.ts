@@ -638,6 +638,89 @@ describe('E2E: gateway against a real local inference server', () => {
     assert.ok(completed.length >= 3, `expected the pipeline to run, saw ${JSON.stringify(detail.steps.map((s) => s.status))}`);
   });
 
+  /* ---------------- MCP tools reaching a real model ---------------- */
+
+  it('offers a real MCP server\'s tools to a real model and runs the call it makes', async () => {
+    // The link nobody had exercised. Both halves were tested separately: the
+    // MCP client against a real server, and the tool-selection join against a
+    // fake manager. This runs the whole path — a real server process, the
+    // control plane deciding it applies, the agent loop offering its tools to
+    // a real model over a socket, the model choosing one, and the call
+    // actually reaching the server and coming back.
+    const mcp = app.control.mcp;
+    const spec = await mcp.addServer({
+      name: 'in-repo',
+      transport: 'stdio',
+      command: process.execPath,
+      args: ['scripts/local-mcp-server.mjs'],
+    });
+    await mcp.connect(spec.id);
+
+    try {
+      const { workspace } = await json<{ workspace: { id: string } }>('/api/workspaces', {
+        method: 'POST',
+        body: JSON.stringify({ name: 'e2e-mcp' }),
+      });
+
+      // The control plane has to say this server applies to this workspace, or
+      // nothing should reach the model — which is itself the assertion below.
+      await app.ai.profiles.setAssignment({
+        kind: 'mcp',
+        targetId: spec.id,
+        scope: 'workspace',
+        scopeId: workspace.id,
+        mode: 'include',
+      });
+
+      const tools = app.mcpToolsFor({ workspaceId: workspace.id, request: 'echo a message back to me' });
+      assert.ok(tools.size > 0, 'an assigned, connected server must contribute tools');
+      const echoName = [...tools.keys()].find((n) => n.endsWith('__echo'));
+      assert.ok(echoName, `expected an echo tool, saw ${[...tools.keys()].join(', ')}`);
+
+      // Drive the model to call it. The sim honours `[[sim: call <tool> <args>]]`,
+      // so this is a real model turn producing a real tool call over the wire —
+      // not the test invoking the tool itself.
+      const { task } = await json<{ task: { id: string } }>('/api/tasks', {
+        method: 'POST',
+        body: JSON.stringify({
+          workspaceId: workspace.id,
+          request:
+            `Use the MCP tool. [[sim: call ${echoName} {"message":"mcp-reached-the-model"}]] ` +
+            `[[sim: finish Called the MCP tool.]]`,
+          pipeline: 'research',
+        }),
+      });
+
+      const detail = await waitForTask(task.id);
+      assert.equal(detail.task.status, 'completed', `task did not complete: ${detail.task.error ?? 'timed out'}`);
+
+      // The proof is the recorded tool call: the model asked for the MCP tool
+      // by its exposed name, and Meridian routed it to the server process.
+      const calls = app.store.listToolCalls(task.id);
+      const mcpCall = calls.find((c) => c.name === echoName);
+      assert.ok(mcpCall, `expected a call to ${echoName}, saw ${calls.map((c) => c.name).join(', ')}`);
+      assert.equal(mcpCall.error, null, `the MCP call failed: ${mcpCall.error}`);
+      assert.match(
+        mcpCall.result ?? '',
+        /mcp-reached-the-model/,
+        'the server\'s own answer must come back to the model, not a placeholder',
+      );
+    } finally {
+      await mcp.disconnectAll().catch(() => undefined);
+    }
+  });
+
+  it('does not offer an MCP server that is not assigned to this workspace', async () => {
+    // The negative half. A server that is connected but unassigned must
+    // contribute nothing, or the control plane's scopes are decoration.
+    const { workspace } = await json<{ workspace: { id: string } }>('/api/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'e2e-mcp-unassigned' }),
+    });
+    const tools = app.mcpToolsFor({ workspaceId: workspace.id, request: 'echo a message back to me' });
+    assert.equal(tools.size, 0, 'an unassigned server must not reach the model');
+  });
+
   /* ---------------- Checkpoints, rewind and forking ---------------- */
 
   it('checkpoints each step and can take the workspace back to one', async () => {

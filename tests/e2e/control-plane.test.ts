@@ -67,6 +67,79 @@ describe('browser engine end to end', () => {
 });
 
 describe('MCP server end to end', () => {
+  /**
+   * The reference server below needs npx and a network. This one does not: it
+   * is a real MCP server kept in the repository (`scripts/local-mcp-server.mjs`),
+   * speaking the same newline-delimited JSON-RPC over the same stdio transport.
+   *
+   * That distinction matters. The npx test is the better gate when it can run,
+   * because it proves Meridian against a server it did not write — but it
+   * skips offline, which left the whole client unexercised in exactly the
+   * environments where regressions go unnoticed. This one always runs, so a
+   * broken handshake, a mangled id or a wrong error shape fails somewhere
+   * rather than skipping quietly.
+   */
+  it('spawns a real MCP server over stdio and round-trips tool calls', async () => {
+    const mcp = new McpManager({ store: new MemoryMcpStore(), vault: new MemoryVault() });
+    await mcp.load();
+    const spec = await mcp.addServer({
+      name: 'in-repo',
+      transport: 'stdio',
+      command: process.execPath,
+      args: ['scripts/local-mcp-server.mjs'],
+    });
+    try {
+      const { tools } = await mcp.connect(spec.id);
+      assert.deepEqual(
+        tools.map((t) => t.name).sort(),
+        ['add', 'echo', 'search_repository'],
+        'the client must read the server\'s own tool list, schemas included',
+      );
+      assert.ok(tools.find((t) => t.name === 'add')?.inputSchema, 'a tool without its schema cannot be offered to a model');
+
+      const echo = await mcp.callTool(spec.id, 'echo', { message: 'meridian-round-trip' });
+      assert.equal(echo.isError, false);
+      assert.ok(JSON.stringify(echo.content).includes('meridian-round-trip'));
+
+      // Arithmetic the client cannot have guessed: proves the arguments
+      // actually reached the server rather than a canned reply coming back.
+      const sum = await mcp.callTool(spec.id, 'add', { a: 17, b: 25 });
+      assert.ok(JSON.stringify(sum.content).includes('42'), 'arguments must reach the server');
+
+      // A server-side failure is a result, not an exception — the model has to
+      // be able to read it and react.
+      const failed = await mcp.callTool(spec.id, 'add', { a: 'not a number' });
+      assert.equal(failed.isError, true, 'a tool that fails reports isError, it does not throw');
+
+      const health = await mcp.checkHealth(spec.id);
+      assert.equal(health.status, 'running');
+      assert.ok((health.latencyMs ?? 0) >= 0);
+    } finally {
+      await mcp.disconnectAll();
+    }
+  });
+
+  it('refuses a tool the server does not expose', async () => {
+    const mcp = new McpManager({ store: new MemoryMcpStore(), vault: new MemoryVault() });
+    await mcp.load();
+    const spec = await mcp.addServer({
+      name: 'in-repo',
+      transport: 'stdio',
+      command: process.execPath,
+      args: ['scripts/local-mcp-server.mjs'],
+    });
+    try {
+      await mcp.connect(spec.id);
+      await assert.rejects(
+        () => mcp.callTool(spec.id, 'delete_everything', {}),
+        /does not expose a tool/,
+        'the client checks the advertised tool list before sending anything',
+      );
+    } finally {
+      await mcp.disconnectAll();
+    }
+  });
+
   it('spawns the reference server over stdio and round-trips a tool call', { skip: process.env.MERIDIAN_SKIP_NPX ? 'npx disabled' : false }, async () => {
     const mcp = new McpManager({ store: new MemoryMcpStore(), vault: new MemoryVault() });
     await mcp.load();
