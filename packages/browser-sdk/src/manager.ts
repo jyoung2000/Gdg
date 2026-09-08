@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { lookup as dnsLookupCb } from 'node:dns';
+import { promisify } from 'node:util';
 import { MeridianError } from '@meridian/shared';
 import type { BrowserProvider, ProviderSession } from './provider.js';
 import type {
@@ -82,6 +84,95 @@ export function urlAllowed(rawUrl: string, policy: DomainPolicy): { allowed: boo
   }
   if (policy.allow.length > 0 && !policy.allow.some((d) => hostMatches(host, d))) {
     return { allowed: false, reason: `${host} is outside the session's allow list` };
+  }
+  return { allowed: true, reason: null };
+}
+
+/**
+ * How long a resolution is trusted before it is looked up again.
+ *
+ * Short, because the whole point is to notice a name whose answer changes.
+ */
+const DNS_CACHE_MS = 30_000;
+
+const dnsLookup = promisify(dnsLookupCb) as (
+  hostname: string,
+  options: { all: true; verbatim: boolean },
+) => Promise<{ address: string; family: number }[]>;
+
+const dnsCache = new Map<string, { private: boolean; addresses: string[]; at: number }>();
+
+/**
+ * Does this name actually resolve into private space?
+ *
+ * `urlAllowed` above judges the hostname as text, and that leaves the standard
+ * hole open: `metadata.evil.example` is not a literal IP, passes every textual
+ * check, and resolves to `169.254.169.254`. The HTTP fetch path has closed this
+ * for a while by guarding inside Node's DNS `lookup` hook; the browser path had
+ * no equivalent, so the two were not at parity and the browser was the weaker
+ * one.
+ *
+ * Every address a name resolves to is checked, not just the first: a name with
+ * one public and one private answer is a private answer waiting to be used.
+ *
+ * **What this does not close.** A name re-resolved between this check and the
+ * browser's own connection could return a different address — the classic
+ * rebinding window. Closing that needs a hook inside the browser's socket
+ * layer, which Playwright does not expose. This removes the easy case (a name
+ * that simply points at private space) and leaves the racy one, which is worth
+ * stating rather than implying a completeness that is not there.
+ */
+export async function resolvesToPrivate(hostname: string, now = Date.now()): Promise<{ private: boolean; addresses: string[] }> {
+  const key = hostname.toLowerCase();
+  const cached = dnsCache.get(key);
+  if (cached && now - cached.at < DNS_CACHE_MS) return { private: cached.private, addresses: cached.addresses };
+
+  try {
+    const results = await dnsLookup(key, { all: true, verbatim: true });
+    const addresses = results.map((r) => r.address);
+    const isPrivate = addresses.some((a) => isPrivateBrowserHost(a));
+    dnsCache.set(key, { private: isPrivate, addresses, at: now });
+    return { private: isPrivate, addresses };
+  } catch {
+    // A name that will not resolve cannot be reached, so there is nothing to
+    // protect against. Reporting it private would turn a typo into a
+    // security-sounding error the user cannot act on.
+    return { private: false, addresses: [] };
+  }
+}
+
+/**
+ * The full navigation check: policy, then where the name really points.
+ *
+ * Used where a URL enters from outside — a model's `browse` call, an operator's
+ * address bar — because that is where a hostile or mistaken name arrives. The
+ * synchronous `urlAllowed` still guards every subresource, where a DNS lookup
+ * per request would cost more than it protects.
+ */
+export async function checkNavigation(
+  rawUrl: string,
+  policy: DomainPolicy,
+): Promise<{ allowed: boolean; reason: string | null }> {
+  const textual = urlAllowed(rawUrl, policy);
+  if (!textual.allowed) return textual;
+
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return { allowed: false, reason: 'not a valid URL' };
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return textual;
+  // An operator who allow-listed this host explicitly has already made the
+  // decision; re-litigating it from DNS would override them.
+  if (policy.allowPrivate.some((d) => hostMatches(url.hostname, d))) return textual;
+
+  const resolved = await resolvesToPrivate(url.hostname);
+  if (resolved.private) {
+    return {
+      allowed: false,
+      reason: `${url.hostname} resolves to a private or internal address (${resolved.addresses.join(', ')}); add it to allowPrivate to permit it explicitly`,
+    };
   }
   return { allowed: true, reason: null };
 }
@@ -348,7 +439,10 @@ export class BrowserManager {
 
   async navigate(id: string, url: string, timeoutMs?: number): Promise<PageSnapshot> {
     const managed = this.get(id);
-    const verdict = urlAllowed(url, managed.policy);
+    // The full check, not the textual one: this is where a URL arrives from
+    // outside — a model's browse call, an operator's address bar — and so where
+    // a name chosen to look public and resolve private would be used.
+    const verdict = await checkNavigation(url, managed.policy);
     if (!verdict.allowed) {
       this.record(managed, 'navigation', `refused ${url.slice(0, 200)}: ${verdict.reason}`);
       throw new MeridianError('invalid_request', `Navigation refused: ${verdict.reason}`);
@@ -493,7 +587,7 @@ export class BrowserManager {
   async openTab(id: string, url: string | null): Promise<number> {
     const managed = this.get(id);
     if (url) {
-      const verdict = urlAllowed(url, managed.policy);
+      const verdict = await checkNavigation(url, managed.policy);
       if (!verdict.allowed) throw new MeridianError('invalid_request', `Navigation refused: ${verdict.reason}`);
     }
     return this.withOp(managed, undefined, (signal) => managed.session!.openTab(url, signal));

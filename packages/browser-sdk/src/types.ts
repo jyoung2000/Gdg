@@ -66,6 +66,17 @@ export interface PageSnapshot {
   /** True when the text or element list was cut at the cap. */
   truncated: boolean;
   capturedAt: number;
+  /**
+   * How this page was actually fetched.
+   *
+   * `http` means a plain GET was enough and no browser was launched. Recorded
+   * rather than inferred, so a caller can see when it got a cheap answer — and
+   * so that an `http` snapshot's empty `elements` list reads as "nothing was
+   * rendered" rather than "the page has no interactive elements".
+   */
+  transport?: 'http' | 'browser';
+  /** Why that transport was chosen, in words. */
+  transportReason?: string;
 }
 
 export interface SnapshotElement {

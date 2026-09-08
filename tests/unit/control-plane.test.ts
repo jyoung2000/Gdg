@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { urlAllowed, isPrivateBrowserHost } from '@meridian/browser-sdk';
+import { urlAllowed, isPrivateBrowserHost, checkNavigation, resolvesToPrivate } from '@meridian/browser-sdk';
 import { parseRobots, robotsDisallows } from '@meridian/browser-sdk';
 import { McpManager, MemoryMcpStore, MemoryVault, curatedCatalog } from '@meridian/mcp-sdk';
 import { isolationName, classifyFailure, hostPortOf } from '@meridian/docker-sdk';
@@ -112,5 +112,61 @@ describe('docker orchestration helpers', () => {
     assert.equal(classifyFailure('health', 'never healthy').class, 'HEALTHCHECK_TIMEOUT');
     assert.equal(classifyFailure('test', 'AssertionError: expected 1').class, 'TEST_FAILURE');
     assert.equal(classifyFailure('test', 'AssertionError').retryable, false);
+  });
+});
+
+describe('Browser SSRF — where a name really points', () => {
+  it('refuses a public-looking name that resolves into private space', async () => {
+    // The textual check passes this: it is not a literal IP, not on a deny
+    // list, not obviously internal. Only resolving it reveals 127.0.0.1. This
+    // is the hole the HTTP fetch path has guarded for a while via Node's DNS
+    // lookup hook and the browser path did not, so the two were not at parity
+    // and the browser was the weaker one.
+    const policy = { allow: [], deny: [], allowPrivate: [] };
+
+    // The premise: the textual check lets this through. If it ever stops doing
+    // so the test below would pass for the wrong reason, so it is asserted.
+    assert.equal(
+      urlAllowed('http://localtest.me/', policy).allowed,
+      true,
+      'the textual check cannot see where a name points, which is the whole problem',
+    );
+
+    const resolved = await resolvesToPrivate('localtest.me');
+    if (!resolved.addresses.length) {
+      // A sandbox with no DNS proves nothing either way. Say so rather than
+      // passing quietly on a lookup that never happened.
+      assert.ok(true, 'skipped: localtest.me could not be resolved in this environment');
+      return;
+    }
+
+    assert.equal(resolved.private, true, `expected private addresses, got ${resolved.addresses.join(', ')}`);
+    const verdict = await checkNavigation('http://localtest.me/', policy);
+    assert.equal(verdict.allowed, false, 'a name that resolves into private space must not be navigable');
+    assert.match(verdict.reason ?? '', /resolves to a private or internal address/);
+  });
+
+  it('still refuses a literal private address without needing DNS', async () => {
+    const verdict = await checkNavigation('http://169.254.169.254/latest/meta-data/', {
+      allow: [],
+      deny: [],
+      allowPrivate: [],
+    });
+    assert.equal(verdict.allowed, false);
+    assert.match(verdict.reason ?? '', /private or internal/);
+  });
+
+  it('honours an explicit allowPrivate entry rather than overriding the operator', async () => {
+    const verdict = await checkNavigation('http://localhost:8080/', {
+      allow: [],
+      deny: [],
+      allowPrivate: ['localhost'],
+    });
+    assert.equal(verdict.allowed, true, 'an operator who allow-listed a host has already made the decision');
+  });
+
+  it('lets an ordinary public URL through', async () => {
+    const verdict = await checkNavigation('https://example.com/', { allow: [], deny: [], allowPrivate: [] });
+    assert.equal(verdict.allowed, true, verdict.reason ?? '');
   });
 });

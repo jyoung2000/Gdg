@@ -12,7 +12,7 @@ import {
 import { McpManager, type McpStore, type SecretVault, type McpServerSpec, type McpToolPolicy, type McpPreset } from '@meridian/mcp-sdk';
 import { DockerOrchestrator } from '@meridian/docker-sdk';
 import type { Executor } from '@meridian/routing-sdk';
-import type { Tool } from '@meridian/agent-sdk';
+import { guardedFetchText, type Tool } from '@meridian/agent-sdk';
 import type { Store } from '../db/store.js';
 import type { EventBus } from './events.js';
 import { GitService } from './git.js';
@@ -76,6 +76,19 @@ export function createControlPlane(opts: {
 
   const research = new ResearchEngine({
     manager: browser,
+    // Try a plain GET before launching a browser. Uses the same SSRF-guarded
+    // fetcher the agent's web_fetch tool uses — redirects re-checked per hop,
+    // the guard inside the DNS lookup — so the cheap path is not the
+    // unprotected one.
+    httpFetch: async (url: string) => {
+      try {
+        const res = await guardedFetchText(url, { maxBytes: 400_000, maxRedirects: 5, timeoutMs: 15_000 });
+        return { status: res.status, contentType: res.contentType, body: res.body, finalUrl: res.finalUrl };
+      } catch {
+        // Blocked, unreachable or too large: the browser path decides next.
+        return null;
+      }
+    },
     persist: async (record: ResearchRecord) => store.saveResearchRecord(record.id, record, record.at),
     // The LLM leg goes through the normal router with free-first economics:
     // structured extraction is a cheap task and must never silently spend.

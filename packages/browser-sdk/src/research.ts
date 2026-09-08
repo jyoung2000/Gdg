@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { negotiate, type HttpFetchResult } from './negotiate.js';
 import { MeridianError } from '@meridian/shared';
 import type { BrowserManager } from './manager.js';
 import type { BrowserEngineId, PageSnapshot, ResearchRecord } from './types.js';
@@ -64,6 +65,16 @@ export interface ResearchEngineOptions {
   now?: () => number;
   /** Test hook: fetch robots.txt text (null = unreachable). Defaults to global fetch. */
   fetchRobots?: (origin: string) => Promise<string | null>;
+  /**
+   * A plain, SSRF-guarded HTTP GET, used to try a page before launching a
+   * browser.
+   *
+   * Injected rather than imported so browser-sdk keeps no dependency on the
+   * agent runtime that owns the guarded fetcher. Omitted means the cheap path
+   * is unavailable and every page goes to the browser, which is exactly the
+   * old behaviour.
+   */
+  httpFetch?: (url: string) => Promise<HttpFetchResult | null>;
 }
 
 interface CachedPage {
@@ -75,6 +86,12 @@ interface RobotsRules {
   at: number;
   /** Path prefixes disallowed for `*`; null when robots.txt was unreachable. */
   disallow: string[] | null;
+}
+
+/** First sentence-ish of extracted text, as a stand-in page title. */
+function titleOf(text: string): string {
+  const first = text.slice(0, 120).split(/[.!?]\s/)[0]?.trim() ?? '';
+  return first || text.slice(0, 80).trim();
 }
 
 /** Minimal robots.txt reading: the `User-agent: *` group's Disallow prefixes. */
@@ -113,6 +130,7 @@ export class ResearchEngine {
   private readonly domainIntervalMs: number;
   private readonly now: () => number;
   private readonly fetchRobotsText: (origin: string) => Promise<string | null>;
+  private readonly httpFetch: ((url: string) => Promise<HttpFetchResult | null>) | null;
 
   private readonly cache = new Map<string, CachedPage>();
   private readonly robots = new Map<string, RobotsRules>();
@@ -125,6 +143,7 @@ export class ResearchEngine {
     this.persist = opts.persist ?? null;
     this.domainIntervalMs = opts.domainIntervalMs ?? DEFAULT_DOMAIN_INTERVAL_MS;
     this.now = opts.now ?? (() => Date.now());
+    this.httpFetch = opts.httpFetch ?? null;
     this.fetchRobotsText =
       opts.fetchRobots ??
       (async (origin: string) => {
@@ -170,6 +189,38 @@ export class ResearchEngine {
     }
 
     await this.politeDelay(url.hostname);
+
+    // Try the cheap path first, unless the caller has already committed to a
+    // session. Most pages worth reading are server-rendered and answer a single
+    // GET; launching a browser for those costs seconds and a few hundred
+    // megabytes to learn nothing the response did not already contain.
+    if (this.httpFetch && !input.sessionId) {
+      try {
+        const verdict = negotiate(await this.httpFetch(input.url));
+        if (verdict.transport === 'http') {
+          const snapshot: PageSnapshot = {
+            url: input.url,
+            title: titleOf(verdict.text),
+            text: verdict.text,
+            // No browser ran, so there is no accessibility tree and no
+            // interactive elements. Empty here means "not rendered", which the
+            // `transport` field below makes explicit rather than leaving a
+            // caller to read absence as a finding.
+            outline: '',
+            elements: [],
+            truncated: false,
+            capturedAt: this.now(),
+            transport: 'http',
+            transportReason: verdict.reason,
+          };
+          this.remember(input.url, snapshot);
+          return { snapshot, fromCache: false, robots };
+        }
+      } catch {
+        // The cheap path failing is not an error, it is the reason the
+        // expensive path exists.
+      }
+    }
 
     const ownSession = !input.sessionId;
     const sessionId =
