@@ -13,3 +13,4 @@ export * from './adapters/fal.js';
 export * from './adapters/replicate.js';
 export * from './catalog.js';
 export * from './bootstrap.js';
+export * from './probe.js';

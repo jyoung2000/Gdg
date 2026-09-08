@@ -30,6 +30,7 @@ import { openDatabase } from '../db/database.js';
 import { SecretBox } from '../db/crypto.js';
 import { Store, defaultPreferences } from '../db/store.js';
 import { Discovery } from './discovery.js';
+import { VerificationService } from './verification.js';
 import { CatalogSync } from './catalog-sync.js';
 import { PriceBookService } from './price-book.js';
 import { EventBus, type ServerEvent } from './events.js';
@@ -43,6 +44,7 @@ export interface Warning {
 }
 
 interface AppParts {
+  verification: VerificationService;
   config: MeridianConfig;
   logger: Logger;
   store: Store;
@@ -101,6 +103,8 @@ export class App {
   /** Rates for paid providers, so cost accounting is not always zero. */
   readonly priceBook: PriceBookService;
   readonly control: ControlPlane;
+  /** Capability probes: the only thing that can write `probe_verified`. */
+  readonly verification: VerificationService;
   /** Skills, AI profiles and scoped assignments. */
   readonly ai: AIControlPlane;
   /** Computer-control backends and sessions. Off unless a session is started. */
@@ -135,6 +139,7 @@ export class App {
     this.catalogSync = parts.catalogSync;
     this.priceBook = parts.priceBook;
     this.control = parts.control;
+    this.verification = parts.verification;
     this.ai = parts.ai;
     this.computer = parts.computer;
     this.warnings = parts.warnings;
@@ -373,6 +378,10 @@ export class App {
       onModelChange: (change) => events.publish({ type: 'model-change', change }),
     });
 
+    // Probes cost money and quota, so this is constructed idle and runs only
+    // when a person asks it to. Nothing here is on a timer.
+    const verification = new VerificationService({ providers, models, credentials, store, logger });
+
     // The computer agent is constructed but idle: registering backends probes
     // nothing and starts nothing, so a gateway that never runs a session pays
     // no cost and holds no control over the machine.
@@ -430,6 +439,7 @@ export class App {
       sandboxDegradedReason: degraded ? reason : null,
       events,
       discovery,
+      verification,
       catalogSync,
       priceBook,
       control,

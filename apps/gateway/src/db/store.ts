@@ -4,6 +4,7 @@ import {
   redact,
   type AgentTask,
   type AuditLogEntry,
+  type CapabilityClaims,
   type CredentialPool,
   type CredentialRecord,
   type CredentialScope,
@@ -386,17 +387,32 @@ export class Store implements CredentialStore {
   /* Models, scores, performance, benchmarks                          */
   /* ---------------------------------------------------------------- */
 
+  /**
+   * Write models, evidence included.
+   *
+   * `capability_claims` is what makes an operator's judgement durable. Without
+   * it, marking a capability unsupported lasted until the next boot, when the
+   * name heuristic re-added it as `inferred` — the weakest evidence overwriting
+   * the strongest, in the direction that makes the router pick a model that
+   * will fail.
+   */
   upsertModels(models: ModelDescriptor[]): void {
     const stmt = this.db.prepare(
       `INSERT INTO models (id, provider_id, provider_model_id, display_name, family, modalities, capabilities,
-         context_length, max_output_tokens, pricing, discovered, deprecated, tags, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         context_length, max_output_tokens, pricing, discovered, deprecated, tags, updated_at,
+         capability_claims, discovered_at, last_verified_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT(id) DO UPDATE SET
          display_name=excluded.display_name, family=excluded.family, modalities=excluded.modalities,
          capabilities=excluded.capabilities, context_length=excluded.context_length,
          max_output_tokens=excluded.max_output_tokens, pricing=excluded.pricing,
          discovered=excluded.discovered, deprecated=excluded.deprecated, tags=excluded.tags,
-         updated_at=excluded.updated_at`,
+         updated_at=excluded.updated_at,
+         capability_claims=excluded.capability_claims,
+         -- First sighting is a fact about the past: keep the earlier of the two
+         -- rather than letting every rediscovery reset the model's age.
+         discovered_at=COALESCE(models.discovered_at, excluded.discovered_at),
+         last_verified_at=COALESCE(excluded.last_verified_at, models.last_verified_at)`,
     );
     const tx = this.db.transaction((rows: ModelDescriptor[]) => {
       for (const m of rows) {
@@ -405,6 +421,8 @@ export class Store implements CredentialStore {
           JSON.stringify(m.modalities), JSON.stringify(m.capabilities),
           m.contextLength, m.maxOutputTokens, JSON.stringify(m.pricing),
           int(m.discovered), int(m.deprecated), JSON.stringify(m.tags), m.updatedAt,
+          m.capabilityClaims ? JSON.stringify(m.capabilityClaims) : null,
+          m.discoveredAt ?? null, m.lastVerifiedAt ?? null,
         );
       }
     });
@@ -1393,6 +1411,12 @@ function toModel(r: Row): ModelDescriptor {
     deprecated: bool(r.deprecated),
     tags: json<string[]>(r.tags as string, []),
     updatedAt: Number(r.updated_at),
+    // Undefined rather than {} when the column is null: a model that predates
+    // the evidence column has *no* claims, which is a different thing from
+    // having an empty set of them, and enrich() treats the two differently.
+    capabilityClaims: r.capability_claims ? json<CapabilityClaims>(r.capability_claims as string, {}) : undefined,
+    discoveredAt: (r.discovered_at as number) ?? undefined,
+    lastVerifiedAt: (r.last_verified_at as number) ?? undefined,
   };
 }
 

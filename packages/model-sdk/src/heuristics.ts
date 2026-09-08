@@ -1,4 +1,12 @@
-import { mergeClaim, mergeClaims, type Capability, type CapabilityClaims, type Modality, type ModelDescriptor } from '@meridian/shared';
+import {
+  claimIsPositive,
+  mergeClaim,
+  mergeClaims,
+  type Capability,
+  type CapabilityClaims,
+  type Modality,
+  type ModelDescriptor,
+} from '@meridian/shared';
 
 /**
  * Capability priors inferred from a model's identifier.
@@ -114,17 +122,31 @@ export function enrich(model: ModelDescriptor, opts: EnrichOptions = {}): ModelD
     claims[cap] = mergeClaim(claims[cap], { state: 'inferred', source: 'model-name heuristic', confidence: 0.5, at });
   }
 
+  // Anything already established (a probe result, an operator's confirmation)
+  // outranks both of the above and survives re-enrichment.
+  const merged = mergeClaims(claims, model.capabilityClaims ?? {});
+
+  // The flat list is a *projection of the evidence*, not a second opinion
+  // alongside it. It used to be an independent union of the listing and the
+  // heuristic, which meant a capability someone had tested and found absent was
+  // re-added by a name match on the very next pass — the weakest evidence
+  // silently overruling the strongest, in the direction that makes the router
+  // pick a model that will fail. Deriving the list from the merged claims makes
+  // that structurally impossible: to appear here, a capability must have a
+  // winning claim that is not `unsupported`.
+  const capabilities = [...new Set([...model.capabilities, ...hint.capabilities])].filter((cap) =>
+    claimIsPositive(merged[cap]),
+  );
+
   return {
     ...model,
     // A dedicated image or embedding model is not a text model, even though the
     // generic listing shape defaults everything to text.
     modalities: isMediaOnly ? hint.modalities : modalities,
-    capabilities: [...new Set([...model.capabilities, ...hint.capabilities])],
+    capabilities,
     tags: [...new Set([...model.tags, ...hint.tags])],
     contextLength: model.contextLength ?? hint.contextLength,
-    // Anything already established (a probe result, an operator's confirmation)
-    // outranks both of the above and survives re-enrichment.
-    capabilityClaims: mergeClaims(claims, model.capabilityClaims ?? {}),
+    capabilityClaims: merged,
     discoveredAt: model.discoveredAt ?? at,
     lastVerifiedAt: model.discovered ? at : model.lastVerifiedAt,
   };

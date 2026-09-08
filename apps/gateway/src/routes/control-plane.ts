@@ -245,6 +245,55 @@ export async function registerControlPlaneRoutes(server: FastifyInstance, app: A
     return { requirement, matches: matches.slice(0, Math.min(body.limit ?? 25, 100)), total: matches.length };
   });
 
+  /**
+   * Probe models for real and record what came back.
+   *
+   * Admin-only and never automatic: every probe is a live request against a
+   * provider's rate limit and, on a paid model, their meter. The response
+   * distinguishes the three outcomes explicitly — what was verified, what was
+   * definitively refused, and what reached no verdict and therefore changed
+   * nothing.
+   */
+  server.post('/api/verification/run', async (req) => {
+    requireAdmin(req);
+    const body = (req.body ?? {}) as {
+      modelIds?: string[];
+      providerId?: string;
+      capabilities?: Capability[];
+      limit?: number;
+      timeoutMs?: number;
+    };
+
+    const report = await app.verification.verify({
+      modelIds: body.modelIds,
+      providerId: body.providerId,
+      capabilities: body.capabilities,
+      limit: body.limit,
+      timeoutMs: body.timeoutMs,
+    });
+
+    app.store.audit({
+      actor: req.auth.userId ?? 'anonymous',
+      action: 'verification.run',
+      target: body.providerId ?? body.modelIds?.join(',') ?? 'all',
+      details: { probed: String(report.probed), claimsWritten: String(report.claimsWritten) },
+      ip: req.ip,
+    });
+
+    return {
+      probed: report.probed,
+      claimsWritten: report.claimsWritten,
+      inconclusive: report.inconclusive,
+      durationMs: report.finishedAt - report.startedAt,
+      skipped: report.skipped,
+      models: report.reports.map((r) => ({
+        modelId: r.modelId,
+        providerId: r.providerId,
+        results: r.results,
+      })),
+    };
+  });
+
   /** Per-capability evidence for one model — the capability inspector's data. */
   server.get('/api/models/:id/capabilities', async (req) => {
     requireScope(req, 'workspaces');

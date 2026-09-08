@@ -22,8 +22,13 @@ import type { Capability, Modality } from './types.js';
  *  - `user_confirmed`: an operator asserted it deliberately.
  *  - `provider_declared`: the provider's own listing said so.
  *  - `inferred`: derived from the model's name or family. A guess, labelled.
- *  - `unsupported`: established as NOT supported (a probe failed, or declared).
+ *  - `unsupported`: established as NOT supported — a probe was refused, or an
+ *    operator tested it and said so. A *tested negative*, not weak evidence:
+ *    see `STATE_RANK` below, where it ranks accordingly.
  *  - `unknown`: nobody has said anything. Never rendered as "no".
+ *
+ * The array's order is the reading order of that list, which is nearly but not
+ * exactly the evidence ranking — `STATE_RANK` is the authority on precedence.
  */
 export const CAPABILITY_STATES = [
   'probe_verified',
@@ -35,13 +40,32 @@ export const CAPABILITY_STATES = [
 ] as const;
 export type CapabilityState = (typeof CAPABILITY_STATES)[number];
 
-/** Evidence ranking; a stronger claim always wins over a weaker one. */
+/**
+ * Evidence ranking; a stronger claim always wins over a weaker one.
+ *
+ * The ordering is by **how good the evidence is**, not by what it concludes.
+ * That distinction is the whole point, and getting it wrong had teeth:
+ * `unsupported` used to sit at the bottom, one below `inferred`, so a guess
+ * from a model's name outranked a tested finding that the capability is
+ * absent. An operator who marked vision unsupported on a model called
+ * `gpt-4o` had that overturned by the name heuristic on the next discovery
+ * pass — the weakest evidence in the system beating the strongest, and in the
+ * direction that makes the router choose a model the request will fail on.
+ *
+ * `unsupported` is only ever written deliberately: an operator's explicit
+ * judgement, or a probe that got a definitive refusal. It is a *tested
+ * negative*, so it ranks with `user_confirmed` — above a provider's optimistic
+ * listing and far above a name match. It sits below `probe_verified` because a
+ * live call that actually succeeded is better evidence than an earlier "no",
+ * and level with `user_confirmed` so an operator can change their mind and
+ * have the newer statement win.
+ */
 const STATE_RANK: Record<CapabilityState, number> = {
   probe_verified: 5,
   user_confirmed: 4,
+  unsupported: 4,
   provider_declared: 3,
   inferred: 2,
-  unsupported: 1,
   unknown: 0,
 };
 

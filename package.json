@@ -26,7 +26,8 @@
     "test:live": "node scripts/test-live.mjs",
     "sandbox:image": "node scripts/build-sandbox-image.mjs",
     "scorecard": "node scripts/scorecard.mjs",
-    "test:ui": "node scripts/test.mjs ui"
+    "test:ui": "node scripts/test.mjs ui",
+    "verify:providers": "node dist/cli/uag.js verify"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

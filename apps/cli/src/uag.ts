@@ -245,6 +245,8 @@ ${c.dim('COMMANDS')}
                          Computer agent. Off unless you start a session.
   computer run "<task>" [--backend <id>] [--model <id>] [--allow k,k] [--approve <mode>]
                          Start a session. Prints the id; watch or stop it by id.
+  verify <provider:model | providerId> [--limit N]
+                         Probe capabilities with real calls and record evidence
   configure              Set the gateway URL and API key
   help                   Show this help
 
@@ -1057,6 +1059,71 @@ async function main(): Promise<number> {
           err('Usage: uag computer <backends|plan|diagnose|list|run|watch|stop>');
           return 1;
       }
+    }
+
+    /* ---------------- benchmark ---------------- */
+    /* ---------------- verify ---------------- */
+    case 'verify': {
+      // A probe is a live request against someone's rate limit, and on a paid
+      // model against their meter. So this asks for an explicit target rather
+      // than defaulting to "everything", and prints what it cost.
+      const target = positional[1];
+      const body: Record<string, unknown> = {};
+      if (target?.includes(':')) body.modelIds = [target];
+      else if (target) body.providerId = target;
+      else {
+        err('Usage: uag verify <provider:model | providerId> [--limit N]');
+        err('       Probes are real requests. Name what to probe.');
+        return 1;
+      }
+      const limit = Number(str(flags.limit));
+      if (Number.isFinite(limit) && limit > 0) body.limit = limit;
+
+      out(`  ${c.dim('probing… each capability is one real request')}`);
+      const res = await client.request<{
+        probed: number;
+        claimsWritten: number;
+        inconclusive: number;
+        durationMs: number;
+        skipped: { modelId: string; reason: string }[];
+        models: {
+          modelId: string;
+          results: { capability: string; outcome: string; detail: string; latencyMs: number }[];
+        }[];
+      }>('/api/verification/run', { method: 'POST', body });
+
+      if (json) {
+        out(JSON.stringify(res, null, 2));
+        return 0;
+      }
+
+      out();
+      for (const m of res.models) {
+        out(c.bold(m.modelId));
+        table(
+          ['CAPABILITY', 'VERDICT', 'EVIDENCE', 'MS'],
+          m.results.map((r) => [
+            r.capability,
+            r.outcome === 'supported'
+              ? c.green('verified')
+              : r.outcome === 'unsupported'
+                ? c.red('unsupported')
+                : c.dim('no verdict'),
+            r.detail.slice(0, 60),
+            String(r.latencyMs),
+          ]),
+        );
+        out();
+      }
+
+      for (const s of res.skipped) out(`  ${c.dim(`skipped ${s.modelId}: ${s.reason}`)}`);
+      // Inconclusive is reported rather than buried: a run that learned nothing
+      // must not read like a run that verified everything.
+      out(
+        `  ${res.claimsWritten} claim(s) recorded from ${res.probed} model(s) in ${(res.durationMs / 1000).toFixed(1)}s` +
+          (res.inconclusive ? c.dim(`, ${res.inconclusive} probe(s) reached no verdict and changed nothing`) : ''),
+      );
+      return 0;
     }
 
     /* ---------------- benchmark ---------------- */

@@ -146,6 +146,61 @@ describe('E2E: gateway against a real local inference server', () => {
     assert.ok(chat.capabilities.includes('tools'), 'a reseed without a listing must not drop tools');
   });
 
+  /* ---------------- Capability verification ---------------- */
+
+  it('earns probe_verified by making a real call, and persists it', async () => {
+    const chat = app.models.all().find((m) => m.providerModelId === 'meridian-sim-chat');
+    assert.ok(chat);
+
+    const report = await app.verification.verify({ modelIds: [chat.id], capabilities: ['text', 'tools'] });
+    assert.equal(report.probed, 1, `expected one model probed, skipped: ${JSON.stringify(report.skipped)}`);
+
+    const text = report.reports[0].results.find((r) => r.capability === 'text');
+    assert.ok(text, 'the text probe should have run');
+    assert.equal(text.outcome, 'supported', `text probe: ${text.detail}`);
+    // A probe is a real request, so it has a real latency and real token counts.
+    assert.ok(text.latencyMs >= 0);
+    assert.ok((text.promptTokens ?? 0) > 0, 'a real call reports the tokens it consumed');
+
+    const after = app.models.get(chat.id);
+    assert.equal(
+      after?.capabilityClaims?.text?.state,
+      'probe_verified',
+      'a successful live call is the only thing that may claim probe_verified',
+    );
+    assert.equal(after?.capabilityClaims?.text?.confidence, 1);
+    assert.match(after?.capabilityClaims?.text?.source ?? '', /live probe/);
+
+    // And it has to be on disk, not only in memory: the whole point of the
+    // evidence column is that a restart does not erase what was established.
+    const stored = app.store.listModels().find((m) => m.id === chat.id);
+    assert.equal(stored?.capabilityClaims?.text?.state, 'probe_verified');
+    assert.ok((stored?.lastVerifiedAt ?? 0) > 0);
+  });
+
+  it('records nothing when a probe cannot reach a verdict', async () => {
+    // The failing server answers every completion with a 429. That is a fact
+    // about right now, not about the model, so it must produce no claim at all
+    // rather than a false "this model cannot do text".
+    const provider = app.providers.list().find((p) => p.local && p.baseUrl.includes(`:${failing.port}`));
+    assert.ok(provider, 'the always-failing server should be registered');
+    const model = app.models.all().find((m) => m.providerId === provider.id);
+    assert.ok(model, 'the failing server should have registered a model');
+
+    const before = JSON.stringify(app.models.get(model.id)?.capabilityClaims ?? {});
+    const report = await app.verification.verify({ modelIds: [model.id], capabilities: ['text'] });
+
+    const result = report.reports[0]?.results[0];
+    assert.ok(result, 'the probe should have produced a result');
+    assert.equal(result.outcome, 'inconclusive', `a rate limit is not evidence about the model: ${result.detail}`);
+    assert.equal(report.claimsWritten, 0, 'an inconclusive probe must write no claim');
+    assert.equal(
+      JSON.stringify(app.models.get(model.id)?.capabilityClaims ?? {}),
+      before,
+      'a failed probe must leave the evidence exactly as it found it',
+    );
+  });
+
   /* ---------------- OpenAI surface ---------------- */
 
   it('completes a chat through the OpenAI surface and reports real usage', async () => {
