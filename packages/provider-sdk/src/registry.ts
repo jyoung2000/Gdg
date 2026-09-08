@@ -1,5 +1,5 @@
 import type { ProviderDescriptor, SupportState } from '@meridian/shared';
-import type { AdapterCapabilities, ProviderAdapter } from './adapter.js';
+import type { AdapterSurface, ProviderAdapter } from './adapter.js';
 
 export type AdapterFactory = (descriptor: ProviderDescriptor) => ProviderAdapter;
 
@@ -18,7 +18,8 @@ export class ProviderRegistry {
   /** Provider ids for which at least one usable credential has been resolved. */
   private readonly credentialed = new Set<string>();
   /** Capabilities confirmed against the live API, keyed by provider id. */
-  private readonly verified = new Map<string, AdapterCapabilities>();
+  /** What each adapter can execute, recorded when the provider first answered. */
+  private readonly surfaces = new Map<string, AdapterSurface>();
   private readonly verifiedAtMs = new Map<string, number>();
   private readonly disabled = new Set<string>();
 
@@ -103,22 +104,50 @@ export class ProviderRegistry {
     return this.credentialed.has(providerId);
   }
 
-  /** Record capabilities confirmed by a successful live call. */
-  setVerified(providerId: string, caps: AdapterCapabilities): void {
-    this.verified.set(providerId, caps);
+  /**
+   * Record that a live call to this provider succeeded, and what its adapter
+   * can execute.
+   *
+   * Two separate facts, and they used to be conflated under one misleading
+   * name. This was `setVerified(id, adapter.capabilities())`, exposed as
+   * `verifiedCapabilities` — but what it stored was compile-time introspection
+   * (`typeof adapter.image === 'function'`), which is a fact about which
+   * methods somebody wrote, not about anything a provider did. A client reading
+   * `verifiedCapabilities.image === true` was being told a live call had
+   * confirmed image generation when nothing of the sort had happened.
+   *
+   * What IS verified by reaching here is contact: the provider answered. That
+   * is what `supportState` uses it for and all it ever meant.
+   */
+  recordLiveContact(providerId: string, surface: AdapterSurface): void {
+    this.surfaces.set(providerId, surface);
     this.verifiedAtMs.set(providerId, Date.now());
   }
 
-  verifiedCapabilities(providerId: string): AdapterCapabilities | null {
-    return this.verified.get(providerId) ?? null;
+  /**
+   * Which methods this provider's adapter implements.
+   *
+   * A ceiling on what Meridian could even attempt, never evidence about what
+   * the provider can do. Capability evidence lives on the model, in
+   * `capabilityClaims`, and is earned by a probe.
+   */
+  adapterSurface(providerId: string): AdapterSurface | null {
+    return this.surfaces.get(providerId) ?? null;
+  }
+
+  /** Has any call to this provider succeeded in this process? */
+  hasLiveContact(providerId: string): boolean {
+    return this.surfaces.has(providerId);
   }
 
   /**
    * How the UI is allowed to describe this provider.
    *
-   * `supported`   adapter exists, a credential is available, and capabilities
-   *               were confirmed against the live API.
-   * `experimental` adapter and credential exist, but nothing has been verified yet.
+   * `supported`   adapter exists, a credential is available, and this process
+   *               has seen a call to the provider succeed. It says nothing
+   *               about which capabilities work — that is per-model evidence,
+   *               earned by a probe and recorded in `capabilityClaims`.
+   * `experimental` adapter and credential exist, but no call has succeeded yet.
    * `not_configured` adapter exists but no credential is available.
    * `unavailable` no adapter — the provider cannot be used at all.
    */
@@ -127,7 +156,7 @@ export class ProviderRegistry {
     if (!descriptor || !this.factories.has(descriptor.adapter)) return 'unavailable';
     if (this.disabled.has(providerId)) return 'disabled';
     if (!this.isCredentialed(providerId)) return 'not_configured';
-    return this.verified.has(providerId) ? 'supported' : 'experimental';
+    return this.surfaces.has(providerId) ? 'supported' : 'experimental';
   }
 
   /** Providers that can actually serve traffic right now. */

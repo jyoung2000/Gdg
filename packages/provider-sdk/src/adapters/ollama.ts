@@ -8,7 +8,7 @@ import {
   type ProviderDescriptor,
   type Usage,
 } from '@meridian/shared';
-import type { AdapterCapabilities, AdapterContext } from '../adapter.js';
+import type { AdapterSurface, AdapterContext } from '../adapter.js';
 import { httpJson, httpRequest } from '../http.js';
 import { OpenAICompatibleAdapter, familyOf } from './openai-compatible.js';
 
@@ -50,7 +50,7 @@ const EMBEDDING_HINT = /embed/;
 const VISION_HINT = /llava|vision|gemma3|qwen2\.5vl|minicpm-v/;
 const CODING_HINT = /coder|code/;
 
-const OLLAMA_CAPABILITIES: AdapterCapabilities = {
+const OLLAMA_CAPABILITIES: AdapterSurface = {
   chat: true,
   streaming: true,
   // These describe the surface, not the weights: Ollama serves tool calls and
@@ -81,7 +81,7 @@ export class OllamaAdapter extends OpenAICompatibleAdapter {
     super(descriptor, { supports: OLLAMA_CAPABILITIES });
   }
 
-  override capabilities(): AdapterCapabilities {
+  override surface(): AdapterSurface {
     return { ...OLLAMA_CAPABILITIES };
   }
 
@@ -188,7 +188,7 @@ export class OllamaAdapter extends OpenAICompatibleAdapter {
  * than advertised on the operator's behalf.
  */
 export class GenericOpenAIServerAdapter extends OpenAICompatibleAdapter {
-  constructor(descriptor: ProviderDescriptor, supports: Partial<AdapterCapabilities> = {}) {
+  constructor(descriptor: ProviderDescriptor, supports: Partial<AdapterSurface> = {}) {
     super(descriptor, {
       supports: { chat: true, streaming: true, ...supports },
       pricingForDiscovered: () => LOCAL_PRICING,

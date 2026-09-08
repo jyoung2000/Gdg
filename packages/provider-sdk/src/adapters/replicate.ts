@@ -14,7 +14,7 @@ import {
   type VideoRequest,
   type VideoResponse,
 } from '@meridian/shared';
-import type { AdapterCapabilities, AdapterContext, ProviderAdapter } from '../adapter.js';
+import type { AdapterSurface, AdapterContext, ProviderAdapter } from '../adapter.js';
 import { fromDataUrl, httpJson, httpRequest, toDataUrl } from '../http.js';
 
 /** Replicate caps a synchronous wait at 60 seconds and rejects anything longer. */
@@ -88,7 +88,7 @@ export class ReplicateAdapter implements ProviderAdapter {
     this.pricingLookup = fn;
   }
 
-  capabilities(): AdapterCapabilities {
+  surface(): AdapterSurface {
     return {
       chat: false,
       streaming: false,

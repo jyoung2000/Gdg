@@ -70,7 +70,15 @@ const REQUIRED_FOR_MODALITY: Partial<Record<Modality, Capability>> = {
 };
 
 /** Which adapter method a modality needs. Enforces "no fake support" at routing time. */
-const ADAPTER_METHOD_FOR_MODALITY: Record<Modality, keyof AdapterMethodProbe> = {
+/**
+ * Which adapter method a modality needs.
+ *
+ * Exported because it is the definition of "could Meridian even attempt this":
+ * the router rejects a model whose adapter lacks the method, and the capability
+ * matrix reports the same ceiling. Two copies of this map would be two answers
+ * to one question.
+ */
+export const ADAPTER_METHOD_FOR_MODALITY: Record<Modality, keyof AdapterMethodProbe> = {
   text: 'chat',
   vision: 'chat',
   image: 'image',

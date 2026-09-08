@@ -23,13 +23,13 @@ import {
   type TranscriptionResponse,
   type Usage,
 } from '@meridian/shared';
-import type { AdapterCapabilities, AdapterContext, ProviderAdapter } from '../adapter.js';
+import type { AdapterSurface, AdapterContext, ProviderAdapter } from '../adapter.js';
 import { httpJson, httpRequest, sseLines, toDataUrl } from '../http.js';
 
 /** Which OpenAI-compatible surfaces a given provider actually exposes. */
 export interface OpenAICompatibleOptions {
   /** Enable the endpoints this provider genuinely serves. Nothing is assumed. */
-  supports: Partial<AdapterCapabilities>;
+  supports: Partial<AdapterSurface>;
   /** Provider-specific auth header. Defaults to `Authorization: Bearer <secret>`. */
   authHeader?: (secret: string) => Record<string, string>;
   /** Extra headers sent on every call (attribution, API versions, ...). */
@@ -88,7 +88,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     this.pricingLookup = fn;
   }
 
-  capabilities(): AdapterCapabilities {
+  surface(): AdapterSurface {
     return {
       chat: false,
       streaming: false,
@@ -162,7 +162,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
       numberOf(raw.context_window) ??
       numberOf((raw.top_provider as Record<string, unknown> | undefined)?.context_length) ??
       null;
-    const caps = this.capabilities();
+    const caps = this.surface();
     return {
       id: modelKey(this.descriptor.id, id),
       providerId: this.descriptor.id,
@@ -222,7 +222,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     if (req.maxTokens !== undefined) body[maxField] = req.maxTokens;
     if (req.stop?.length) body.stop = req.stop;
     if (stream) body.stream_options = { include_usage: true };
-    if (req.tools?.length && this.capabilities().tools) {
+    if (req.tools?.length && this.surface().tools) {
       body.tools = req.tools.map((t) => ({
         type: 'function',
         function: { name: t.name, description: t.description, parameters: t.parameters },
@@ -251,7 +251,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
   }
 
   async chat(req: CompletionRequest, ctx: AdapterContext): Promise<CompletionResponse> {
-    if (!this.capabilities().chat) {
+    if (!this.surface().chat) {
       throw new MeridianError('unsupported_capability', `${this.descriptor.name} does not serve chat`, {
         providerId: this.descriptor.id,
       });
@@ -292,7 +292,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
   }
 
   async *chatStream(req: CompletionRequest, ctx: AdapterContext): AsyncGenerator<StreamChunk> {
-    if (!this.capabilities().streaming) {
+    if (!this.surface().streaming) {
       // Degrade gracefully: emit the non-streaming result as one chunk.
       const res = await this.chat(req, ctx);
       yield { type: 'start', model: req.model, providerId: this.descriptor.id };
@@ -360,7 +360,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
   /* -------------------------------------------------------------- */
 
   async embed(req: EmbeddingRequest, ctx: AdapterContext): Promise<EmbeddingResponse> {
-    if (!this.capabilities().embedding) {
+    if (!this.surface().embedding) {
       throw new MeridianError('unsupported_capability', `${this.descriptor.name} does not serve embeddings`, {
         providerId: this.descriptor.id,
       });
@@ -396,7 +396,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
   /* -------------------------------------------------------------- */
 
   async image(req: ImageRequest, ctx: AdapterContext): Promise<ImageResponse> {
-    if (!this.capabilities().image) {
+    if (!this.surface().image) {
       throw new MeridianError('unsupported_capability', `${this.descriptor.name} does not serve image generation`, {
         providerId: this.descriptor.id,
       });
@@ -442,7 +442,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
   /* -------------------------------------------------------------- */
 
   async speech(req: SpeechRequest, ctx: AdapterContext): Promise<SpeechResponse> {
-    if (!this.capabilities().speech) {
+    if (!this.surface().speech) {
       throw new MeridianError('unsupported_capability', `${this.descriptor.name} does not serve speech synthesis`, {
         providerId: this.descriptor.id,
       });
@@ -472,7 +472,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
   }
 
   async transcribe(req: TranscriptionRequest, ctx: AdapterContext): Promise<TranscriptionResponse> {
-    if (!this.capabilities().transcription) {
+    if (!this.surface().transcription) {
       throw new MeridianError('unsupported_capability', `${this.descriptor.name} does not serve transcription`, {
         providerId: this.descriptor.id,
       });

@@ -15,7 +15,7 @@ import {
   type Pricing,
   type ProviderDescriptor,
 } from '@meridian/shared';
-import type { AdapterCapabilities, AdapterContext, ProviderAdapter } from '../adapter.js';
+import type { AdapterSurface, AdapterContext, ProviderAdapter } from '../adapter.js';
 import { httpJson, httpRequest, toDataUrl } from '../http.js';
 
 /** pollinations serves its two surfaces from separate origins. */
@@ -75,7 +75,7 @@ export class PollinationsAdapter implements ProviderAdapter {
     this.pricingLookup = fn;
   }
 
-  capabilities(): AdapterCapabilities {
+  surface(): AdapterSurface {
     return {
       chat: true,
       streaming: false,

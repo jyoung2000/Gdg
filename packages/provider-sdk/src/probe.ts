@@ -133,7 +133,7 @@ function classify(error: unknown): { outcome: 'unsupported' | 'inconclusive'; de
  * request to learn that an embedding endpoint is an embedding endpoint.
  */
 export function probeableCapabilities(model: ModelDescriptor, adapter: ProviderAdapter): Capability[] {
-  const surface = adapter.capabilities();
+  const surface = adapter.surface();
   const embeddingOnly = model.modalities.length > 0 && model.modalities.every((m) => m === 'embedding');
   const out: Capability[] = [];
 

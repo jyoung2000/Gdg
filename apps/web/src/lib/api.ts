@@ -1,6 +1,8 @@
 import type {
   AgentTask,
   AuditLogEntry,
+  Capability,
+  CapabilityState,
   CredentialHealth,
   CredentialQuota,
   CredentialRecord,
@@ -197,6 +199,26 @@ export interface AccountHealthView extends CredentialHealth {
   available: boolean;
   unavailableReason: string | null;
   quota: CredentialQuota[];
+}
+
+/** One row of the capability matrix: everything known about one provider. */
+export interface CapabilityMatrixRow {
+  providerId: string;
+  name: string;
+  supportState: string;
+  /** A call to this provider has succeeded in this process. Not a capability. */
+  hasLiveContact: boolean;
+  adapterSurface: Record<string, boolean> | null;
+  models: number;
+  /** Per modality: could Meridian even attempt it. A ceiling, not evidence. */
+  executable: Record<string, boolean>;
+  evidence: { capability: Capability; best: CapabilityState; counts: Record<string, number>; models: number }[];
+}
+
+export interface CapabilityMatrix {
+  capabilities: readonly Capability[];
+  modalityMethods: Record<string, string>;
+  providers: CapabilityMatrixRow[];
 }
 
 export interface RequestTrace {
@@ -440,6 +462,14 @@ export const api = {
   usage: (days = 30) => get<{ since: number; days: number; summary: UsageSummary; recent: UsageRecord[] }>(`/api/usage?days=${days}`),
   /** Everything one request id did, in the order it did it. */
   trace: (requestId: string) => get<RequestTrace>(`/api/trace/${encodeURIComponent(requestId)}`),
+
+  /**
+   * The capability matrix: what Meridian can execute, and how it knows.
+   *
+   * `executable` is a ceiling from the adapter's own methods; `evidence` is
+   * what is known about the provider's models and how strongly.
+   */
+  capabilityMatrix: () => get<CapabilityMatrix>('/api/capabilities'),
 
   /* Browser */
   browserEngines: () => get<{ engines: BrowserEngineView[]; configured: { lightpandaCdp: string | null; realBrowserCdp: string | null } }>('/api/browser/engines'),

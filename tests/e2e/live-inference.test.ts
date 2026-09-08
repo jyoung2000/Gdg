@@ -642,6 +642,57 @@ describe('E2E: gateway against a real local inference server', () => {
     assert.ok(completed.length >= 3, `expected the pipeline to run, saw ${JSON.stringify(detail.steps.map((s) => s.status))}`);
   });
 
+  it('reports what it can run separately from what it has evidence for', async () => {
+    // The matrix exists because those two were reported in different shapes in
+    // different places, and the gap between them is where an overstated claim
+    // lives. The worst version of it shipped: a field called
+    // `verifiedCapabilities` that held `typeof adapter.image === 'function'` —
+    // a fact about which methods somebody wrote, published under a name that
+    // promised a live call had confirmed them.
+    const matrix = await json<{
+      capabilities: string[];
+      providers: {
+        providerId: string;
+        models: number;
+        hasLiveContact: boolean;
+        executable: Record<string, boolean>;
+        evidence: { capability: string; best: string; counts: Record<string, number>; models: number }[];
+      }[];
+    }>('/api/capabilities');
+
+    const sim = matrix.providers.find((p) => p.providerId === simProviderId());
+    assert.ok(sim, 'the local inference server must appear in the matrix');
+    assert.ok(sim.models > 0);
+
+    // The ceiling: the sim speaks chat and embeddings and generates no video.
+    assert.equal(sim.executable.text, true, 'the adapter implements chat');
+    assert.equal(sim.executable.embedding, true, 'and embeddings');
+    assert.equal(sim.executable.video, false, 'and no video method exists, so video is not routable here');
+
+    // The evidence, which is a different question with a different answer.
+    // Earlier tests in this file probe this provider, so `text` has been earned.
+    const text = sim.evidence.find((e) => e.capability === 'text');
+    assert.ok(text, 'text must be a column');
+    assert.equal(text.best, 'probe_verified', 'a live probe ran against this provider earlier in this suite');
+    assert.ok(text.models > 0, 'and the count says how many models it covers');
+
+    // Nothing is reported as capable of something no adapter method can serve.
+    for (const p of matrix.providers) {
+      if (p.executable.video) continue;
+      const video = p.evidence.find((e) => e.capability === 'video-generation');
+      assert.ok(
+        !video || video.best === 'unknown' || p.models === 0,
+        `${p.providerId} claims video evidence but its adapter cannot execute video`,
+      );
+    }
+
+    // And a capability nobody has said anything about stays unknown rather than
+    // becoming a no.
+    const unspoken = sim.evidence.find((e) => e.capability === 'prefix-caching');
+    assert.equal(unspoken?.best, 'unknown');
+    assert.equal(unspoken?.models, 0, 'an unknown column counts no models, rather than counting them all as absent');
+  });
+
   it('records the allowance a provider publishes against the account that spent it', async () => {
     // The one composite this environment can actually run: a real gateway, a
     // real socket, a real credential, and headers a real provider would send.

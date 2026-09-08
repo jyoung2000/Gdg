@@ -138,7 +138,7 @@ export class Discovery {
 
       // A provider that answered a listing request is demonstrably reachable
       // and correctly authenticated, which is exactly what "verified" means.
-      this.deps.providers.setVerified(descriptor.id, adapter.capabilities());
+      this.deps.providers.recordLiveContact(descriptor.id, adapter.surface());
       this.deps.health.recordProbe(descriptor.id, true, 0);
       this.deps.store.saveProviderOverride(descriptor.id, { verifiedAt: Date.now() });
 
@@ -233,7 +233,7 @@ export class Discovery {
       // A name the registry has never seen gets a seed mirroring the adapter's
       // declared surface, exactly as the listing's default mapper would — the
       // two passes must agree, or whichever ran last would win.
-      const surface = this.deps.providers.get(id)?.capabilities();
+      const surface = this.deps.providers.get(id)?.surface();
       const seedCapabilities: Capability[] = [
         'text',
         ...(surface?.streaming ? (['streaming'] as const) : []),

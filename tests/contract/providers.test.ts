@@ -49,7 +49,7 @@ describe('Provider contract', () => {
     for (const descriptor of providers) {
       const adapter = registry.get(descriptor.id);
       assert.ok(adapter);
-      const caps = adapter.capabilities() as unknown as Record<string, boolean>;
+      const caps = adapter.surface() as unknown as Record<string, boolean>;
       const impl = adapter as unknown as Record<string, unknown>;
 
       for (const [capability, method] of SURFACE_METHODS) {

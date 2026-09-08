@@ -1,10 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import {
+  CAPABILITIES,
+  MODALITIES,
   MeridianError,
   isFree,
   isZeroCost,
   newId,
+  strongestPositiveState,
   type AIRequest,
+  type CapabilityState,
   type InferencePool,
   type PoolMember,
   type Reservation,
@@ -23,6 +27,7 @@ import {
   summarise,
   type RouteContext,
 } from '@meridian/model-sdk';
+import { ADAPTER_METHOD_FOR_MODALITY } from '@meridian/routing-sdk';
 import { mayUseCredential, requireAdmin, requireCredentialOwner, requireScope } from './authz.js';
 import type { App } from '../services/app.js';
 import { intParam } from './shared.js';
@@ -50,7 +55,7 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
         models: models.length,
         freeModels: free,
         paidModels: models.length - free,
-        verifiedCapabilities: app.providers.verifiedCapabilities(d.id),
+        adapterSurface: app.providers.adapterSurface(d.id),
         // Access and economics from the synced dataset, when it covers this
         // provider. Null is a real answer: most locally-configured endpoints
         // are not in any public catalog.
@@ -58,6 +63,82 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
       };
     }),
   }));
+
+  /**
+   * The capability matrix: what Meridian can do, and how it knows.
+   *
+   * One table answering a question that previously needed three: whether a
+   * provider's adapter can even execute a modality, whether anything has ever
+   * confirmed a capability on its models, and what the strength of that
+   * evidence is. Those three were reported in different shapes in different
+   * places, and the gap between them is where an overstated claim lives — a
+   * provider whose adapter has no `image` method still listing models tagged
+   * for image generation, say.
+   *
+   * The distinction the matrix is built on:
+   *
+   * - `executable` is a CEILING. It comes from which methods the adapter
+   *   implements, which is a fact about this codebase and no evidence at all
+   *   about the provider. The router enforces it, so a false entry here means
+   *   a request that cannot run, not one that runs badly.
+   * - `evidence` is what is actually KNOWN about the models, and it carries its
+   *   own strength. `unknown` is reported as unknown and never as "no".
+   *
+   * Read-only, and it lists providers and counts rather than model ids, so it
+   * discloses nothing a caller could not already see on the models route.
+   */
+  server.get('/api/capabilities', async () => {
+    const models = app.models.all();
+    return {
+      capabilities: CAPABILITIES,
+      /** Which modality each adapter method serves, so a reader can check the ceiling. */
+      modalityMethods: ADAPTER_METHOD_FOR_MODALITY,
+      providers: app.providers.list().map((d) => {
+        const surface = app.providers.adapterSurface(d.id);
+        const adapter = app.providers.get(d.id);
+        const mine = models.filter((m) => m.providerId === d.id);
+
+        return {
+          providerId: d.id,
+          name: d.name,
+          supportState: app.providers.supportState(d.id),
+          // Whether a call to this provider has ever succeeded in this process.
+          // Not a capability claim — the reason the old field name was wrong.
+          hasLiveContact: app.providers.hasLiveContact(d.id),
+          adapterSurface: surface,
+          models: mine.length,
+          // What this provider could be routed at all, from the methods its
+          // adapter actually implements. Computed from the live adapter rather
+          // than the recorded surface, so a provider that has never answered
+          // still reports its true ceiling.
+          executable: Object.fromEntries(
+            MODALITIES.map((modality) => [
+              modality,
+              adapter
+                ? typeof (adapter as unknown as Record<string, unknown>)[ADAPTER_METHOD_FOR_MODALITY[modality]] === 'function'
+                : false,
+            ]),
+          ),
+          evidence: CAPABILITIES.map((capability) => {
+            const counts: Record<string, number> = {};
+            const states: CapabilityState[] = [];
+            for (const m of mine) {
+              // A model with the capability in its flat list but no claim is
+              // reported as `inferred` rather than as evidence: the list is a
+              // projection of the claims, and something with no claim behind it
+              // got there by a heuristic.
+              const state: CapabilityState =
+                m.capabilityClaims?.[capability]?.state ?? (m.capabilities.includes(capability) ? 'inferred' : 'unknown');
+              counts[state] = (counts[state] ?? 0) + 1;
+              states.push(state);
+            }
+            const best = strongestPositiveState(states);
+            return { capability, best, counts, models: best === 'unknown' ? 0 : (counts[best] ?? 0) };
+          }),
+        };
+      }),
+    };
+  });
 
   /* ---------------- Synced catalog ---------------- */
 
@@ -252,7 +333,7 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
     });
     app.health.recordProbe(req.params.id, result.ok, result.latencyMs, result.detail);
     if (result.ok) {
-      app.providers.setVerified(req.params.id, adapter.capabilities());
+      app.providers.recordLiveContact(req.params.id, adapter.surface());
       app.store.saveProviderOverride(req.params.id, { verifiedAt: Date.now() });
     }
     return { ok: result.ok, latencyMs: result.latencyMs, detail: result.detail, supportState: app.providers.supportState(req.params.id) };

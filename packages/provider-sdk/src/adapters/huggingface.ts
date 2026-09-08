@@ -11,7 +11,7 @@ import {
   type Pricing,
   type ProviderDescriptor,
 } from '@meridian/shared';
-import type { AdapterCapabilities, AdapterContext } from '../adapter.js';
+import type { AdapterSurface, AdapterContext } from '../adapter.js';
 import { httpJson, httpRequest, toDataUrl } from '../http.js';
 import { OpenAICompatibleAdapter, familyOf } from './openai-compatible.js';
 
@@ -43,7 +43,7 @@ const FREE_TIER_PRICING: Pricing = {
   note: 'Free Hugging Face inference is capped and the allowance varies by account tier; past it, calls are billed by the upstream provider or refused.',
 };
 
-const SUPPORTED: AdapterCapabilities = {
+const SUPPORTED: AdapterSurface = {
   chat: true,
   streaming: true,
   tools: true,
@@ -80,7 +80,7 @@ interface HubModel {
  * implementation is replaced outright.
  *
  * Embeddings, speech and transcription are inherited but declared false: the
- * base guards each of them on capabilities() and raises unsupported_capability
+ * base guards each of them on surface() and raises unsupported_capability
  * instead of posting to a route this provider does not serve.
  */
 export class HuggingFaceAdapter extends OpenAICompatibleAdapter {
@@ -102,7 +102,7 @@ export class HuggingFaceAdapter extends OpenAICompatibleAdapter {
    * surface is this adapter's own and discovery reaches the Hub index even
    * when the descriptor does not flag the router as discoverable.
    */
-  override capabilities(): AdapterCapabilities {
+  override surface(): AdapterSurface {
     return { ...SUPPORTED };
   }
 

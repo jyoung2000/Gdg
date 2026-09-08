@@ -154,10 +154,12 @@ button.
   nothing schedules a re-probe. Deciding *when* to spend quota re-checking is a
   policy question with a real bill attached, and guessing at it would spend an
   operator's money on their behalf.
-- **`setVerified` still stores compile-time introspection.**
-  `adapter.capabilities()` derives from `typeof adapter.chat === 'function'` —
-  which methods were written, not which ones work. It describes the adapter's
-  surface and should be named that way.
+- ~~**`setVerified` stores compile-time introspection.**~~ Fixed. The method is
+  `adapter.surface()`, the registry records `recordLiveContact`, and the API
+  field is `adapterSurface`. What reaching there proves is contact — the
+  provider answered — not that any capability was confirmed, and the names now
+  say so. The ceiling and the evidence sit side by side in the capability
+  matrix (`GET /api/capabilities`, and the **Matrix** tab on the AI screen).
 - **No per-model health.** The circuit breaker is keyed by provider, so one
   broken model on a healthy provider cannot be taken out of rotation.
 - **Probes cover four capabilities.** JSON mode, structured output, reasoning,

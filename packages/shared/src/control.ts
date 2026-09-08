@@ -69,6 +69,34 @@ const STATE_RANK: Record<CapabilityState, number> = {
   unknown: 0,
 };
 
+/**
+ * How good a piece of evidence is, as a number.
+ *
+ * Exported so a summary view can rank claims without duplicating the table —
+ * a second copy of this ordering is a second chance to get `unsupported`'s
+ * position wrong, which is the mistake that cost real behaviour once already.
+ */
+export function claimRank(state: CapabilityState): number {
+  return STATE_RANK[state];
+}
+
+/**
+ * The strongest claim that says a capability IS present.
+ *
+ * Deliberately not "the strongest claim", which would let one model's tested
+ * negative summarise a provider whose other thirty models declare the
+ * capability. `unsupported` is strong evidence and belongs in the counts beside
+ * this, but it is an answer to a different question.
+ */
+export function strongestPositiveState(states: Iterable<CapabilityState>): CapabilityState {
+  let best: CapabilityState = 'unknown';
+  for (const state of states) {
+    if (state === 'unsupported' || state === 'unknown') continue;
+    if (STATE_RANK[state] > STATE_RANK[best]) best = state;
+  }
+  return best;
+}
+
 export interface CapabilityClaim {
   state: CapabilityState;
   /** Where it came from, in words: "openai /v1/models", "name heuristic". */

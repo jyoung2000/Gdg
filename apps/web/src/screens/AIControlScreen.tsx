@@ -20,6 +20,7 @@ import { formatRelative } from '@meridian/shared';
 import {
   api,
   type CapabilityMatchView,
+  type CapabilityMatrix,
   type ConnectionView,
   type ModelCapabilitiesView,
   type ModelChangeView,
@@ -49,12 +50,14 @@ export function AIControlScreen(): React.JSX.Element {
   const [connections, setConnections] = useState<ConnectionView[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResult, setSearchResult] = useState<{ requirement: Record<string, unknown>; matches: CapabilityMatchView[]; total: number } | null>(null);
+  const [matrix, setMatrix] = useState<CapabilityMatrix | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     void refreshModels();
     void api.modelChanges(50).then((r) => setChanges(r.changes)).catch(() => undefined);
     void api.connections().then((r) => setConnections(r.connections)).catch(() => undefined);
+    void api.capabilityMatrix().then(setMatrix).catch(() => undefined);
   }, [refreshModels]);
 
   const discover = async (force: boolean) => {
@@ -134,6 +137,7 @@ export function AIControlScreen(): React.JSX.Element {
         <TabList>
           <Tab value="library">Models ({models.length})</Tab>
           <Tab value="search">Capability search</Tab>
+          <Tab value="matrix">Matrix</Tab>
           <Tab value="changes">Changes ({changes.length})</Tab>
           <Tab value="connections">Connections</Tab>
         </TabList>
@@ -223,6 +227,78 @@ export function AIControlScreen(): React.JSX.Element {
               </Stack>
             )}
           </Stack>
+        </TabPanel>
+
+        <TabPanel value="matrix">
+          {!matrix ? (
+            <EmptyState icon={<IconCpu />} title="Loading the matrix" description="Asking the gateway what it can actually do." />
+          ) : (
+            <Stack gap={4}>
+              <Card>
+                <Stack gap={2}>
+                  <h2 className="mrd-heading">What Meridian can do, and how it knows</h2>
+                  <p className="mrd-secondary">
+                    Two different things, deliberately kept apart. <strong>Can run</strong> is a ceiling: which methods a
+                    provider&rsquo;s adapter implements, which is a fact about this codebase and no evidence at all about the
+                    provider. <strong>Evidence</strong> is what is actually known about that provider&rsquo;s models, with the
+                    strength of the strongest claim. Nothing here reads &ldquo;unknown&rdquo; as &ldquo;no&rdquo;.
+                  </p>
+                </Stack>
+              </Card>
+
+              {matrix.providers.map((row) => (
+                <Card key={row.providerId}>
+                  <Stack gap={2}>
+                    <Stack direction="row" gap={2} align="center" wrap>
+                      <span className="mrd-body">{row.name}</span>
+                      <span className="mrd-caption mrd-numeric">{row.models} models</span>
+                      <StatusChip
+                        status={row.supportState === 'supported' ? 'ready' : row.supportState === 'unavailable' ? 'offline' : 'unknown'}
+                        label={row.supportState.replace('_', ' ')}
+                        size="sm"
+                      />
+                      {/* Contact, not capability — the distinction the old
+                          `verifiedCapabilities` field blurred. */}
+                      {row.hasLiveContact && <StatusChip status="ready" label="answered a live call" size="sm" />}
+                    </Stack>
+
+                    <div>
+                      <span className="mrd-caption">Can run</span>
+                      <Stack direction="row" gap={1} wrap>
+                        {Object.entries(row.executable)
+                          .filter(([, yes]) => yes)
+                          .map(([modality]) => (
+                            <Badge key={modality}>{modality}</Badge>
+                          ))}
+                        {Object.values(row.executable).every((yes) => !yes) && (
+                          <span className="mrd-caption">nothing — no adapter method is implemented</span>
+                        )}
+                      </Stack>
+                    </div>
+
+                    <div>
+                      <span className="mrd-caption">Evidence across its models</span>
+                      <Stack direction="row" gap={1} wrap>
+                        {row.evidence
+                          .filter((e) => e.best !== 'unknown')
+                          .map((e) => (
+                            <StatusChip
+                              key={e.capability}
+                              status={e.best === 'probe_verified' ? 'ready' : e.best === 'inferred' ? 'unknown' : 'healthy'}
+                              label={`${e.capability}: ${e.best.replace('_', ' ')} (${e.models})`}
+                              size="sm"
+                            />
+                          ))}
+                        {row.evidence.every((e) => e.best === 'unknown') && (
+                          <span className="mrd-caption">nothing established yet — run a verification to earn some</span>
+                        )}
+                      </Stack>
+                    </div>
+                  </Stack>
+                </Card>
+              ))}
+            </Stack>
+          )}
         </TabPanel>
 
         <TabPanel value="changes">

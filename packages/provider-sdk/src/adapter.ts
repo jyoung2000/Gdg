@@ -52,7 +52,7 @@ export interface ProviderAdapter {
   readonly descriptor: ProviderDescriptor;
 
   /** Which of the optional methods are actually implemented. */
-  capabilities(): AdapterCapabilities;
+  surface(): AdapterSurface;
 
   /** Live model discovery. Omitted when the provider publishes no listing API. */
   listModels?(ctx: AdapterContext): Promise<ModelDescriptor[]>;
@@ -69,7 +69,7 @@ export interface ProviderAdapter {
   transcribe?(req: TranscriptionRequest, ctx: AdapterContext): Promise<TranscriptionResponse>;
 }
 
-export interface AdapterCapabilities {
+export interface AdapterSurface {
   chat: boolean;
   streaming: boolean;
   tools: boolean;
@@ -83,7 +83,7 @@ export interface AdapterCapabilities {
   health: boolean;
 }
 
-export const NO_CAPABILITIES: AdapterCapabilities = {
+export const NO_SURFACE: AdapterSurface = {
   chat: false,
   streaming: false,
   tools: false,
@@ -100,10 +100,10 @@ export const NO_CAPABILITIES: AdapterCapabilities = {
 /** Derive the capability set from which methods an adapter actually defines. */
 export function inferCapabilities(
   adapter: Partial<ProviderAdapter>,
-  overrides: Partial<AdapterCapabilities> = {},
-): AdapterCapabilities {
+  overrides: Partial<AdapterSurface> = {},
+): AdapterSurface {
   return {
-    ...NO_CAPABILITIES,
+    ...NO_SURFACE,
     chat: typeof adapter.chat === 'function',
     streaming: typeof adapter.chatStream === 'function',
     embedding: typeof adapter.embed === 'function',

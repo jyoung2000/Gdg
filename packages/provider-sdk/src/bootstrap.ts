@@ -1,5 +1,5 @@
 import type { Pricing, ProviderDescriptor } from '@meridian/shared';
-import type { AdapterCapabilities } from './adapter.js';
+import type { AdapterSurface } from './adapter.js';
 import { ProviderRegistry } from './registry.js';
 import { OpenAICompatibleAdapter, type OpenAICompatibleOptions } from './adapters/openai-compatible.js';
 import { AnthropicAdapter } from './adapters/anthropic.js';
@@ -56,7 +56,7 @@ const STATIC_HEADERS: Record<string, Record<string, string>> = {
   },
 };
 
-const LOCAL_SERVER_SURFACES: Partial<AdapterCapabilities> = {
+const LOCAL_SERVER_SURFACES: Partial<AdapterSurface> = {
   chat: true,
   streaming: true,
   tools: true,

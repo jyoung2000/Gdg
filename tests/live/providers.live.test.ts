@@ -87,7 +87,7 @@ describe('Live providers', async () => {
     it(`verifies ${credential.providerId}`, async () => {
       const adapter = registry.get(descriptor.id);
       assert.ok(adapter, `${descriptor.id} has no adapter`);
-      const caps = adapter.capabilities();
+      const caps = adapter.surface();
       const row: Row = { providerId: descriptor.id, listed: null, chat: null, streamed: null, costUsd: 0, detail: '' };
 
       const ctx: AdapterContext = {
