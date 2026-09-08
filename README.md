@@ -195,7 +195,10 @@ thought to write down.
 
 | Rule | How it holds |
 | --- | --- |
-| No fake support | A provider is `supported` only when an adapter exists, a credential resolves, **and** capabilities were confirmed by a live call. Otherwise it reads `not configured`, `not verified` or `unavailable`. A modality with no adapter method is not routable. |
+| No fake support | A provider is `supported` only when an adapter exists, a credential resolves, **and** this process has seen a live call to it succeed. Otherwise it reads `not configured`, `not verified` or `unavailable`. A modality with no adapter method is not routable. Note the scope: a successful call proves the *provider* is reachable and authenticated. Whether a *model* has a given capability is a separate question, answered by a probe — see the row below. |
+| No unverified capability shown as verified | Every capability carries a claim saying where it came from: a live probe, an operator, the provider's listing, or a guess from the model's name. `probe_verified` is written only by `uag verify`, which sends a real request. Evidence persists across restarts and a name guess cannot overrule a tested finding. |
+| No unknown price treated as a low one | A metered model with no published rate reports its cost as **unknown**, never `$0`. It cannot win a cheapest-route comparison, cannot pass a budget, and cannot be charged against a no-spend pool. |
+| No failing check reported as success | A command's exit code reaches the orchestrator. A verifying step whose commands failed is recorded failed, the task reports it, and one repair attempt is made. A run where the tests did not pass never looks like one where they did. |
 | No mislabelled free tiers | `TRIAL` and `CREDIT` are never rendered as "Free". A rate-limited allowance is `FREE_DAILY`, not `FREE`. |
 | No guessed data-use policies | The shipped catalog says `unknown` for every remote provider and links to their own terms. You record what you verified. |
 | No silent spending | Paid routing needs the instance switch **and** per-request permission. Budgets are hard ceilings. |
@@ -340,6 +343,14 @@ What has and has not been verified is written down rather than implied — see
 | `docs/SECURITY.md` | Threat model and the guarantees |
 | `docs/ROUTING.md` | Modes, pools, reservations, economics |
 | `docs/MODEL_INTELLIGENCE.md` | Free-access taxonomy, catalog sync, routes, the free radar |
+| `docs/VERIFICATION.md` | Capability evidence, probes, and what a probe may conclude |
+| `docs/PRICING_ENGINE.md` | Cost classes, unknown prices, and how a budget binds |
+| `docs/PRICING_AND_QUOTA.md` | The rate card: where the numbers come from and how they are matched |
+| `docs/CONTEXT_OPTIMIZATION.md` | The context engine: what it removes, what it protects, what it saves |
+| `docs/TOKEN_OPTIMIZATION_BENCHMARK.md` | Measured before/after across six fixtures |
+| `docs/CURRENT_STATE_AUDIT.md` | A code-level audit: what is implemented, partial, broken or missing |
+| `docs/MERIDIAN_HARDENING_PLAN.md` | What that audit found, in the order it was worth fixing |
+| `docs/MERIDIAN_HARDENING_FINAL_REPORT.md` | What was built, what was proved, and what is still missing |
 | `docs/UPSTREAM_INTEGRATION_MATRIX.md` | What was integrated from each upstream project, and what was already there |
 | `docs/AGENTS.md` | The agent roster and the task pipeline |
 | `design/DESIGN_SYSTEM.md` | Tokens, components, states, theming |
