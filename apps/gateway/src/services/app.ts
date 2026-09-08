@@ -37,6 +37,7 @@ import { EventBus, type ServerEvent } from './events.js';
 import { browserTools, createControlPlane, type ControlPlane } from './control.js';
 import { createAIControlPlane, type ControlPlane as AIControlPlane } from './control-plane.js';
 import { ComputerService } from './computer.js';
+import { mcpAgentTools, selectMcpTools, type McpToolPolicy } from './mcp-tools.js';
 
 export interface Warning {
   level: 'info' | 'warn';
@@ -761,6 +762,65 @@ export class App {
   refreshCredentialState(): void {
     for (const d of this.providers.list()) {
       this.providers.setCredentialed(d.id, this.credentials.hasAny(d.id));
+    }
+  }
+
+  /**
+   * The MCP tools that apply to this request, as agent tools.
+   *
+   * Two layers of scoping, and both are the operator's rather than a guess.
+   * The control plane's effective configuration decides which *servers* apply
+   * here — global, provider, model, profile, workspace and session assignments,
+   * most specific winning. Selection then decides which of their *tools* are
+   * worth the context they cost.
+   *
+   * Returns an empty map rather than throwing when MCP is unconfigured, which
+   * is the common case: an instance with no servers installed gets exactly the
+   * behaviour it had before this existed.
+   */
+  mcpToolsFor(ctx: {
+    workspaceId?: string | null;
+    sessionId?: string | null;
+    profileId?: string | null;
+    modelId?: string | null;
+    providerId?: string | null;
+    request: string;
+    policy?: McpToolPolicy;
+  }): ToolRegistry {
+    const empty: ToolRegistry = new Map();
+    try {
+      const config = this.ai.profiles.effectiveConfig({
+        profileId: ctx.profileId ?? null,
+        modelId: ctx.modelId ?? null,
+        providerId: ctx.providerId ?? null,
+        workspaceId: ctx.workspaceId ?? null,
+        sessionId: ctx.sessionId ?? null,
+      });
+      const serverIds = config.mcpServers.map((s) => s.serverId);
+      if (!serverIds.length) return empty;
+
+      const selection = selectMcpTools({
+        mcp: this.control.mcp,
+        serverIds,
+        request: ctx.request,
+        policy: ctx.policy,
+        context: { workspaceId: ctx.workspaceId ?? null, sessionId: ctx.sessionId ?? null },
+        // A built-in tool must never be shadowed: an agent asking for
+        // `read_file` has to get Meridian's, whatever a server calls its own.
+        reserved: new Set(this.tools.keys()),
+      });
+      return mcpAgentTools(this.control.mcp, selection, {
+        workspaceId: ctx.workspaceId ?? null,
+        sessionId: ctx.sessionId ?? null,
+      });
+    } catch (e) {
+      // A misconfigured MCP server must not stop a task from running: the
+      // agents' own tools are unaffected, so the honest degradation is "no MCP
+      // tools this time", logged.
+      this.logger.warn('could not resolve MCP tools for this request', {
+        errorCode: e instanceof Error ? e.message : String(e),
+      });
+      return empty;
     }
   }
 

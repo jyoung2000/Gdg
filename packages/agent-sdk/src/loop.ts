@@ -32,6 +32,14 @@ export interface AgentRunInput {
   sensitive?: boolean;
   budget?: number | null;
   signal?: AbortSignal;
+  /**
+   * Tools available only to this run, beyond the built-in registry.
+   *
+   * This is how MCP reaches a model. The built-in registry is fixed at boot,
+   * but which MCP servers apply is resolved per request from the control
+   * plane's scopes, so those tools can only be known here.
+   */
+  extraTools?: ReadonlyMap<string, import('./tools.js').Tool>;
 }
 
 export interface AgentRunResult {
@@ -119,8 +127,19 @@ export class AgentLoop {
     // A tool the registry does not have (web_fetch when web access is off) is
     // dropped rather than advertised, so the model never calls something that
     // cannot work.
-    const allowedTools = agent.tools.filter((t) => this.deps.tools.has(t));
-    const definitions = toolDefinitions(this.deps.tools, allowedTools);
+    //
+    // Per-run tools are merged in and offered to every role that can use tools
+    // at all. An MCP server the operator assigned to this workspace is not
+    // something the agent definitions could have known about at build time, so
+    // there is no per-role allow-list for them to appear on.
+    const registry: ReadonlyMap<string, import('./tools.js').Tool> = input.extraTools?.size
+      ? new Map([...this.deps.tools, ...input.extraTools])
+      : this.deps.tools;
+    const allowedTools = [
+      ...agent.tools.filter((t) => registry.has(t)),
+      ...(input.extraTools ? [...input.extraTools.keys()] : []),
+    ];
+    const definitions = toolDefinitions(registry, allowedTools);
 
     const request: AIRequest = {
       modality: 'text',
@@ -238,7 +257,7 @@ export class AgentLoop {
             call,
             { ...toolCtx, taskId: input.taskId, stepId: input.stepId, signal: input.signal },
             allowedTools,
-            this.deps.tools,
+            registry,
           );
           toolCalls.push(record);
           for (const f of result.filesTouched ?? []) filesTouched.add(f);

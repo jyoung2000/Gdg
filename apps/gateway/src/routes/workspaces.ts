@@ -247,6 +247,15 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
     });
     app.store.saveTask(task);
 
+    // Whatever MCP servers the control plane says apply to this workspace
+    // become tools the agents can actually call. Resolved once per task rather
+    // than per step: a task is one unit of work under one configuration, and
+    // re-resolving mid-run would let the toolset change under the agent.
+    const mcpTools = app.mcpToolsFor({ workspaceId: body.workspaceId, request: body.request });
+    if (mcpTools.size) {
+      app.logger.info('mcp tools available to task', { taskId: task.id, tools: mcpTools.size });
+    }
+
     // The task runs detached: the HTTP response returns the queued record and
     // progress arrives over the event stream, because a real task outlives any
     // sensible request timeout.
@@ -260,6 +269,7 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
         allowPaid: body.allowPaid ?? prefs.allowPaid,
         sensitive: record.privacyMode === 'STRICT_LOCAL' || record.privacyMode === 'TRUSTED_ONLY',
         budget: body.budget ?? prefs.maxCostPerTask,
+        extraTools: mcpTools,
       })
       .catch((e: unknown) => {
         app.logger.error('task crashed', { taskId: task.id, errorCode: e instanceof Error ? e.message : String(e) });

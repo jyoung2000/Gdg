@@ -64,6 +64,15 @@ export interface RunTaskInput {
   sensitive?: boolean;
   budget?: number | null;
   signal?: AbortSignal;
+  /**
+   * Tools resolved for this task only — in practice, MCP.
+   *
+   * Which MCP servers apply is a per-request question the control plane answers
+   * from six scopes, so it cannot be baked into the boot-time tool registry.
+   * Every step of the task gets the same set, because a task is one unit of
+   * work with one configuration.
+   */
+  extraTools?: ReadonlyMap<string, import('./tools.js').Tool>;
 }
 
 /** The steps a task will run, chosen from the shape of the request. */
@@ -316,6 +325,7 @@ export class Orchestrator {
             sensitive: input.sensitive,
             budget: input.budget,
             signal,
+            extraTools: input.extraTools,
           },
           toolCtx,
         );
