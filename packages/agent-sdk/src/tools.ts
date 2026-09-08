@@ -30,6 +30,17 @@ export interface ToolResult {
   filesTouched?: string[];
   /** Set by the terminal `finish` tool to end the loop. */
   finished?: boolean;
+  /**
+   * Exit code of a command this tool ran, when it ran one.
+   *
+   * Deliberately separate from `isError`. A test suite that fails is a *successful
+   * tool call* — the command ran, and its output is exactly what the model needs
+   * to debug — so `isError` stays false and the model reads the failure rather
+   * than retrying the tool. But the orchestrator needs to know too: without this,
+   * a tester step whose suite failed was indistinguishable from one that passed,
+   * and got recorded as `completed`.
+   */
+  exitCode?: number | null;
 }
 
 export interface Tool {
@@ -258,8 +269,10 @@ export const runCommandTool: Tool = {
       .filter(Boolean)
       .join('\n\n');
     // A non-zero exit is information the model must act on, not a tool failure —
-    // returning it as an error would make the model retry rather than debug.
-    return { content: clip(body), isError: false };
+    // returning it as an error would make the model retry rather than debug. The
+    // exit code rides alongside so the orchestrator can still tell a passing run
+    // from a failing one, which it previously could not.
+    return { content: clip(body), isError: false, exitCode: res.exitCode };
   },
 };
 

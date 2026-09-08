@@ -1,5 +1,6 @@
 import {
   MeridianError,
+  capabilityConfidence,
   costScore,
   describeCost,
   estimateCall,
@@ -368,7 +369,16 @@ export class Router {
     const preferred = Boolean(
       prefs && (prefs.preferredModels.includes(m.id) || prefs.preferredProviders.includes(m.providerId)),
     );
-    const reliability = clamp01((view?.scores?.stability ?? 0.85) * (1 - health.errorRate));
+    // Reliability is "will this call work", and that has two halves: how the
+    // provider has been behaving, and how sure we are the model can do what
+    // this request needs at all. The second half used to be invisible here —
+    // the hard constraints read the flat capability list, so a probe-verified
+    // claim and a 0.5-confidence name guess were indistinguishable to the thing
+    // that actually picks the model. Folding evidence in means verifying a
+    // model improves its position rather than only its documentation.
+    const required = requiredCapabilitiesOf(req);
+    const evidence = capabilityConfidence(m.capabilityClaims, m.capabilities, required);
+    const reliability = clamp01((view?.scores?.stability ?? 0.85) * (1 - health.errorRate) * evidence);
 
     const factors = {
       quality: quality * w.quality,
@@ -610,6 +620,22 @@ export class Router {
       rejected: dedupeRejections(rejected),
     };
   }
+}
+
+/**
+ * Every capability this request needs, from all the ways it can ask for one.
+ *
+ * The named flags and the `requiredCapabilities` list are two spellings of the
+ * same thing, and a request may use either.
+ */
+function requiredCapabilitiesOf(req: AIRequest): Capability[] {
+  const out = new Set<Capability>(req.requiredCapabilities ?? []);
+  const need = REQUIRED_FOR_MODALITY[req.modality];
+  if (need) out.add(need);
+  if (req.toolsRequired) out.add('tools');
+  if (req.reasoningRequired) out.add('reasoning');
+  if (req.visionRequired) out.add('vision');
+  return [...out];
 }
 
 function clamp01(v: number): number {

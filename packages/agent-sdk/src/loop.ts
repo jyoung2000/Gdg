@@ -67,6 +67,16 @@ export interface AgentRunResult {
    * that trimming it would be more risk than benefit.
    */
   contextTokensSaved: number;
+  /**
+   * Commands this step ran that exited non-zero.
+   *
+   * The single fact a tester step exists to establish, and until now nobody
+   * recorded it: a failing suite came back as a successful tool call (correctly
+   * — the model needs to read the failure) and the step was then written down
+   * as `completed`. A run where the tests did not pass looked exactly like one
+   * where they did.
+   */
+  failedCommands: { command: string; exitCode: number }[];
 }
 
 export interface AgentLoopDeps {
@@ -172,6 +182,7 @@ export class AgentLoop {
      */
     let contextModel: { contextLength: number | null; maxOutputTokens: number | null } | null = null;
     const toolCalls: ToolCallRecord[] = [];
+    const failedCommands: { command: string; exitCode: number }[] = [];
     const filesTouched = new Set<string>();
     const fallbacks: FallbackEvent[] = [];
     let modelId: string | null = null;
@@ -260,6 +271,10 @@ export class AgentLoop {
             registry,
           );
           toolCalls.push(record);
+          if (typeof result.exitCode === 'number' && result.exitCode !== 0) {
+            const command = typeof call.arguments.command === 'string' ? call.arguments.command : call.name;
+            failedCommands.push({ command, exitCode: result.exitCode });
+          }
           for (const f of result.filesTouched ?? []) filesTouched.add(f);
           this.deps.onEvent?.({ type: 'tool-end', stepId: input.stepId, record });
 
@@ -304,6 +319,7 @@ export class AgentLoop {
       error,
       messages,
       contextTokensSaved: contextSaved,
+      failedCommands,
     };
     this.deps.onEvent?.({ type: 'step-end', stepId: input.stepId, summary: result.summary, usage });
     return result;

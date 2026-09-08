@@ -41,6 +41,17 @@ export interface OrchestratorDeps {
    * it is wired up, a run becomes reversible one step at a time.
    */
   persistCheckpoint?: (taskId: string, stepId: string | null, checkpoint: WorkspaceCheckpoint) => void;
+  /**
+   * Report whether a verifying step's commands succeeded.
+   *
+   * This is the one automatic judgement Meridian can make about a model's
+   * output quality: a test suite either passed or it did not. Until now nothing
+   * called it — `testsPassed` existed in the scoring API with no producer, so
+   * the only thing that ever updated a quality score was a human clicking a
+   * thumb. A model that reliably writes code failing its own tests learned
+   * nothing from doing so.
+   */
+  onVerification?: (input: { taskId: string; stepId: string; role: AgentRole; passed: boolean }) => void;
   now?: () => number;
 }
 
@@ -74,6 +85,16 @@ export interface RunTaskInput {
    */
   extraTools?: ReadonlyMap<string, import('./tools.js').Tool>;
 }
+
+/**
+ * Roles whose job is to establish that the change works.
+ *
+ * A failing command means something different in these than elsewhere. An
+ * implementer running a command that exits non-zero is often mid-work — a
+ * compile that fails is why it is about to edit a file. A tester or reviewer
+ * running one has found the answer it was sent to find.
+ */
+const VERIFYING_ROLES: AgentRole[] = ['tester', 'reviewer', 'debugger'];
 
 /** The steps a task will run, chosen from the shape of the request. */
 export interface Pipeline {
@@ -282,6 +303,10 @@ export class Orchestrator {
     let usage: Usage = ZERO_USAGE;
     const context: string[] = [];
     let failed: string | null = null;
+    /** Set when a verifying step ran commands that did not succeed. */
+    let testsFailed: { role: AgentRole; detail: string } | null = null;
+    /** One repair attempt per task; see the escalation block below. */
+    let escalated = false;
 
     try {
       for (let i = 0; i < steps.length; i++) {
@@ -331,9 +356,14 @@ export class Orchestrator {
         );
 
         usage = addUsage(usage, result.usage);
+        // A verifying step whose commands failed is not a completed step. It ran
+        // to completion, but what it was for did not succeed, and reporting it
+        // green is the difference between a task that says it worked and one
+        // that did.
+        const verificationFailed = result.failedCommands.length > 0 && VERIFYING_ROLES.includes(role);
         steps[i] = {
           ...steps[i],
-          status: result.error ? 'failed' : 'completed',
+          status: result.error || verificationFailed ? 'failed' : 'completed',
           finishedAt: this.now(),
           summary: summarise(result),
           modelId: result.modelId,
@@ -342,12 +372,94 @@ export class Orchestrator {
           usage: result.usage,
           toolCallCount: result.toolCalls.length,
           filesTouched: result.filesTouched,
-          error: result.error,
+          error:
+            result.error ??
+            (verificationFailed
+              ? `${result.failedCommands.length} command(s) exited non-zero: ${result.failedCommands
+                  .map((c) => `${c.command} (${c.exitCode})`)
+                  .join(', ')}`
+              : null),
           fallbackEvents: result.fallbacks,
         };
         this.publishStep(steps[i]);
 
         if (result.summary) context.push(`## ${agent.name}\n${result.summary}`);
+
+        // A tester that ran a suite and watched it fail has established the one
+        // thing it exists to establish, and it used to be thrown away: the tool
+        // call succeeded (correctly — the model needs to read the failure), so
+        // the step was written down as `completed` and the task reported
+        // success. A run where the tests did not pass looked exactly like one
+        // where they did.
+        if (result.failedCommands.length && VERIFYING_ROLES.includes(role)) {
+          const detail = result.failedCommands
+            .map((c) => `\`${c.command}\` exited ${c.exitCode}`)
+            .join('; ');
+          testsFailed = { role, detail };
+          // Downstream steps must see it. A reviewer told the tests passed will
+          // review a change that does not work.
+          context.push(`## Test results\nCommands that did not succeed during ${agent.name}: ${detail}`);
+          this.deps.logger.warn('a verifying step reported failing commands', {
+            taskId: task.id,
+            role,
+            failed: result.failedCommands.length,
+          });
+        }
+
+        // Report the verdict either way. A pass is as much evidence as a
+        // failure, and reporting only failures would bias every score downward.
+        if (VERIFYING_ROLES.includes(role) && !result.error) {
+          this.deps.onVerification?.({
+            taskId: task.id,
+            stepId: step.id,
+            role,
+            passed: result.failedCommands.length === 0,
+          });
+        }
+
+        // Escalate once. A failing suite used to be the end of the matter: the
+        // reviewer is the last step in every pipeline that has one, so its
+        // findings went into a context nothing read, and the task reported
+        // success. Appending a repair attempt and a re-check is the smallest
+        // thing that makes the failure mean something.
+        //
+        // Strictly once per task. A model that cannot fix its own work in one
+        // attempt will not usually manage it in five, and an unbounded loop
+        // here is an unbounded bill.
+        if (
+          testsFailed &&
+          !escalated &&
+          role === 'tester' &&
+          // Nothing to repair if the workspace was never going to be changed.
+          pipeline.steps.includes('implementer')
+        ) {
+          escalated = true;
+          const repair: TaskStep[] = (['debugger', 'tester'] as AgentRole[]).map((r, n) => ({
+            id: newStepId(),
+            taskId: task.id,
+            order: steps.length + n,
+            label: `${STEP_LABEL[r]} (after a failing check)`,
+            role: r,
+            status: 'pending',
+            startedAt: null,
+            finishedAt: null,
+            summary: null,
+            modelId: null,
+            providerId: null,
+            latencyMs: null,
+            usage: null,
+            toolCallCount: 0,
+            filesTouched: [],
+            error: null,
+            fallbackEvents: [],
+          }));
+          steps.push(...repair);
+          for (const r of repair) this.publishStep(r);
+          this.deps.logger.info('escalating after a failing check', { taskId: task.id, detail: testsFailed.detail });
+          // Cleared so the re-check's own verdict decides the task's outcome
+          // rather than the attempt that prompted the repair.
+          testsFailed = null;
+        }
 
         // A failed finder or planner leaves later steps with nothing to work
         // from, so the task stops rather than burning budget on a blind attempt.
@@ -372,9 +484,13 @@ export class Orchestrator {
 
     task = {
       ...task,
-      status: signal.aborted ? 'cancelled' : failed ? 'failed' : 'completed',
+      // A task whose tests failed did not succeed, whatever its last step said.
+      // Reporting it completed is the same class of untruth as reporting an
+      // unpublished price as $0: a real negative result presented as a
+      // positive one, in the direction that makes the user trust it.
+      status: signal.aborted ? 'cancelled' : failed || testsFailed ? 'failed' : 'completed',
       finishedAt: this.now(),
-      error: failed,
+      error: failed ?? (testsFailed ? `Verification did not pass during ${testsFailed.role}: ${testsFailed.detail}` : null),
       usage,
       result: buildResult(context, changes),
     };

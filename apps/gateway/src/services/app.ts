@@ -359,6 +359,16 @@ export class App {
       sandbox,
       logger,
       commandTimeoutMs: config.sandboxTimeoutMs,
+      // The one judgement Meridian can make for itself. A model whose code
+      // fails its own tests should learn from that, and until now nothing told
+      // it: `testsPassed` had no producer anywhere in the codebase.
+      // Matched by role rather than step id, because that is what a usage row
+      // records. Within one task a verifying role's calls are exactly the ones
+      // this verdict is about.
+      onVerification: ({ taskId, role, passed }) => {
+        const rows = store.listUsage({ taskId }).filter((r) => r.agentRole === role);
+        for (const row of rows) instance?.recordOutcome(row, { testsPassed: passed });
+      },
       persistStep: (step) => store.saveStep(step),
       persistTask: (task) => store.saveTask(task),
       persistToolCall: (record) => store.saveToolCall(record),

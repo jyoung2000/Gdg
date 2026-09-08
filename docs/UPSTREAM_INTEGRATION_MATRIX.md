@@ -150,7 +150,17 @@ scoring.
 
 **Not implemented:** an enforced "review with a different family than the
 implementer" rule. Meridian can be configured that way through pools, but does
-not require it. Recorded here as a gap rather than claimed.
+not require it, and `AIRequest` has no field that could express it — there is no
+model-family concept anywhere in the codebase. Recorded here as a gap rather
+than claimed.
+
+**Since implemented:** the other half of that idea — that a verification step's
+verdict should *mean* something — is now real. A command that exits non-zero
+carries its exit code back to the orchestrator, a verifying step whose commands
+failed is recorded as failed rather than completed, the task reports the
+failure instead of success, the outcome feeds the model's learned quality
+score, and one bounded repair attempt (debugger, then re-check) is appended.
+See [AGENT_VERIFICATION.md](AGENT_VERIFICATION.md).
 
 ---
 

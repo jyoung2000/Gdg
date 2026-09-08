@@ -100,6 +100,56 @@ export function mergeClaim(existing: CapabilityClaim | undefined, next: Capabili
   return existing;
 }
 
+/**
+ * How much to trust that a capability really is there, in [0,1].
+ *
+ * Used by routing, where the question is not "does the catalogue say this model
+ * has vision" but "if I send it an image, will that work". A capability known
+ * only from a name match is a coin flip that fails at the provider; one a live
+ * probe confirmed is as close to certain as this system gets.
+ *
+ * Deliberately a *nudge*, not a gate. The floor is 0.7 rather than something
+ * punitive because a guess is still usually right, and refusing to route on one
+ * would leave a freshly discovered model unroutable until someone probed it —
+ * which is how a system ends up never using anything new. Verification earns a
+ * better position rather than being the price of entry.
+ */
+const STATE_CONFIDENCE: Record<CapabilityState, number> = {
+  probe_verified: 1,
+  user_confirmed: 0.95,
+  provider_declared: 0.85,
+  inferred: 0.7,
+  // Neither of these should reach a scoring path — a model missing a required
+  // capability is dropped by the hard constraints first — but if one does, it
+  // must not score as though the capability were established.
+  unsupported: 0,
+  unknown: 0,
+};
+
+/**
+ * Confidence that a model really has every capability named.
+ *
+ * The weakest link decides: a model with a probe-verified `tools` and a guessed
+ * `vision` is, for a request needing both, only as trustworthy as the guess.
+ */
+export function capabilityConfidence(
+  claims: CapabilityClaims | undefined,
+  declared: readonly Capability[],
+  required: readonly Capability[],
+): number {
+  if (!required.length) return 1;
+  let weakest = 1;
+  for (const cap of required) {
+    const claim = claims?.[cap];
+    // No claim at all, but the model's own listing includes it: that is a
+    // provider declaration that predates the evidence system, and is treated as
+    // one rather than as an unknown.
+    const confidence = claim ? STATE_CONFIDENCE[claim.state] : declared.includes(cap) ? STATE_CONFIDENCE.provider_declared : 0;
+    if (confidence < weakest) weakest = confidence;
+  }
+  return weakest;
+}
+
 export function mergeClaims(existing: CapabilityClaims, next: CapabilityClaims): CapabilityClaims {
   const out: CapabilityClaims = { ...existing };
   for (const [cap, claim] of Object.entries(next) as [Capability, CapabilityClaim][]) {
