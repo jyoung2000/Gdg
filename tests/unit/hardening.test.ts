@@ -42,6 +42,36 @@ describe('429 classification', () => {
   });
 });
 
+describe('A dead key is a dead key, whatever status it arrives with', () => {
+  it('reads Google’s 400 API_KEY_INVALID as an authentication failure', () => {
+    // Verified against the live endpoint: `GET generativelanguage.googleapis.com
+    // /v1beta/models` with a bad `x-goog-api-key` answers **400**, not 401,
+    // with `"reason": "API_KEY_INVALID"`.
+    //
+    // Falling through to `invalid_request` was wrong three times over. The
+    // caller was told their request was malformed when their key was dead;
+    // `invalid_request` does not fail over, so the fallback chain stopped at
+    // the first provider; and it is not an account fault, so the dead key was
+    // never taken out of rotation and every later request repeated it.
+    const google = JSON.stringify({
+      error: { code: 400, message: 'API key not valid. Please pass a valid API key.', status: 'INVALID_ARGUMENT', details: [{ reason: 'API_KEY_INVALID' }] },
+    });
+    assert.equal(classifyStatus(400, google), 'authentication_failed');
+  });
+
+  it('reads the other spellings providers use', () => {
+    assert.equal(classifyStatus(400, '{"error":{"message":"Invalid API key provided"}}'), 'authentication_failed');
+    assert.equal(classifyStatus(400, '{"error":{"type":"authentication_error"}}'), 'authentication_failed');
+    assert.equal(classifyStatus(400, '{"code":16,"message":"unauthenticated"}'), 'authentication_failed');
+  });
+
+  it('does not reclassify an ordinary bad request that mentions a key', () => {
+    // The match has to be about a credential, not about the word "key".
+    assert.equal(classifyStatus(400, '{"error":{"message":"Unknown key \'temprature\' in request body"}}'), 'invalid_request');
+    assert.equal(classifyStatus(400, '{"error":{"message":"messages: field required"}}'), 'invalid_request');
+  });
+});
+
 describe('isErrorCode', () => {
   it('accepts taxonomy codes and rejects everything else', () => {
     assert.equal(isErrorCode('rate_limited'), true);

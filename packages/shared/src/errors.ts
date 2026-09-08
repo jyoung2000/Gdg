@@ -170,5 +170,19 @@ export function classifyStatus(status: number, body: string): ErrorCode {
     return 'context_length_exceeded';
   if (lower.includes('quota')) return 'quota_exhausted';
   if (lower.includes('content policy') || lower.includes('safety')) return 'content_filtered';
+  // Not every provider says "unauthorized" with a 401. Google's Generative
+  // Language API answers a bad key with **400 API_KEY_INVALID**, verified
+  // against the live endpoint — and falling through to `invalid_request` was
+  // wrong three times over: the caller was told their request was malformed
+  // when their key was dead, `invalid_request` does not fail over so the
+  // fallback chain stopped at the first provider, and the code is not an
+  // account fault so the dead key was never taken out of rotation and every
+  // later request repeated the failure.
+  //
+  // Matched on phrases that can only be about a credential, so an ordinary bad
+  // request that happens to mention a key does not get reclassified.
+  if (/(api[_ ]key[_ ]invalid|api key not valid|invalid[_ ]api[_ ]key|unauthenticated|authentication[_ ]error)/.test(lower)) {
+    return 'authentication_failed';
+  }
   return 'invalid_request';
 }
