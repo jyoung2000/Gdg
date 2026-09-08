@@ -25,6 +25,7 @@ import { ModelRegistry, recommendationScore } from '@meridian/model-sdk';
 import type { AdapterSurface, ProviderRegistry } from '@meridian/provider-sdk';
 import type { CredentialResolver } from './credentials.js';
 import type { HealthStore } from './health.js';
+import type { ModelHealthStore } from './model-health.js';
 import type { PoolManager } from './pools.js';
 import {
   MODE_WEIGHTS,
@@ -39,6 +40,8 @@ export interface RouterDeps {
   models: ModelRegistry;
   providers: ProviderRegistry;
   health: HealthStore;
+  /** Per-model health, so a retired model id is skipped rather than retried. */
+  modelHealth?: ModelHealthStore;
   credentials: CredentialResolver;
   pools: PoolManager;
   /** Global kill-switch: when false no request may route to a paid model. */
@@ -261,6 +264,13 @@ export class Router {
     };
 
     if (m.deprecated) return no('Model is deprecated');
+
+    // A model the provider has stopped serving is skipped until its cooldown
+    // expires. Without this the fallback chain kept offering it, spent a
+    // request discovering the same 404, and — before the executor learned to
+    // tell the three subjects apart — took the whole provider down with it.
+    const modelProblem = this.deps.modelHealth?.unavailableReason(m.id);
+    if (modelProblem) return no(modelProblem);
 
     // Modality and capability.
     if (!m.modalities.includes(req.modality)) return no(`Does not serve ${req.modality}`);

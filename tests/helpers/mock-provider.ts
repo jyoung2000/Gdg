@@ -26,6 +26,14 @@ export interface MockBehaviour {
   /** Token counts reported back, for cost accounting assertions. */
   usage?: { prompt: number; completion: number };
   /**
+   * Model ids the chat endpoint answers with a 404.
+   *
+   * Providers retire model ids constantly, and a cached catalog keeps offering
+   * them. This is that shape: the provider is up, the key is good, and this one
+   * name is gone.
+   */
+  retiredModels?: string[];
+  /**
    * Rate-limit headers sent with every response.
    *
    * Real providers publish an account's remaining allowance here, on ordinary
@@ -105,6 +113,11 @@ export async function startMockProvider(id: string, initial: MockBehaviour = {})
         }
 
         if (req.url?.includes('/chat/completions')) {
+          const wanted = (body as { model?: string } | null)?.model;
+          if (wanted && behaviour.retiredModels?.includes(wanted)) {
+            send(404, { error: { message: `The model \`${wanted}\` does not exist`, type: 'invalid_request_error' } });
+            return;
+          }
           successes += 1;
           const streaming = Boolean((body as { stream?: boolean } | null)?.stream);
           const usage = {

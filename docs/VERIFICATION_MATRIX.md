@@ -170,6 +170,17 @@ Full write-up in [MERIDIAN_PHASE4_IMPLEMENTATION.md](MERIDIAN_PHASE4_IMPLEMENTAT
 | Trace on the CLI and the Usage screen | VERIFIED | `uag trace` against a running gateway; the panel driven in Chromium |
 | Quota against a real provider's own headers | BLOCKED_EXTERNAL | No reachable provider publishes them without a credential |
 
+## Model health (Phase 4)
+
+| Capability | Status | Evidence |
+| --- | --- | --- |
+| A retired model id does not take its provider offline | VERIFIED | Red-then-green against a real socket. `model_unavailable` is not retryable, so one 404 opened the provider's breaker and made every other model on it unroutable |
+| The retired model is what leaves rotation | VERIFIED | The chain moves to a working model on the same provider; the dead id is on cooldown with a reason |
+| A cooling-down model is not offered to the router | VERIFIED | Asserted on the router's own candidate list, so a call does not spend a request rediscovering the same 404 |
+| A provider fault does not cool its models | VERIFIED | A 503 leaves every model available, or there would be nothing to fall back to when it recovers |
+| A context overflow is a fact about the request, not the model | VERIFIED | Two overflows leave the model available |
+| Models out of rotation are reported | VERIFIED | `/api/health` lists them with the reason; empty is the normal answer |
+
 ## Capability truth (Phase 4)
 
 | Capability | Status | Evidence |

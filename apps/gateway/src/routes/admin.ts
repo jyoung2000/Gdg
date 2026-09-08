@@ -864,6 +864,24 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
       health: app.health.get(d.id),
       cooldownSec: app.health.cooldownRemaining(d.id),
     })),
+    /**
+     * Models currently out of rotation, and why.
+     *
+     * Only the ones that are actually blocked: a list of every model with a
+     * null cooldown would be the model catalog again, and the question this
+     * answers is "what is Meridian refusing to use right now". Empty is the
+     * normal and correct answer.
+     */
+    models: app.modelHealth
+      .all()
+      .filter((m) => !app.modelHealth.available(m.modelId))
+      .map((m) => ({
+        modelId: m.modelId,
+        providerId: m.providerId,
+        reason: app.modelHealth.unavailableReason(m.modelId),
+        lastErrorCode: m.lastErrorCode,
+        cooldownUntil: m.cooldownUntil,
+      })),
   }));
 }
 

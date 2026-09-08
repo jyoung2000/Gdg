@@ -33,6 +33,7 @@ import { withRateLimitSink, type AdapterContext, type ProviderRegistry } from '@
 import type { ModelRegistry } from '@meridian/model-sdk';
 import type { CredentialResolver } from './credentials.js';
 import type { CredentialHealthStore } from './credential-health.js';
+import { isModelFault, type ModelHealthStore } from './model-health.js';
 import type { HealthStore } from './health.js';
 import type { PoolManager } from './pools.js';
 import { routingSnapshot, type Router } from './router.js';
@@ -48,6 +49,8 @@ export interface ExecutorDeps {
    * to the provider, which is the bug this exists to fix.
    */
   credentialHealth?: CredentialHealthStore;
+  /** Per-model health, so one retired model id cannot retire a provider. */
+  modelHealth?: ModelHealthStore;
   credentials: CredentialResolver;
   pools: PoolManager;
   logger: Logger;
@@ -522,6 +525,7 @@ export class Executor {
   private succeeded(target: Target, latencyMs: number): void {
     this.deps.health.recordSuccess(target.providerId, latencyMs);
     if (target.credentialId) this.deps.credentialHealth?.recordSuccess(target.credentialId, target.providerId);
+    this.deps.modelHealth?.recordSuccess(`${target.providerId}:${target.providerModelId}`, target.providerId);
   }
 
   /**
@@ -539,10 +543,18 @@ export class Executor {
    * only thing that could be rate-limiting us.
    */
   private failed(target: Target, err: MeridianError): void {
+    const modelId = `${target.providerId}:${target.providerModelId}`;
+    this.deps.modelHealth?.recordFailure(modelId, target.providerId, err.code, err.message);
     if (target.credentialId) {
       this.deps.credentialHealth?.recordFailure(target.credentialId, target.providerId, err.code, err.message, err.retryAfterSec);
       if (isAccountFault(err.code)) return;
     }
+    // A model the provider no longer serves is not a provider that is down.
+    // `model_unavailable` is not retryable, so sending it to the provider's
+    // breaker opened it immediately — and every other model on that provider,
+    // working perfectly, became unroutable for five minutes because one cached
+    // model id had been retired.
+    if (isModelFault(err.code)) return;
     this.deps.health.recordFailure(target.providerId, err.code, err.message, err.retryAfterSec);
   }
 

@@ -14,6 +14,7 @@ import {
   Executor,
   HealthStore,
   MemoryCredentialStore,
+  ModelHealthStore,
   PoolManager,
   Router,
 } from '@meridian/routing-sdk';
@@ -45,6 +46,8 @@ export interface Harness {
   health: HealthStore;
   /** Per-account health, wired exactly as the gateway wires it. */
   credentialHealth: CredentialHealthStore;
+  /** Per-model health, wired exactly as the gateway wires it. */
+  modelHealth: ModelHealthStore;
   credentials: CredentialResolver;
   credentialStore: MemoryCredentialStore;
   pools: PoolManager;
@@ -87,6 +90,7 @@ export function createHarness(opts: {
 
   const health = new HealthStore({ now });
   const credentialHealth = new CredentialHealthStore({ now });
+  const modelHealth = new ModelHealthStore({ now });
   const credentialStore = new MemoryCredentialStore(opts.credentials ?? []);
   const credentials = new CredentialResolver(credentialStore, now, credentialHealth);
   const pools = new PoolManager(now);
@@ -96,6 +100,7 @@ export function createHarness(opts: {
     models,
     providers,
     health,
+    modelHealth,
     credentials,
     pools,
     allowPaid: () => opts.allowPaid ?? false,
@@ -108,6 +113,7 @@ export function createHarness(opts: {
     providers,
     health,
     credentialHealth,
+    modelHealth,
     credentials,
     pools,
     logger: nullLogger,
@@ -122,6 +128,7 @@ export function createHarness(opts: {
     providers,
     health,
     credentialHealth,
+    modelHealth,
     credentials,
     credentialStore,
     pools,

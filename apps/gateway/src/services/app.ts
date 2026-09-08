@@ -14,7 +14,7 @@ import {
 } from '@meridian/shared';
 import { ModelRegistry, applyObservation, applyPerformance, enrich } from '@meridian/model-sdk';
 import { ProviderRegistry, createRegistry, discoverEnvCredentials, PROVIDER_CATALOG } from '@meridian/provider-sdk';
-import { BUILTIN_POOLS, CredentialHealthStore, CredentialResolver, Executor, HealthStore, PoolManager, Router } from '@meridian/routing-sdk';
+import { BUILTIN_POOLS, CredentialHealthStore, CredentialResolver, Executor, HealthStore, ModelHealthStore, PoolManager, Router } from '@meridian/routing-sdk';
 import { MediaEngine, decodeDataUrl, extensionFor } from '@meridian/media-sdk';
 import {
   Orchestrator,
@@ -53,6 +53,7 @@ interface AppParts {
   models: ModelRegistry;
   health: HealthStore;
   credentialHealth: CredentialHealthStore;
+  modelHealth: ModelHealthStore;
   credentials: CredentialResolver;
   pools: PoolManager;
   router: Router;
@@ -90,6 +91,8 @@ export class App {
   readonly health: HealthStore;
   /** Health and published quota per account, which is per credential. */
   readonly credentialHealth: CredentialHealthStore;
+  /** Health per model, so one retired model id cannot retire its provider. */
+  readonly modelHealth: ModelHealthStore;
   readonly credentials: CredentialResolver;
   readonly pools: PoolManager;
   readonly router: Router;
@@ -129,6 +132,7 @@ export class App {
     this.models = parts.models;
     this.health = parts.health;
     this.credentialHealth = parts.credentialHealth;
+    this.modelHealth = parts.modelHealth;
     this.credentials = parts.credentials;
     this.pools = parts.pools;
     this.router = parts.router;
@@ -286,6 +290,13 @@ export class App {
     health.load(store.listHealth());
     health.onChange((h) => store.saveHealth(h));
 
+    // Per-model health is deliberately in-memory. A retired model id is
+    // corrected by the next discovery pass, which rewrites the catalog anyway;
+    // persisting a cooldown across a restart would outlive the fact it was
+    // about and keep a model out of rotation after the provider brought it
+    // back.
+    const modelHealth = new ModelHealthStore();
+
     /* ---- Pools ---------------------------------------------------- */
     const pools = new PoolManager();
     const storedPools = store.listPools();
@@ -306,6 +317,7 @@ export class App {
       models,
       providers,
       health,
+      modelHealth,
       credentials,
       pools,
       allowPaid: () => config.allowPaid,
@@ -318,6 +330,7 @@ export class App {
       providers,
       health,
       credentialHealth,
+      modelHealth,
       credentials,
       pools,
       logger,
@@ -459,6 +472,7 @@ export class App {
       models,
       health,
       credentialHealth,
+      modelHealth,
       credentials,
       pools,
       router,

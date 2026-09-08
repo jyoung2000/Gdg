@@ -31,12 +31,12 @@ describe('Router hardening invariants', () => {
     });
 
     assert.throws(
-      () => h.router.route({ modality: 'image', taskType: 'image' }),
+      () => h.router.route({ modality: 'image', taskType: 'image-generation' }),
       (e: unknown) => isMeridianError(e) && e.code === 'no_candidates',
       'a provider that cannot generate images must not be offered image work',
     );
 
-    const rejection = h.router.preview({ modality: 'image', taskType: 'image' }).rejected.find((r) => r.modelId === 'alpha:draws');
+    const rejection = h.router.preview({ modality: 'image', taskType: 'image-generation' }).rejected.find((r) => r.modelId === 'alpha:draws');
     assert.match(String(rejection?.reason), /does not implement image/i);
 
     // And the guarantee is not simply "reject everything": the same provider

@@ -22,6 +22,7 @@ reasoned about the wrong subject.**
 | Which methods an adapter has | A field called **`verifiedCapabilities`** | Clients were told a live call had confirmed capabilities nobody had tested |
 | Google saying a key is invalid | **`invalid_request`** | No failover, no account cooldown, and a caller told their request was malformed |
 | Whether a provider serves a modality | **Whether a method exists** | Most providers use a base class that defines every method, so "no fake support" passed almost everything |
+| A model the provider retired | The **provider** | One dead model id opened the provider's breaker and made every other model on it unroutable |
 
 The fourth is different in kind and worth naming separately: the **web UI suite
 was testing a bundle, not the sources.** Every other suite runs the TypeScript
@@ -110,6 +111,26 @@ revokes — and nothing was recorded against one.
   was routed image work and failed at the provider. The guard, and the matrix,
   now ask the adapter's own surface as well.
 
+### Model health: the third subject
+
+The same defect one level down, and the last of the three. A failed call can be
+evidence about the **service**, the **account**, or the **model**, and all three
+used to land on the provider's circuit breaker. `model_unavailable` is not
+retryable, so a single retired model id opened the breaker immediately and took
+every other model on that provider — all working — out of rotation for five
+minutes. Providers retire ids constantly; one stale entry in a cached catalog
+was enough.
+
+`ModelHealthStore` cools down the model instead, the router stops offering it so
+no later call spends a request rediscovering the same 404, and `/api/health`
+lists what is out of rotation and why. `context_length_exceeded` is deliberately
+not a model fault: that is a fact about the request, and the same model serves
+the next, shorter one perfectly.
+
+Held in memory rather than persisted, on purpose: a retired id is corrected by
+the next discovery pass, and a cooldown that survived a restart would outlive
+the fact it was about.
+
 ### MCP inside a live agent run
 
 Previously listed as unverified because it needed an MCP server and a model in
@@ -159,10 +180,9 @@ code.
 | A real provider's auth failure lands on the account | Same suite, provider breaker still closed |
 | The UI suite tests the sources | Found by writing a test for markup that was not in the bundle; the suite now rebuilds when `apps/web/src` or `packages/ui/src` is newer |
 | A modality the adapter would refuse is refused up front | Red-then-green: the guard asked only whether a method existed, and the OpenAI-compatible base defines every method and refuses at call time, so the guarantee held only for adapters that omit methods outright |
+| A retired model id does not take its provider offline | Red-then-green against a real socket. The first version of this assertion was insensitive — it checked the breaker's state, which the fallback's own success closes again — so it was rewritten to assert on counters a later success does not reset |
 
-**Suites:** unit 306, router 90, contract 24, integration 27, e2e 105, chaos 12,
-UI 30. **594 tests, 583 passing, 0 failures, 11 skipped** (10 Docker, 1 no X
-display).
+**598 tests, 587 passing, 0 failures, 11 skipped** (10 Docker, 1 no X display).
 
 ---
 
@@ -228,9 +248,6 @@ Ordered by what would matter most.
 2. **The gateway chat surfaces.** Context optimisation is wired into the agent
    loop only; the OpenAI and Anthropic surfaces still assemble additively, and
    the three assembly paths are still three.
-3. **Per-model health.** The breaker is provider-keyed, so one broken model on a
-   healthy provider still cannot be taken out of rotation. Accounts got this
-   treatment in this pass; models have not.
 4. **Re-verification scheduling.** A claim older than 90 days is discounted, but
    nothing decides when to spend quota re-probing it. That is a policy question
    with a real bill attached.

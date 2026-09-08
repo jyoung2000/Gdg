@@ -351,3 +351,92 @@ describe('Rate-limit headers — the shapes providers actually send', () => {
     assert.equal(parseResetAt('nonsense', now), null);
   });
 });
+
+describe('Model health — a retired model id is not a provider outage', () => {
+  it('keeps a provider serving its other models when one is gone', async () => {
+    // The exact shape a stale catalog produces: the provider is up, the key is
+    // good, and one model name has been retired. `model_unavailable` is not
+    // retryable, so sending it to the provider's breaker opened it
+    // immediately — and every other model on that provider became unroutable
+    // for five minutes because of one dead id.
+    const p = await startMockProvider('alpha', { retiredModels: ['gone'], reply: 'from the live one' });
+    const h = createHarness({
+      providers: [p.descriptor],
+      models: [
+        model({ id: 'alpha:gone', providerId: 'alpha', providerModelId: 'gone' }),
+        model({ id: 'alpha:live', providerId: 'alpha', providerModelId: 'live' }),
+      ],
+    });
+
+    // Make the retired one the clear first choice, so this exercises failover
+    // rather than a lucky ranking. Pinning it with `model:` would be a
+    // different question — a caller who names one model should be told it is
+    // gone, not quietly given another.
+    h.models.setScores({ modelId: 'alpha:gone', coding: 99, reasoning: 99, general: 99, toolUse: 99, vision: null, stability: 1, samples: 99, updatedAt: 0 });
+
+    const res = await h.executor.chat({ modality: 'text', taskType: 'chat' }, chat, { retryBudget: 3 });
+
+    // The chain moved to the model that works, on the same provider.
+    assert.equal(res.modelId, 'live', 'the provider still serves its other models');
+    assert.equal(res.value.content, 'from the live one');
+
+    // Asserted on the counters rather than the circuit, and the difference
+    // matters: the fallback's own success calls `recordSuccess`, which closes
+    // an open circuit again — so a `circuit === 'closed'` assertion here would
+    // pass whether or not the 404 was blamed on the provider, and would be a
+    // test that proves nothing. `failureCount` and `lastErrorAt` survive a
+    // later success.
+    const provider = h.health.get('alpha');
+    assert.equal(provider.failureCount, 0, 'a retired model id must not be recorded as a provider failure');
+    assert.equal(provider.lastErrorAt, null, 'nor leave the provider looking like it errored');
+    assert.equal(h.modelHealth.available('alpha:gone'), false, 'the model that is gone is the thing taken out of rotation');
+    assert.equal(h.modelHealth.available('alpha:live'), true);
+    assert.match(String(h.modelHealth.unavailableReason('alpha:gone')), /no longer serves this model/);
+    await p.close();
+  });
+
+  it('stops offering the retired model to the router at all', async () => {
+    const p = await startMockProvider('alpha', { retiredModels: ['gone'] });
+    const h = createHarness({
+      providers: [p.descriptor],
+      models: [
+        model({ id: 'alpha:gone', providerId: 'alpha', providerModelId: 'gone' }),
+        model({ id: 'alpha:live', providerId: 'alpha', providerModelId: 'live' }),
+      ],
+    });
+    h.modelHealth.recordFailure('alpha:gone', 'alpha', 'model_unavailable', 'the model does not exist');
+
+    const preview = h.router.preview({ modality: 'text', taskType: 'chat' });
+    assert.ok(
+      !preview.candidates.some((c) => c.modelId === 'alpha:gone'),
+      'a model on cooldown must not be a candidate — otherwise every call spends a request rediscovering the same 404',
+    );
+    assert.match(String(preview.rejected.find((r) => r.modelId === 'alpha:gone')?.reason), /no longer serves/);
+    assert.ok(preview.candidates.some((c) => c.modelId === 'alpha:live'), 'and the working model is still offered');
+    await p.close();
+  });
+
+  it('does not cool a model down for a fault that is not its own', async () => {
+    const p = await startMockProvider('alpha', { alwaysStatus: 503 });
+    const h = createHarness({
+      providers: [p.descriptor],
+      models: [model({ id: 'alpha:m', providerId: 'alpha', providerModelId: 'm' })],
+    });
+
+    await assert.rejects(() => h.executor.chat({ modality: 'text', taskType: 'chat' }, chat, { retryBudget: 3 }));
+    // A provider outage says nothing about which model ids are valid, and
+    // cooling them all would leave nothing to fall back to when it recovers.
+    assert.equal(h.modelHealth.available('alpha:m'), true);
+    assert.ok(h.health.get('alpha').failureCount > 0, 'the provider is where a 503 belongs');
+    await p.close();
+  });
+
+  it('treats a context overflow as a fact about the request, not the model', () => {
+    const h = createHarness({ providers: [], models: [] });
+    h.modelHealth.recordFailure('alpha:m', 'alpha', 'context_length_exceeded', 'too many tokens');
+    h.modelHealth.recordFailure('alpha:m', 'alpha', 'context_length_exceeded', 'too many tokens');
+    // The same model serves the next, shorter request perfectly. Cooling it
+    // down would remove a working model because one caller sent too much.
+    assert.equal(h.modelHealth.available('alpha:m'), true);
+  });
+});
