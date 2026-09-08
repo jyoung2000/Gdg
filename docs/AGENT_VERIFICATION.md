@@ -49,6 +49,40 @@ successful path against a real public page is BLOCKED_EXTERNAL: outbound HTTP
 from this environment is filtered, and `web_fetch` is off unless
 `MERIDIAN_SANDBOX_NETWORK=true`.
 
+## What a verifying step's verdict means
+
+For a long time, nothing. A command that exits non-zero comes back from
+`run_command` as `isError: false` — deliberately, because the model needs to
+read the failure and debug rather than retry the tool — and nothing downstream
+looked at it. The tester step was recorded as `completed`, the reviewer was told
+nothing about it, and the task reported success. **A run where the tests did not
+pass was indistinguishable from one where they did.**
+
+That is now wired end to end:
+
+| Stage | Behaviour |
+| --- | --- |
+| Tool | `ToolResult.exitCode` rides alongside `isError`. "The tool worked" and "the command succeeded" are different facts and only the first was recorded |
+| Step | A tester, reviewer or debugger whose commands failed is recorded **failed**, naming the commands and their codes |
+| Context | The failure is appended to what the *next* step reads — a reviewer told the tests passed will review a change that does not work |
+| Task | Reports the failure rather than completing |
+| Learning | The verdict reaches `recordOutcome` as `testsPassed`. This is the only judgement Meridian can make about output quality without a human, and until now the only thing that ever moved a quality score was someone clicking a thumb |
+| Escalation | A failing tester appends a debugger and a re-check, **once per task** |
+
+The escalation bound is deliberate. A model that cannot fix its own work in one
+attempt will not usually manage it in five, and an unbounded loop here is an
+unbounded bill.
+
+A pass is reported as well as a failure. Reporting only failures would bias
+every learned score downward.
+
+**Still not implemented:** the reviewer is not required to use a different model
+or family from the implementer. `AIRequest` has no field that could express it —
+there is no model-family concept in the codebase — and the built-in pools ship
+with empty membership, so on a single-provider instance the reviewer is
+routinely the same model that wrote the code. What is now true is that its
+verdict counts; whose verdict it is remains a gap.
+
 ## The runtime around them
 
 | Capability | Status | Evidence |
