@@ -11,6 +11,8 @@ import {
   type Usage,
 } from '@meridian/shared';
 import type { Executor } from '@meridian/routing-sdk';
+import { optimizeContext } from '@meridian/context-sdk';
+import type { ModelRegistry } from '@meridian/model-sdk';
 import { executeTool, toolDefinitions, type ToolContext, type ToolRegistry } from './tools.js';
 
 export interface AgentRunInput {
@@ -48,12 +50,29 @@ export interface AgentRunResult {
   error: string | null;
   /** The full transcript, for a follow-up agent that needs the detail. */
   messages: ChatMessage[];
+  /**
+   * Prompt tokens the optimiser kept out of this step's calls.
+   *
+   * Summed across turns, from a real before/after measurement per turn rather
+   * than from what any stage believed it saved. Zero on a short step, which is
+   * the correct answer: the optimiser declines to touch a prompt small enough
+   * that trimming it would be more risk than benefit.
+   */
+  contextTokensSaved: number;
 }
 
 export interface AgentLoopDeps {
   executor: Executor;
   tools: ToolRegistry;
   logger: Logger;
+  /**
+   * Looks up the window of the model that just served a turn.
+   *
+   * Optional so a caller can construct a loop without one; without it the
+   * optimiser sees an unknown window and stays conservative rather than
+   * windowing a conversation against a size it had to guess.
+   */
+  models?: Pick<ModelRegistry, 'get'>;
   /** Emitted after every model turn and every tool call, for live UI. */
   onEvent?: (event: AgentEvent) => void;
   now?: () => number;
@@ -120,6 +139,19 @@ export class AgentLoop {
     };
 
     let usage = ZERO_USAGE;
+    // Tokens the optimiser kept out of the prompt across this step's turns.
+    let contextSaved = 0;
+    /**
+     * The window to optimise against.
+     *
+     * Which model will serve the next turn is the router's decision and is not
+     * known until the call is made, so this tracks the model that served the
+     * *previous* turn — in a step that is by construction a run of calls of the
+     * same shape, that is the best available estimate. Before the first call
+     * there is nothing to go on, and the optimiser treats a null window as
+     * "unknown", which means it deduplicates but does not window on a guess.
+     */
+    let contextModel: { contextLength: number | null; maxOutputTokens: number | null } | null = null;
     const toolCalls: ToolCallRecord[] = [];
     const filesTouched = new Set<string>();
     const fallbacks: FallbackEvent[] = [];
@@ -140,14 +172,42 @@ export class AgentLoop {
         }
         steps += 1;
 
+        // The transcript grows by an assistant turn and a tool result on every
+        // pass and is re-sent whole each time, so by turn thirty an agent is
+        // paying for twenty-nine copies of output it has finished with. This is
+        // the one place in Meridian where context genuinely runs away, and it
+        // is why optimisation is applied per turn rather than once at the start.
+        //
+        // AUTO means a short run is left completely alone: the optimiser
+        // declines below its own floor and returns the messages untouched.
+        const optimized = optimizeContext({
+          messages,
+          tools: definitions,
+          model: contextModel,
+          maxOutputTokens: 4096,
+          mode: 'AUTO',
+          request: input.instruction,
+        });
+        if (optimized.report.tokensSaved > 0) {
+          log.debug('context optimised', {
+            mode: optimized.report.mode,
+            before: optimized.report.before,
+            after: optimized.report.after,
+            saved: optimized.report.tokensSaved,
+          });
+          contextSaved += optimized.report.tokensSaved;
+        }
+
         const res = await this.deps.executor.chat(
-          { ...request, messages },
-          { messages, tools: definitions, temperature: 0.2, maxTokens: 4096 },
+          { ...request, messages: optimized.messages },
+          { messages: optimized.messages, tools: definitions, temperature: 0.2, maxTokens: 4096 },
           { taskId: input.taskId, agentRole: agent.role, signal: input.signal },
         );
 
         modelId = res.modelId;
         providerId = res.providerId;
+        const served = this.deps.models?.get(res.modelId);
+        if (served) contextModel = { contextLength: served.contextLength, maxOutputTokens: served.maxOutputTokens };
         usage = addUsage(usage, res.value.usage);
         for (const f of res.fallbacks) {
           fallbacks.push(f);
@@ -224,6 +284,7 @@ export class AgentLoop {
       latencyMs: this.now() - started,
       error,
       messages,
+      contextTokensSaved: contextSaved,
     };
     this.deps.onEvent?.({ type: 'step-end', stepId: input.stepId, summary: result.summary, usage });
     return result;

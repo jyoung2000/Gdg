@@ -609,6 +609,35 @@ describe('E2E: gateway against a real local inference server', () => {
     assert.match(changes.diff, /\+\+\+ b\/notes\.md/);
   });
 
+  it('keeps a real agent run inside its context window', async () => {
+    // The optimiser is wired into the agent loop, so this proves it runs
+    // against a real model over a real socket rather than only in unit tests.
+    // The sim's models publish a 32k window, and the loop optimises per turn
+    // against whichever model actually served the previous one.
+    const { workspace } = await json<{ workspace: { id: string } }>('/api/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'e2e-context' }),
+    });
+
+    const { task } = await json<{ task: { id: string } }>('/api/tasks', {
+      method: 'POST',
+      body: JSON.stringify({
+        workspaceId: workspace.id,
+        request: 'Create a file `context.md` and describe the change.',
+        pipeline: 'code',
+      }),
+    });
+
+    const detail = await waitForTask(task.id);
+    assert.equal(detail.task.status, 'completed', `task did not complete: ${detail.task.error ?? 'timed out'}`);
+
+    // Whatever the optimiser did or declined to do, every step still ran on a
+    // real model and produced real usage — a run that "saved" tokens by
+    // breaking the conversation would show up here as a failed step.
+    const completed = detail.steps.filter((s) => s.status === 'completed');
+    assert.ok(completed.length >= 3, `expected the pipeline to run, saw ${JSON.stringify(detail.steps.map((s) => s.status))}`);
+  });
+
   /* ---------------- Checkpoints, rewind and forking ---------------- */
 
   it('checkpoints each step and can take the workspace back to one', async () => {

@@ -13,6 +13,7 @@ import {
   type Usage,
 } from '@meridian/shared';
 import type { Executor, Router } from '@meridian/routing-sdk';
+import type { ModelRegistry } from '@meridian/model-sdk';
 import { AGENT_DEFINITIONS, STEP_LABEL } from './agents.js';
 import { AgentLoop, newStepId, type AgentEvent, type AgentRunResult } from './loop.js';
 import type { Sandbox } from './sandbox.js';
@@ -22,6 +23,8 @@ import { unifiedDiff, type Workspace, type WorkspaceCheckpoint } from './workspa
 export interface OrchestratorDeps {
   executor: Executor;
   router: Router;
+  /** Supplies the window of whichever model served a turn, for optimisation. */
+  models?: Pick<ModelRegistry, 'get'>;
   tools: ToolRegistry;
   sandbox: Sandbox;
   logger: Logger;
@@ -92,6 +95,7 @@ export class Orchestrator {
     this.loop = new AgentLoop({
       executor: deps.executor,
       tools: deps.tools,
+      models: deps.models,
       logger: deps.logger,
       onEvent: (e) => deps.onEvent?.({ type: 'agent', event: e }),
       now: this.now,

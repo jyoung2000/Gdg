@@ -353,6 +353,7 @@ export class App {
     const orchestrator = new Orchestrator({
       executor,
       router,
+      models,
       tools,
       sandbox,
       logger,

@@ -36,6 +36,8 @@
       "@meridian/shared/*": ["packages/shared/src/*"],
       "@meridian/provider-sdk": ["packages/provider-sdk/src/index.ts"],
       "@meridian/provider-sdk/*": ["packages/provider-sdk/src/*"],
+      "@meridian/context-sdk": ["packages/context-sdk/src/index.ts"],
+      "@meridian/context-sdk/*": ["packages/context-sdk/src/*"],
       "@meridian/model-sdk": ["packages/model-sdk/src/index.ts"],
       "@meridian/model-sdk/*": ["packages/model-sdk/src/*"],
       "@meridian/routing-sdk": ["packages/routing-sdk/src/index.ts"],
