@@ -279,10 +279,37 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
     // without their secrets: the provider, the label and the id are enough to
     // target them.
     const workspaces = app.workspaceIdsFor(req.auth.userId);
+    const credentials = app.store.listCredentials().filter((c) => mayUseCredential(req, c, workspaces));
     return {
-      credentials: app.store.listCredentials().filter((c) => mayUseCredential(req, c, workspaces)),
+      credentials,
       pools: app.store.listCredentialPools(),
+      // An account's standing with its provider, alongside the account. Scoped
+      // to the credentials this caller may already see, so it adds no reach.
+      health: credentials.map((c) => ({
+        ...app.credentialHealth.get(c.id, c.providerId),
+        available: app.credentialHealth.available(c.id),
+        unavailableReason: app.credentialHealth.unavailableReason(c.id),
+        quota: app.credentialHealth.quotasFor(c.id),
+      })),
     };
+  });
+
+  /**
+   * Put an account back into rotation.
+   *
+   * The operator's override for the case the system cannot resolve on its own:
+   * a key was rotated at the provider, or a quota was raised, and Meridian is
+   * still holding a cooldown earned by the old state. Owner-gated exactly like
+   * every other write to a credential.
+   */
+  server.post<{ Params: { id: string } }>('/api/credentials/:id/reset-health', async (req) => {
+    const record = app.store.getCredential(req.params.id);
+    requireCredentialOwner(req, record, app.workspaceIdsFor(req.auth.userId));
+    const health = app.credentialHealth.reset(req.params.id, record?.providerId ?? '');
+    app.store.saveCredentialHealth(health);
+    app.refreshCredentialState();
+    app.store.audit({ actor: req.auth.userId ?? 'anonymous', action: 'credential.reset-health', target: req.params.id, details: {}, ip: req.ip });
+    return { health };
   });
 
   server.post<{
@@ -345,6 +372,10 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
   server.delete<{ Params: { id: string } }>('/api/credentials/:id', async (req) => {
     requireCredentialOwner(req, app.store.getCredential(req.params.id), app.workspaceIdsFor(req.auth.userId));
     const removed = app.store.deleteCredential(req.params.id);
+    // The account is gone, so its standing goes with it. Leaving the row behind
+    // would let a recycled id inherit a stranger's cooldown.
+    app.credentialHealth.forget(req.params.id);
+    app.store.deleteCredentialHealth(req.params.id);
     app.refreshCredentialState();
     app.store.audit({ actor: req.auth.userId ?? 'anonymous', action: 'credential.delete', target: req.params.id, details: {}, ip: req.ip });
     return { removed };

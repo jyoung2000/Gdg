@@ -5,6 +5,7 @@ import {
   ZERO_USAGE,
   backoffMs,
   classifyUnknown,
+  isAccountFault,
   newId,
   shortId,
   sleep,
@@ -28,9 +29,10 @@ import {
   type VideoRequest,
   type VideoResponse,
 } from '@meridian/shared';
-import type { AdapterContext, ProviderRegistry } from '@meridian/provider-sdk';
+import { withRateLimitSink, type AdapterContext, type ProviderRegistry } from '@meridian/provider-sdk';
 import type { ModelRegistry } from '@meridian/model-sdk';
 import type { CredentialResolver } from './credentials.js';
+import type { CredentialHealthStore } from './credential-health.js';
 import type { HealthStore } from './health.js';
 import type { PoolManager } from './pools.js';
 import { routingSnapshot, type Router } from './router.js';
@@ -40,6 +42,12 @@ export interface ExecutorDeps {
   models: ModelRegistry;
   providers: ProviderRegistry;
   health: HealthStore;
+  /**
+   * Per-account health. Optional so a bare Executor still constructs, but the
+   * gateway always supplies one: without it every account fault is attributed
+   * to the provider, which is the bug this exists to fix.
+   */
+  credentialHealth?: CredentialHealthStore;
   credentials: CredentialResolver;
   pools: PoolManager;
   logger: Logger;
@@ -217,7 +225,13 @@ export class Executor {
         const { adapter, ctx } = this.prepare(target, req, requestId, opts, log);
         if (!adapter.chatStream) throw new MeridianError('unsupported_capability', 'Adapter cannot stream', { providerId: target.providerId });
 
-        for await (const chunk of adapter.chatStream({ ...this.gateEffort(completion, target), model: target.providerModelId, stream: true, signal: ctx.signal }, ctx)) {
+        // The generator is created inside the sink so the request that carries
+        // the rate-limit headers is made under it. Iterating happens after, but
+        // the headers arrive with the response, not with the last chunk.
+        const stream = withRateLimitSink(this.rateLimitSink(target), () =>
+          adapter.chatStream!({ ...this.gateEffort(completion, target), model: target.providerModelId, stream: true, signal: ctx.signal }, ctx),
+        );
+        for await (const chunk of stream) {
           // A tool call is output the client has acted on just as much as text
           // is — failing over after either would splice two models' answers
           // into one response.
@@ -241,7 +255,7 @@ export class Executor {
           yield chunk;
         }
 
-        this.deps.health.recordSuccess(target.providerId, this.now() - started);
+        this.succeeded(target, this.now() - started);
         this.recordUsage(req, target, opts, requestId, usage, this.now() - started, ttftMs, true, null, fallbacks.length, routing);
         if (req.pool) this.deps.pools.recordSpend(req.pool, usage.cost);
         return;
@@ -263,7 +277,7 @@ export class Executor {
           return;
         }
 
-        this.deps.health.recordFailure(target.providerId, err.code, err.message, err.retryAfterSec);
+        this.failed(target, err);
         this.recordUsage(req, target, opts, requestId, partial, this.now() - started, ttftMs, false, err.code, fallbacks.length, routing);
         if (req.pool && partial.cost > 0) this.deps.pools.recordSpend(req.pool, partial.cost);
 
@@ -328,10 +342,10 @@ export class Executor {
 
         try {
           const { adapter, ctx } = this.prepare(target, req, requestId, opts, log);
-          const value = await call(adapter, target, ctx);
+          const value = await withRateLimitSink(this.rateLimitSink(target), () => call(adapter, target, ctx));
           const m = meter(value);
 
-          this.deps.health.recordSuccess(target.providerId, m.latencyMs || this.now() - started);
+          this.succeeded(target, m.latencyMs || this.now() - started);
           this.recordUsage(req, target, opts, requestId, m.usage, m.latencyMs, m.ttftMs, true, null, fallbacks.length, routing);
           // Spend outside a pool is still recorded in usage; it just is not
           // charged against a pool budget the caller never chose.
@@ -367,7 +381,7 @@ export class Executor {
             throw err;
           }
 
-          this.deps.health.recordFailure(target.providerId, err.code, err.message, err.retryAfterSec);
+          this.failed(target, err);
           this.recordUsage(req, target, opts, requestId, ZERO_USAGE, this.now() - started, null, false, err.code, fallbacks.length, routing);
           log.warn('call failed', { providerId: target.providerId, modelId: target.providerModelId, errorCode: err.code });
 
@@ -485,6 +499,51 @@ export class Executor {
       message: fallbackMessage(code, from.providerId, to?.providerModelId ?? null),
       attempt,
     };
+  }
+
+  /**
+   * Where this attempt's rate-limit headers go.
+   *
+   * An account with no credential has nothing to attribute a reading to — an
+   * anonymous endpoint's limits belong to the endpoint, not to us — so the sink
+   * discards rather than inventing an account to hold them.
+   */
+  private rateLimitSink(target: Target): (snapshot: import('@meridian/shared').RateLimitSnapshot) => void {
+    const credentialId = target.credentialId;
+    const providerId = target.providerId;
+    const store = this.deps.credentialHealth;
+    if (!credentialId || !store) return () => undefined;
+    return (snapshot) => store.recordRateLimit(credentialId, providerId, snapshot);
+  }
+
+  /**
+   * A call worked: both the service and the account served it.
+   */
+  private succeeded(target: Target, latencyMs: number): void {
+    this.deps.health.recordSuccess(target.providerId, latencyMs);
+    if (target.credentialId) this.deps.credentialHealth?.recordSuccess(target.credentialId, target.providerId);
+  }
+
+  /**
+   * A call failed: decide whose fault it was before recording it.
+   *
+   * This is the multi-tenant fix. Every failure used to land on the provider's
+   * circuit breaker, so one caller's revoked key marked the PROVIDER
+   * unauthorized and took it out of rotation for every other caller on the
+   * instance — people whose own keys were working. A 401, a 429 and a spent
+   * quota are facts about an account, and they now stop at the account.
+   *
+   * An anonymous endpoint has no account to blame, so its rate limit is the
+   * provider's and still opens the provider's breaker. That asymmetry is the
+   * point rather than an oversight: with no credential, the provider is the
+   * only thing that could be rate-limiting us.
+   */
+  private failed(target: Target, err: MeridianError): void {
+    if (target.credentialId) {
+      this.deps.credentialHealth?.recordFailure(target.credentialId, target.providerId, err.code, err.message, err.retryAfterSec);
+      if (isAccountFault(err.code)) return;
+    }
+    this.deps.health.recordFailure(target.providerId, err.code, err.message, err.retryAfterSec);
   }
 
   private recordUsage(

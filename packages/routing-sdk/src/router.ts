@@ -314,11 +314,18 @@ export class Router {
       return no('Provider is disabled by the operator');
     }
 
-    // Credentials — for THIS caller. hasAny() would pass a provider whose only
-    // key belongs to someone else, selecting a primary that can only fail at
-    // execution with an authentication error the caller cannot act on.
-    if (descriptor.auth !== 'none' && !this.deps.credentials.hasAnyFor(m.providerId, req.userId ?? null, req.workspaceId ?? null)) {
-      return no('No credential this caller may use is configured for this provider');
+    // Credentials — for THIS caller, and usable right now. hasAny() would pass
+    // a provider whose only key belongs to someone else, selecting a primary
+    // that can only fail at execution with an authentication error the caller
+    // cannot act on.
+    //
+    // `reasonFor` answers both questions at once and, crucially, says which one
+    // failed: an account that is rate-limited for forty seconds used to be
+    // reported as no credential being configured, which sends an operator to
+    // add a key they already have.
+    if (descriptor.auth !== 'none') {
+      const credentialProblem = this.deps.credentials.reasonFor(m.providerId, req.userId ?? null, req.workspaceId ?? null);
+      if (credentialProblem) return no(credentialProblem);
     }
 
     return true;

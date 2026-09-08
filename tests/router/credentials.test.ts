@@ -24,7 +24,10 @@ describe('Credential resolution', () => {
 
     const other = resolver.resolve({ providerId: 'p', userId: 'u2' }, true);
     assert.equal(other.credential, null);
-    assert.match(other.reason, /No credential available/);
+    // The reason names the caller, not the provider: u1's key existing is not
+    // capacity u2 has, and "no credential available for p" reads as though the
+    // provider were unconfigured for everybody.
+    assert.match(other.reason, /No credential this caller may use is configured/);
   });
 
   it('honours an explicitly named credential, and reports when it cannot be used', () => {

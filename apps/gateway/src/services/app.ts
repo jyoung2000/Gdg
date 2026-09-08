@@ -14,7 +14,7 @@ import {
 } from '@meridian/shared';
 import { ModelRegistry, applyObservation, applyPerformance, enrich } from '@meridian/model-sdk';
 import { ProviderRegistry, createRegistry, discoverEnvCredentials, PROVIDER_CATALOG } from '@meridian/provider-sdk';
-import { BUILTIN_POOLS, CredentialResolver, Executor, HealthStore, PoolManager, Router } from '@meridian/routing-sdk';
+import { BUILTIN_POOLS, CredentialHealthStore, CredentialResolver, Executor, HealthStore, PoolManager, Router } from '@meridian/routing-sdk';
 import { MediaEngine, decodeDataUrl, extensionFor } from '@meridian/media-sdk';
 import {
   Orchestrator,
@@ -52,6 +52,7 @@ interface AppParts {
   providers: ProviderRegistry;
   models: ModelRegistry;
   health: HealthStore;
+  credentialHealth: CredentialHealthStore;
   credentials: CredentialResolver;
   pools: PoolManager;
   router: Router;
@@ -87,6 +88,8 @@ export class App {
   readonly providers: ProviderRegistry;
   readonly models: ModelRegistry;
   readonly health: HealthStore;
+  /** Health and published quota per account, which is per credential. */
+  readonly credentialHealth: CredentialHealthStore;
   readonly credentials: CredentialResolver;
   readonly pools: PoolManager;
   readonly router: Router;
@@ -125,6 +128,7 @@ export class App {
     this.providers = parts.providers;
     this.models = parts.models;
     this.health = parts.health;
+    this.credentialHealth = parts.credentialHealth;
     this.credentials = parts.credentials;
     this.pools = parts.pools;
     this.router = parts.router;
@@ -266,10 +270,18 @@ export class App {
       }
     }
 
-    const credentials = new CredentialResolver(store);
+    /* ---- Health, per service and per account ----------------------- */
+    // Built before the resolver, because the resolver consults it: an account
+    // on a rate-limit cooldown is not capacity, and handing it out anyway is
+    // how a request fails on a key the router already knew was busy.
+    const credentialHealth = new CredentialHealthStore();
+    credentialHealth.load(store.listCredentialHealth(), store.listCredentialQuota());
+    credentialHealth.onChange((h) => store.saveCredentialHealth(h));
+    credentialHealth.onQuota((q) => store.saveCredentialQuota(q));
+
+    const credentials = new CredentialResolver(store, () => Date.now(), credentialHealth);
     for (const d of providers.list()) providers.setCredentialed(d.id, credentials.hasAny(d.id));
 
-    /* ---- Health --------------------------------------------------- */
     const health = new HealthStore();
     health.load(store.listHealth());
     health.onChange((h) => store.saveHealth(h));
@@ -305,6 +317,7 @@ export class App {
       models,
       providers,
       health,
+      credentialHealth,
       credentials,
       pools,
       logger,
@@ -445,6 +458,7 @@ export class App {
       providers,
       models,
       health,
+      credentialHealth,
       credentials,
       pools,
       router,

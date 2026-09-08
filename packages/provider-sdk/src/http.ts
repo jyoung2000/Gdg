@@ -1,5 +1,46 @@
-import { MeridianError, classifyStatus, classifyUnknown } from '@meridian/shared';
-import type { ErrorCode } from '@meridian/shared';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { MeridianError, classifyStatus, classifyUnknown, readRateLimitHeaders, snapshotIsEmpty } from '@meridian/shared';
+import type { ErrorCode, RateLimitSnapshot } from '@meridian/shared';
+
+/**
+ * Where a rate-limit reading goes when one is seen.
+ *
+ * Providers publish an account's remaining allowance in response headers, on
+ * ordinary successful responses — the one place the information exists, and the
+ * one place nothing was reading. Getting it out of here and onto the account it
+ * belongs to needed a channel from sixty-odd adapter call sites back to the
+ * executor.
+ *
+ * Threading a callback through every one of them would have been sixty-odd
+ * chances to forget one, and a forgotten site is silent: the quota simply never
+ * updates for that provider. An async-local store means the executor states once
+ * that it is interested, every call underneath it is covered whether or not its
+ * adapter was written with this in mind, and an adapter called outside an
+ * execution — a probe, a listing — sees no store and does nothing.
+ */
+const rateLimitSink = new AsyncLocalStorage<(snapshot: RateLimitSnapshot) => void>();
+
+/** Run `fn` with rate-limit headers from any HTTP call inside it reported to `sink`. */
+export function withRateLimitSink<T>(sink: (snapshot: RateLimitSnapshot) => void, fn: () => T): T {
+  return rateLimitSink.run(sink, fn);
+}
+
+/**
+ * Report what a response said about the account's allowance.
+ *
+ * Never throws into the request path: a malformed header is not a reason to
+ * fail a call that succeeded.
+ */
+function reportRateLimit(headers: Headers): void {
+  const sink = rateLimitSink.getStore();
+  if (!sink) return;
+  try {
+    const snapshot = readRateLimitHeaders(headers, Date.now());
+    if (!snapshotIsEmpty(snapshot)) sink(snapshot);
+  } catch {
+    /* Observability must never break the thing it observes. */
+  }
+}
 
 export interface HttpOptions {
   method?: string;
@@ -69,6 +110,9 @@ async function coreRequest(url: string, opts: HttpOptions, consume: 'text' | nul
     else if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
 
     const res = await fetch(url, init);
+    // Read before the status check: a 429 carries the most useful quota
+    // headers there are, and returning early would throw them away.
+    reportRateLimit(res.headers);
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       const code: ErrorCode = classifyStatus(res.status, text);

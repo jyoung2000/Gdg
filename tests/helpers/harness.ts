@@ -9,6 +9,7 @@ import { ModelRegistry } from '@meridian/model-sdk';
 import { OpenAICompatibleAdapter, ProviderRegistry } from '@meridian/provider-sdk';
 import {
   BUILTIN_POOLS,
+  CredentialHealthStore,
   CredentialResolver,
   Executor,
   HealthStore,
@@ -42,6 +43,8 @@ export interface Harness {
   models: ModelRegistry;
   providers: ProviderRegistry;
   health: HealthStore;
+  /** Per-account health, wired exactly as the gateway wires it. */
+  credentialHealth: CredentialHealthStore;
   credentials: CredentialResolver;
   credentialStore: MemoryCredentialStore;
   pools: PoolManager;
@@ -83,8 +86,9 @@ export function createHarness(opts: {
   models.upsertMany(opts.models);
 
   const health = new HealthStore({ now });
+  const credentialHealth = new CredentialHealthStore({ now });
   const credentialStore = new MemoryCredentialStore(opts.credentials ?? []);
-  const credentials = new CredentialResolver(credentialStore, now);
+  const credentials = new CredentialResolver(credentialStore, now, credentialHealth);
   const pools = new PoolManager(now);
   pools.load(BUILTIN_POOLS.map((p) => ({ ...p, createdAt: 0 })), []);
 
@@ -103,6 +107,7 @@ export function createHarness(opts: {
     models,
     providers,
     health,
+    credentialHealth,
     credentials,
     pools,
     logger: nullLogger,
@@ -116,6 +121,7 @@ export function createHarness(opts: {
     models,
     providers,
     health,
+    credentialHealth,
     credentials,
     credentialStore,
     pools,

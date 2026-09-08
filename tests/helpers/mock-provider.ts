@@ -25,6 +25,14 @@ export interface MockBehaviour {
   toolCall?: { name: string; arguments: Record<string, unknown> };
   /** Token counts reported back, for cost accounting assertions. */
   usage?: { prompt: number; completion: number };
+  /**
+   * Rate-limit headers sent with every response.
+   *
+   * Real providers publish an account's remaining allowance here, on ordinary
+   * successful calls. Reproducing that is the only way to test the reader
+   * without a provider API, which this environment cannot reach.
+   */
+  rateLimitHeaders?: Record<string, string>;
 }
 
 export interface MockProvider {
@@ -67,7 +75,7 @@ export async function startMockProvider(id: string, initial: MockBehaviour = {})
       total += 1;
 
       const send = (status: number, payload: unknown, headers: Record<string, string> = {}): void => {
-        res.writeHead(status, { 'content-type': 'application/json', ...headers });
+        res.writeHead(status, { 'content-type': 'application/json', ...(behaviour.rateLimitHeaders ?? {}), ...headers });
         res.end(JSON.stringify(payload));
       };
 
@@ -106,7 +114,7 @@ export async function startMockProvider(id: string, initial: MockBehaviour = {})
           };
 
           if (streaming) {
-            res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+            res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', ...(behaviour.rateLimitHeaders ?? {}) });
             const frame = (payload: unknown): void => {
               res.write(`data: ${JSON.stringify(payload)}\n\n`);
             };

@@ -23,6 +23,8 @@ import {
   type TaskStep,
   type ToolCallRecord,
   type Usage,
+  type CredentialHealth,
+  type CredentialQuota,
   type UsageRecord,
   type User,
   type UserPreferences,
@@ -524,6 +526,84 @@ export class Store implements CredentialStore {
            last_error_at=excluded.last_error_at, last_error=excluded.last_error`,
       )
       .run(h.providerId, h.state, h.circuit, h.consecutiveFailures, h.successCount, h.failureCount, h.latencyMs, h.errorRate, h.cooldownUntil, h.lastCheckedAt, h.lastErrorAt, h.lastError);
+  }
+
+  /* ---- Account (credential) health and quota --------------------- */
+
+  saveCredentialHealth(h: CredentialHealth): void {
+    this.db
+      .prepare(
+        `INSERT INTO credential_health (credential_id, provider_id, state, last_success_at, last_failure_at,
+           last_error_code, last_error, consecutive_failures, cooldown_until, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(credential_id) DO UPDATE SET provider_id=excluded.provider_id, state=excluded.state,
+           last_success_at=excluded.last_success_at, last_failure_at=excluded.last_failure_at,
+           last_error_code=excluded.last_error_code, last_error=excluded.last_error,
+           consecutive_failures=excluded.consecutive_failures, cooldown_until=excluded.cooldown_until,
+           updated_at=excluded.updated_at`,
+      )
+      .run(
+        h.credentialId,
+        h.providerId,
+        h.state,
+        h.lastSuccessAt,
+        h.lastFailureAt,
+        h.lastErrorCode,
+        // The message came from a provider and has already been redacted
+        // upstream; truncating again here is belt and braces against a very
+        // long body, not against a secret.
+        h.lastError == null ? null : redact(h.lastError).slice(0, 300),
+        h.consecutiveFailures,
+        h.cooldownUntil,
+        h.updatedAt,
+      );
+  }
+
+  listCredentialHealth(): CredentialHealth[] {
+    return (this.db.prepare('SELECT * FROM credential_health').all() as Row[]).map((r) => ({
+      credentialId: String(r.credential_id),
+      providerId: String(r.provider_id),
+      state: String(r.state) as CredentialHealth['state'],
+      lastSuccessAt: (r.last_success_at as number) ?? null,
+      lastFailureAt: (r.last_failure_at as number) ?? null,
+      lastErrorCode: (r.last_error_code as CredentialHealth['lastErrorCode']) ?? null,
+      lastError: (r.last_error as string) ?? null,
+      consecutiveFailures: Number(r.consecutive_failures),
+      cooldownUntil: (r.cooldown_until as number) ?? null,
+      updatedAt: Number(r.updated_at),
+    }));
+  }
+
+  saveCredentialQuota(q: CredentialQuota): void {
+    this.db
+      .prepare(
+        `INSERT INTO credential_quota (credential_id, provider_id, dimension, limit_value, remaining, resets_at, source, observed_at)
+         VALUES (?,?,?,?,?,?,?,?)
+         ON CONFLICT(credential_id, dimension) DO UPDATE SET provider_id=excluded.provider_id,
+           limit_value=excluded.limit_value, remaining=excluded.remaining, resets_at=excluded.resets_at,
+           source=excluded.source, observed_at=excluded.observed_at`,
+      )
+      .run(q.credentialId, q.providerId, q.dimension, q.limit, q.remaining, q.resetsAt, q.source, q.observedAt);
+  }
+
+  listCredentialQuota(): CredentialQuota[] {
+    return (this.db.prepare('SELECT * FROM credential_quota').all() as Row[]).map((r) => ({
+      credentialId: String(r.credential_id),
+      providerId: String(r.provider_id),
+      dimension: r.dimension as CredentialQuota['dimension'],
+      // Null is preserved deliberately at every step: a provider that publishes
+      // no ceiling must not come back as a ceiling of zero.
+      limit: (r.limit_value as number) ?? null,
+      remaining: (r.remaining as number) ?? null,
+      resetsAt: (r.resets_at as number) ?? null,
+      source: r.source as CredentialQuota['source'],
+      observedAt: Number(r.observed_at),
+    }));
+  }
+
+  deleteCredentialHealth(credentialId: string): void {
+    this.db.prepare('DELETE FROM credential_health WHERE credential_id = ?').run(credentialId);
+    this.db.prepare('DELETE FROM credential_quota WHERE credential_id = ?').run(credentialId);
   }
 
   listHealth(): ProviderHealth[] {

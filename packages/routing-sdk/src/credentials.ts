@@ -1,10 +1,25 @@
 import {
   CREDENTIAL_SCOPE_ORDER,
+  type CredentialHealth,
   type CredentialPool,
   type CredentialRecord,
   type CredentialScope,
   type ResolvedCredential,
 } from '@meridian/shared';
+
+/**
+ * How the resolver asks whether an account is fit to use.
+ *
+ * Structural rather than a concrete dependency: `CredentialHealthStore`
+ * satisfies it, and a test can satisfy it with an object literal. Optional
+ * throughout — without it every credential is simply available, which is the
+ * behaviour that existed before accounts had health at all.
+ */
+export interface CredentialAvailability {
+  available(credentialId: string): boolean;
+  unavailableReason(credentialId: string): string | null;
+  get(credentialId: string, providerId?: string): CredentialHealth;
+}
 
 export interface CredentialQuery {
   providerId: string;
@@ -56,9 +71,12 @@ export class CredentialResolver {
   /** Round-robin cursor per pool. */
   private readonly cursors = new Map<string, number>();
 
-  constructor(store: CredentialStore, now: () => number = () => Date.now()) {
+  private readonly availability: CredentialAvailability | null;
+
+  constructor(store: CredentialStore, now: () => number = () => Date.now(), availability: CredentialAvailability | null = null) {
     this.store = store;
     this.now = now;
+    this.availability = availability;
   }
 
   resolve(q: CredentialQuery, providerRequiresAuth: boolean, opts: { commit?: boolean } = {}): CredentialResolution {
@@ -103,7 +121,10 @@ export class CredentialResolver {
     if (!providerRequiresAuth) {
       return { credential: null, reason: 'Provider serves anonymous requests', anonymous: true };
     }
-    return { credential: null, reason: `No credential available for ${q.providerId}`, anonymous: false };
+    // "None configured" and "all of them are cooling down" are different
+    // problems with different fixes, and telling a caller the first when the
+    // second is true sends them to add a key they already have.
+    return { credential: null, reason: this.reasonFor(q.providerId, q.userId ?? null, q.workspaceId ?? null) ?? `No credential available for ${q.providerId}`, anonymous: false };
   }
 
   /** True when at least one credential could serve this provider right now. */
@@ -124,6 +145,33 @@ export class CredentialResolver {
   }
 
   /**
+   * Why this caller cannot use this provider right now, or null if they can.
+   *
+   * Exists so a routing rejection can say the true thing. The router's only
+   * question used to be a boolean, so an instance whose one key was
+   * rate-limited for forty seconds told every caller the provider had no
+   * credential configured — sending them to add a key that was already there
+   * and working.
+   */
+  reasonFor(providerId: string, userId: string | null, workspaceId: string | null): string | null {
+    const entitled = this.store
+      .listForProvider(providerId)
+      .filter((c) => this.entitled(c, { providerId, userId, workspaceId }));
+    if (entitled.some((c) => this.usable(c))) return null;
+
+    const configured = entitled.filter((c) => this.configured(c));
+    if (!configured.length) return `No credential this caller may use is configured for ${providerId}`;
+
+    const reasons = configured
+      .map((c) => this.availability?.unavailableReason(c.id))
+      .filter((r): r is string => Boolean(r));
+    if (!reasons.length) return `No credential this caller may use is configured for ${providerId}`;
+    return configured.length === 1
+      ? `The only ${providerId} account available to this caller is ${reasons[0]}`
+      : `All ${configured.length} ${providerId} accounts available to this caller are unavailable (${reasons[0]})`;
+  }
+
+  /**
    * Whether this caller may use this credential.
    *
    * The rule is ownership, not scope order: a user-scoped credential belongs to
@@ -141,11 +189,27 @@ export class CredentialResolver {
     return true;
   }
 
-  private usable(c: ResolvedCredential): boolean {
+  /**
+   * Configured, entitled and not obviously broken — the state of the record.
+   *
+   * Deliberately separate from whether the account is *currently* fit to use:
+   * a key on a 30-second rate-limit cooldown is perfectly well configured, and
+   * conflating the two turns "busy for a moment" into "not set up", which is
+   * what a caller is then told.
+   */
+  private configured(c: ResolvedCredential): boolean {
     if (!c.enabled) return false;
     if (c.expiresAt != null && c.expiresAt <= this.now()) return false;
     if (c.secret == null && c.source !== 'anonymous-endpoint') return false;
     if (c.maxConcurrency != null && (this.inFlight.get(c.id) ?? 0) >= c.maxConcurrency) return false;
+    return true;
+  }
+
+  private usable(c: ResolvedCredential): boolean {
+    if (!this.configured(c)) return false;
+    // A revoked key, a spent quota or a live rate-limit cooldown all mean the
+    // same thing to a router: do not send this one now.
+    if (this.availability && !this.availability.available(c.id)) return false;
     return true;
   }
 
@@ -178,7 +242,19 @@ export class CredentialResolver {
           (a, b) => (this.inFlight.get(a.id) ?? 0) - (this.inFlight.get(b.id) ?? 0) || (a.lastUsedAt ?? 0) - (b.lastUsedAt ?? 0),
         )[0];
       }
-      case 'health':
+      case 'health': {
+        // Advertised in the type, accepted by the API, persisted — and, until
+        // accounts had health, identical to `priority`, because there was
+        // nothing per-credential to sort on. Now there is: an account that has
+        // been failing goes last even if it has the highest priority, since
+        // priority expresses which key an operator PREFERS and health expresses
+        // which one is currently working.
+        const failures = (c: ResolvedCredential): number => this.availability?.get(c.id, c.providerId).consecutiveFailures ?? 0;
+        const lastSuccess = (c: ResolvedCredential): number => this.availability?.get(c.id, c.providerId).lastSuccessAt ?? 0;
+        return [...candidates].sort(
+          (a, b) => failures(a) - failures(b) || b.priority - a.priority || lastSuccess(b) - lastSuccess(a),
+        )[0];
+      }
       case 'priority':
       default:
         return [...candidates].sort((a, b) => b.priority - a.priority || (a.lastUsedAt ?? 0) - (b.lastUsedAt ?? 0))[0];

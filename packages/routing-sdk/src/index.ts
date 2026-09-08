@@ -1,4 +1,5 @@
 export * from './health.js';
+export * from './credential-health.js';
 export * from './credentials.js';
 export * from './policy.js';
 export * from './pools.js';
