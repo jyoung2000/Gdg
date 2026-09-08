@@ -164,8 +164,17 @@ describe('Router invariants', async () => {
   it('honours a budget rather than exceeding it quietly', () => {
     for (const { s, decision } of decisions) {
       if (s.request.budget === null) continue;
+      // Under a budget the cost may not merely be within it — it must be
+      // *knowable*. A route whose price nobody publishes cannot be shown to
+      // fit, so selecting one under a budget is itself the violation, whatever
+      // the amount later turns out to be.
+      assert.notEqual(
+        decision.expectedCost,
+        null,
+        `seed ${s.seed}: a budgeted request selected a model with no published price`,
+      );
       assert.ok(
-        decision.expectedCost <= s.request.budget,
+        (decision.expectedCost ?? 0) <= s.request.budget,
         `seed ${s.seed}: expected cost ${decision.expectedCost} exceeds the budget ${s.request.budget}`,
       );
     }

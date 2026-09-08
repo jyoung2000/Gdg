@@ -302,8 +302,17 @@ export class PoolManager {
     return this.pools.get(poolId)?.dailyBudget ?? null;
   }
 
-  /** Why the pool cannot take another request right now, or null if it can. */
-  capacityBlock(poolId: string, estimatedCost: number): string | null {
+  /**
+   * Why the pool cannot take another request right now, or null if it can.
+   *
+   * `costKnown` is what makes a budget real. An unpriced model used to arrive
+   * here as an estimated $0 and so fitted inside every remaining budget,
+   * including a no-spend one — the pool's ceiling silently stopped applying to
+   * exactly the models whose cost nobody could predict. A cost that cannot be
+   * computed cannot be shown to fit, so a pool that is enforcing a budget
+   * declines it and says why.
+   */
+  capacityBlock(poolId: string, estimatedCost: number | null, costKnown = true): string | null {
     const pool = this.pools.get(poolId);
     if (!pool) return `Pool ${poolId} does not exist`;
     if (!pool.enabled) return `Pool ${pool.name} is disabled`;
@@ -312,13 +321,23 @@ export class PoolManager {
     const u = this.usageFor(poolId);
     if (limit != null && u.inFlight >= limit) return `Pool ${pool.name} is at its concurrency limit of ${limit}`;
 
+    // Treat an unknown cost as at least the floor we do know, if any, so a
+    // partially published rate card is still compared rather than waved past.
+    const known = costKnown && estimatedCost != null;
+    const floor = estimatedCost ?? 0;
+
     // A reservation's budget is a ceiling on the reservation's own window, so it
     // is compared against what the reservation has spent — not against the
     // pool's UTC-day counter, which resets at midnight mid-window and counts
     // spend from before the window began.
     const active = this.activeReservation(poolId);
     if (active && active.budget != null) {
-      if (active.spend + estimatedCost > active.budget) {
+      if (!known) {
+        return active.budget === 0
+          ? `Reservation "${active.label}" is a no-spend reservation and this model publishes no rate, so it cannot be shown to cost nothing`
+          : `Reservation "${active.label}" has a budget of $${active.budget.toFixed(2)} and this model publishes no rate, so the call cannot be shown to fit it`;
+      }
+      if (active.spend + floor > active.budget) {
         return active.budget === 0
           ? `Reservation "${active.label}" is a no-spend reservation and this call would cost money`
           : `Reservation "${active.label}" would exceed its budget of $${active.budget.toFixed(2)}`;
@@ -327,10 +346,17 @@ export class PoolManager {
     }
 
     const budget = this.pools.get(poolId)?.dailyBudget ?? null;
-    if (budget != null && u.spentToday + estimatedCost > budget) {
-      return budget === 0
-        ? `Pool ${pool.name} is a no-spend pool and this call would cost money`
-        : `Pool ${pool.name} would exceed its daily budget of $${budget.toFixed(2)}`;
+    if (budget != null) {
+      if (!known) {
+        return budget === 0
+          ? `Pool ${pool.name} is a no-spend pool and this model publishes no rate, so it cannot be shown to cost nothing`
+          : `Pool ${pool.name} has a daily budget of $${budget.toFixed(2)} and this model publishes no rate, so the call cannot be shown to fit it`;
+      }
+      if (u.spentToday + floor > budget) {
+        return budget === 0
+          ? `Pool ${pool.name} is a no-spend pool and this call would cost money`
+          : `Pool ${pool.name} would exceed its daily budget of $${budget.toFixed(2)}`;
+      }
     }
     return null;
   }

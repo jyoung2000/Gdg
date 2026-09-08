@@ -70,7 +70,7 @@ describe('Router — hard constraints', () => {
     const permitted = createHarness({ providers: [a.descriptor], models: paidOnly, allowPaid: true });
     const decision = permitted.router.route({ modality: 'text', taskType: 'chat', allowPaid: true });
     assert.equal(decision.model, 'paid');
-    assert.ok(decision.expectedCost > 0);
+    assert.ok(decision.expectedCost != null && decision.expectedCost > 0);
     await a.close();
   });
 

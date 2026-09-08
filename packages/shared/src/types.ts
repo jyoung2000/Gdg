@@ -97,6 +97,23 @@ export const NON_SPENDING_PRICING: readonly PricingKind[] = [
   'LOCAL',
 ];
 
+/**
+ * How a route relates to the operator's money.
+ *
+ * The fourth member is the one that matters. A metered model whose rates are
+ * simply unpublished is not free and not priced — it is unknown, and every
+ * comparison that collapses it into either of the other two gets the answer
+ * wrong in a way that costs real money. `SUBSCRIPTION_INCLUDED` is declared
+ * because routing has to be able to express it, but nothing constructs it yet:
+ * see `costClass` in economics.ts.
+ */
+export const COST_CLASSES = ['FREE', 'SUBSCRIPTION_INCLUDED', 'KNOWN_PAID', 'UNKNOWN_COST'] as const;
+export type CostClass = (typeof COST_CLASSES)[number];
+
+/** How much of a price was actually published. */
+export const COST_BASES = ['exact', 'lower_bound', 'unknown'] as const;
+export type CostBasis = (typeof COST_BASES)[number];
+
 export interface Pricing {
   kind: PricingKind;
   /** USD per 1M input tokens. null when unknown or not token-metered. */
@@ -464,7 +481,16 @@ export interface RoutingCandidate {
   score: number;
   /** Per-factor contributions, for the routing-explanation panel. */
   factors: Record<string, number>;
-  estimatedCost: number;
+  /**
+   * USD for this call, or **null when the price is not published**.
+   *
+   * Null rather than 0: a metered model with no published rate can charge any
+   * amount, and reporting that as zero made it the cheapest candidate on every
+   * cost-sensitive comparison. Consumers must render null as unknown.
+   */
+  estimatedCost: number | null;
+  /** Which side of the operator's money this route sits on. */
+  costClass: CostClass;
   estimatedLatencyMs: number | null;
   free: boolean;
   /**
@@ -508,8 +534,11 @@ export interface RoutingDecision {
   /** Ordered alternates tried on failure. */
   fallbackChain: { provider: string; model: string; credential: string | null }[];
   routingReason: RoutingReason;
-  /** USD. 0 for free/local. */
-  expectedCost: number;
+  /**
+   * USD. 0 for free and local, and **null when the provider publishes no rate**
+   * — which is not the same thing and must not be rendered as `$0.00`.
+   */
+  expectedCost: number | null;
   expectedLatency: number | null;
 }
 
@@ -912,7 +941,19 @@ export interface TaskEstimate {
   models: number;
   tokens: number;
   seconds: number;
+  /**
+   * USD across the whole pipeline. When `costKnown` is false this is a floor
+   * built from the steps that could be priced, not the expected total.
+   */
   cost: number;
+  /**
+   * True when every step in the plan routes to a model with a published rate.
+   *
+   * False means at least one step would run on a model whose price nobody
+   * publishes, so the total above is a lower bound. Presenting it as the price
+   * would be the same mistake as calling an unpriced model free.
+   */
+  costKnown: boolean;
   strategy: RoutingMode;
   freeAvailable: boolean;
   note: string | null;

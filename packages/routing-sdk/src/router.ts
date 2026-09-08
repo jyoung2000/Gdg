@@ -1,10 +1,14 @@
 import {
   MeridianError,
-  computeCost,
-  estimateTokens,
+  costScore,
+  describeCost,
+  estimateCall,
+  estimatePromptTokens,
+  fitsLimit,
   isFree,
   mayCharge,
   type AIRequest,
+  type CallEstimate,
   type Capability,
   type Modality,
   type ModelDescriptor,
@@ -275,21 +279,30 @@ export class Router {
     const free = isFree(m.pricing);
     if (req.freeOnly && !free) return no('Request is free-only and this model can charge');
     if (STRICTLY_FREE_MODES.includes(mode) && !free) return no(`${mode} allows only models that cannot charge`);
+    const estimate = this.estimateCall(m, req);
     if (mayCharge(m.pricing)) {
       const permitted = req.allowPaid ?? prefs?.allowPaid ?? false;
       if (!this.deps.allowPaid()) return no('Paid routing is disabled for this instance');
       if (!permitted) return no('Paid routing requires explicit permission');
-      const estimated = this.estimateCost(m, req);
-      if (req.budget != null && estimated > req.budget) {
-        return no(`Estimated $${estimated.toFixed(4)} exceeds the request budget of $${req.budget.toFixed(4)}`);
+
+      // A limit the caller set has to actually bind. An unpublished rate used
+      // to estimate $0 and therefore satisfied every budget ever set, which is
+      // the precise shape of spending money the caller thought they had
+      // capped — so a price that cannot be computed cannot clear a limit.
+      for (const [limit, label] of [
+        [req.budget, 'the request budget'],
+        [prefs?.maxCostPerTask, 'your per-task cap'],
+      ] as const) {
+        if (limit == null) continue;
+        const verdict = fitsLimit(estimate, limit);
+        if (!verdict.fits) return no(`${verdict.reason} for ${label}`);
       }
-      const cap = prefs?.maxCostPerTask;
-      if (cap != null && estimated > cap) return no(`Estimated $${estimated.toFixed(4)} exceeds your per-task cap`);
     }
 
-    // Pool capacity and budget.
+    // Pool capacity and budget. A pool with a budget is a limit like any other,
+    // so an uncomputable cost cannot be charged against it either.
     if (req.pool) {
-      const block = this.deps.pools.capacityBlock(req.pool, this.estimateCost(m, req));
+      const block = this.deps.pools.capacityBlock(req.pool, estimate.usd, estimate.known);
       if (block) return no(block);
     }
 
@@ -337,10 +350,14 @@ export class Router {
     // get sampled rather than starved.
     const speed = latency == null ? 0.55 : clamp01(1 - (latency - 500) / 24_500);
 
-    const estimatedCost = this.estimateCost(m, req);
-    // Cost is compared on a log scale: the gap between $0.0001 and $0.001
-    // matters as much as the gap between $0.01 and $0.1.
-    const cost = estimatedCost <= 0 ? 1 : clamp01(1 - Math.log10(estimatedCost * 10_000 + 1) / 4);
+    const estimate = this.estimateCall(m, req);
+    // You only score on price if your price is known. A model whose rates are
+    // unpublished scores zero here rather than the 1.0 that "$0" used to earn
+    // it: it was winning every cost-sensitive comparison precisely because
+    // nothing was known about it, which is the opposite of cheap. A partially
+    // published card is in the same position — the part nobody published could
+    // be any size, so its floor is not a price.
+    const cost = costScore(estimate) ?? 0;
 
     const free = isFree(m.pricing) ? 1 : 0;
     const local = descriptor?.local ? 1 : 0;
@@ -369,7 +386,8 @@ export class Router {
       providerId: m.providerId,
       score: Math.round(total * 10_000) / 10_000,
       factors: Object.fromEntries(Object.entries(factors).map(([k, v]) => [k, Math.round(v * 1000) / 1000])),
-      estimatedCost,
+      estimatedCost: estimate.usd,
+      costClass: estimate.klass,
       estimatedLatencyMs: latency,
       free: isFree(m.pricing),
       preferred,
@@ -388,16 +406,23 @@ export class Router {
     return clamp01(score);
   }
 
-  private estimateCost(m: ModelDescriptor, req: AIRequest): number {
-    if (isFree(m.pricing)) return 0;
-    if (req.modality === 'image' || req.modality === 'video') return computeCost(m.pricing, 0, 0, 1);
-    const promptText =
-      req.prompt ?? (req.messages ?? []).map((x) => (typeof x.content === 'string' ? x.content : '')).join('\n');
-    const promptTokens = estimateTokens(promptText);
+  /**
+   * What this call is expected to cost, and whether that is actually known.
+   *
+   * Free short-circuits because a free model has a known price of zero and
+   * there is nothing to estimate. Everything else goes through `estimateCall`,
+   * which reports an unpublished rate as unknown instead of as zero.
+   */
+  private estimateCall(m: ModelDescriptor, req: AIRequest): CallEstimate {
+    if (isFree(m.pricing)) return estimateCall(m.pricing, { promptTokens: 0, completionTokens: 0 });
+    if (req.modality === 'image' || req.modality === 'video') {
+      return estimateCall(m.pricing, { promptTokens: 0, completionTokens: 0, requests: 1 });
+    }
+    const promptTokens = estimatePromptTokens(req);
     // Assume a response roughly a third the length of the prompt, floored so a
     // one-line prompt still budgets for a real answer.
     const completionTokens = Math.max(256, Math.round(promptTokens / 3));
-    return computeCost(m.pricing, promptTokens, completionTokens);
+    return estimateCall(m.pricing, { promptTokens, completionTokens });
   }
 
   private credentialFor(m: ModelDescriptor, req: AIRequest): { credentialId: string | null; reason: string } {
@@ -489,9 +514,17 @@ export class Router {
         detail: `${health.state}, ${Math.round(health.errorRate * 100)}% recent error rate`,
       },
       {
-        label: winner.free ? 'Free capacity available' : 'Paid routing explicitly permitted',
+        label: winner.free
+          ? 'Free capacity available'
+          : winner.costClass === 'UNKNOWN_COST'
+            ? 'Paid routing permitted, but the price is unknown'
+            : 'Paid routing explicitly permitted',
         met: true,
-        detail: winner.free ? `Pricing: ${model.pricing.kind}` : `Estimated $${winner.estimatedCost.toFixed(4)}`,
+        detail: winner.free
+          ? `Pricing: ${model.pricing.kind}`
+          : winner.costClass === 'UNKNOWN_COST'
+            ? `${model.pricing.kind}, and this provider publishes no rate — the cost of this call cannot be predicted`
+            : `Estimated $${(winner.estimatedCost ?? 0).toFixed(4)}`,
       },
       {
         label: 'Meets the required context length',
@@ -528,9 +561,12 @@ export class Router {
     }
 
     const qualityNote = view?.scores?.samples ? `measured over ${view.scores.samples} calls` : 'not yet measured';
-    const summary = `${model.displayName} on ${descriptor?.name ?? model.providerId}: best ${req.taskType} score (${qualityNote})${
-      winner.free ? ' with free capacity' : ` at about $${winner.estimatedCost.toFixed(4)}`
-    }.`;
+    const priceNote = winner.free
+      ? ' with free capacity'
+      : winner.estimatedCost == null
+        ? ', at an unpublished price'
+        : ` at about $${winner.estimatedCost.toFixed(4)}`;
+    const summary = `${model.displayName} on ${descriptor?.name ?? model.providerId}: best ${req.taskType} score (${qualityNote})${priceNote}.`;
 
     return {
       summary,

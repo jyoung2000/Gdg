@@ -52,6 +52,20 @@ const PIPELINE_OPTIONS: { value: PipelineKind; label: string }[] = [
   { value: 'tests', label: 'Tests' },
 ];
 
+/**
+ * What a step costs, including when nobody knows.
+ *
+ * A null price means this provider publishes no rate for the model, so the
+ * plan cannot say what the step will cost. Rendering that as "free" — which is
+ * what `$0.00` reads as next to a step that says "free" — would be the one
+ * mistake this screen must not make, since the whole point of the plan is that
+ * the operator approves the spend before it happens.
+ */
+function describeStepCost(usd: number | null): string {
+  if (usd == null) return 'price unknown';
+  return usd === 0 ? 'free' : formatCost(usd);
+}
+
 export function DirectorScreen(): React.JSX.Element {
   const vocabulary = useStore((s) => s.vocabulary);
   const workspaces = useStore((s) => s.workspaces);
@@ -336,7 +350,7 @@ function PlanPhase({
                   />
                   <span className="mrd-caption mrd-secondary mrd-numeric">
                     {agent?.taskType ?? 'chat'} · {agent?.preferredMode ?? '—'}
-                    {candidate ? ` · ${candidate.expectedCost === 0 ? 'free' : formatCost(candidate.expectedCost)}` : ''}
+                    {candidate ? ` · ${describeStepCost(candidate.expectedCost)}` : ''}
                   </span>
                 </Stack>
               </Stack>
@@ -351,8 +365,15 @@ function PlanPhase({
           <Stat label="Models" value={String(e.models)} />
           <Stat label="Est. tokens" value={e.tokens.toLocaleString()} />
           <Stat label="Est. time" value={`~${e.seconds}s`} />
-          <Stat label="Est. cost" value={e.cost === 0 ? 'Free' : formatCost(e.cost)} strong />
+          <Stat
+            label={e.costKnown ? 'Est. cost' : 'Est. cost (at least)'}
+            value={e.costKnown && e.cost === 0 ? 'Free' : formatCost(e.cost)}
+            strong
+          />
           {e.freeAvailable && <StatusChip status="ready" size="sm" label="Free routes available" />}
+          {!e.costKnown && (
+            <StatusChip status="degraded" size="sm" label="A step has no published price" />
+          )}
           <div className="mrd-spacer" />
           <Button variant="secondary" onClick={onBack}>
             Edit the idea

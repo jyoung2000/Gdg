@@ -603,7 +603,16 @@ export function RoutingExplanation({ reason, className }: { reason: RoutingReaso
               <li key={c.modelId}>
                 <span className="mrd-truncate mrd-code">{c.modelId}</span>
                 <span className="mrd-caption mrd-numeric">{c.score.toFixed(3)}</span>
-                {c.free ? <span className="mrd-caption">free</span> : <span className="mrd-caption mrd-numeric">${c.estimatedCost.toFixed(4)}</span>}
+                {c.free ? (
+                  <span className="mrd-caption">free</span>
+                ) : c.estimatedCost == null ? (
+                  // Not "$0.0000". This model can charge; nobody published how much.
+                  <span className="mrd-caption" title="This provider publishes no rate for this model">
+                    price unknown
+                  </span>
+                ) : (
+                  <span className="mrd-caption mrd-numeric">${c.estimatedCost.toFixed(4)}</span>
+                )}
               </li>
             ))}
           </ul>

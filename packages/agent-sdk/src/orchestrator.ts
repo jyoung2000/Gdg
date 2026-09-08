@@ -171,6 +171,7 @@ export class Orchestrator {
     const pipeline = this.planPipeline(request);
     const promptTokens = estimateTokens(request);
     let cost = 0;
+    let costKnown = true;
     let freeAvailable = true;
     const models = new Set<string>();
     let calls = 0;
@@ -200,7 +201,11 @@ export class Orchestrator {
         }
         models.add(top.modelId);
         if (!top.free) freeAvailable = false;
-        cost += top.estimatedCost * turns;
+        // A step whose model publishes no rate makes the whole total a floor.
+        // Adding 0 for it and calling the sum "the cost" would understate the
+        // plan by an unbounded amount.
+        if (top.estimatedCost == null) costKnown = false;
+        else cost += top.estimatedCost * turns;
       } catch {
         // No candidate for this step is itself information: the estimate says
         // free capacity is not available rather than silently reporting $0.
@@ -214,6 +219,7 @@ export class Orchestrator {
       tokens: promptTokens * calls * 4,
       seconds: calls * 8,
       cost: Math.round(cost * 1e4) / 1e4,
+      costKnown,
       strategy: opts.mode,
       freeAvailable,
       note: pipeline.rationale,
