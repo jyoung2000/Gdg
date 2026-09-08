@@ -59,7 +59,11 @@ describe('E2E: gateway against a real local inference server', () => {
     // A small latency makes overlapping requests observable, which is how the
     // parallelism test proves lanes really run at once rather than inferring it
     // from wall-clock timings.
-    sim = await startSimServer(['--latency-ms', '40']);
+    // The allowance is published in response headers, the way real providers
+    // publish one. Every other test ignores it; the account-quota test is the
+    // only thing in this environment that can see a real provider's numbers,
+    // because the network policy reaches no provider that sends them.
+    sim = await startSimServer(['--latency-ms', '40', '--ratelimit-requests', '5000']);
     // A second server that is up, reachable and refuses every completion. This
     // is the shape a fallback chain has to survive.
     failing = await startSimServer(['--fail-with', 'rate_limited']);
@@ -638,6 +642,52 @@ describe('E2E: gateway against a real local inference server', () => {
     assert.ok(completed.length >= 3, `expected the pipeline to run, saw ${JSON.stringify(detail.steps.map((s) => s.status))}`);
   });
 
+  it('records the allowance a provider publishes against the account that spent it', async () => {
+    // The one composite this environment can actually run: a real gateway, a
+    // real socket, a real credential, and headers a real provider would send.
+    // Local endpoints are discovered as `auth: 'none'` — correctly, since
+    // nothing on this machine needs a key — so the descriptor is re-registered
+    // as needing one. That is the only fiction here; everything downstream is
+    // the production path.
+    const providerId = simProviderId();
+    const descriptor = app.providers.descriptor(providerId);
+    assert.ok(descriptor, 'the sim must be registered as a provider');
+    app.providers.registerProvider({ ...descriptor, auth: 'api-key' });
+    try {
+      const { credential } = await json<{ credential: { id: string } }>('/api/credentials', {
+        method: 'POST',
+        body: JSON.stringify({ providerId, secret: 'sim-account-key', label: 'quota-account', scope: 'system' }),
+      });
+
+      const before = app.credentialHealth.quotasFor(credential.id);
+      assert.deepEqual(before, [], 'nothing should be known about a brand new account');
+
+      const res = await api('/v1/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify({ model: 'meridian/auto', messages: [{ role: 'user', content: 'spend one request' }] }),
+      });
+      assert.equal(res.status, 200, 'the call itself must succeed, or the headers prove nothing');
+
+      const quota = app.credentialHealth.quotasFor(credential.id).find((q) => q.dimension === 'requests');
+      assert.ok(quota, 'the provider published a request allowance and it must reach the account');
+      assert.equal(quota.limit, 5000);
+      assert.ok(quota.remaining != null && quota.remaining < 5000, 'and the remainder must be what the provider said, not a guess');
+      assert.equal(quota.source, 'provider-headers');
+      assert.ok(app.credentialHealth.available(credential.id), 'plenty left, so the account stays in rotation');
+
+      // Through the API a person actually calls, scoped to what they may see.
+      const view = await json<{ health: { credentialId: string; quota: { dimension: string; remaining: number | null }[] }[] }>('/api/credentials');
+      const account = view.health.find((h) => h.credentialId === credential.id);
+      assert.equal(account?.quota.find((q) => q.dimension === 'requests')?.remaining, quota.remaining);
+
+      await api(`/api/credentials/${credential.id}`, { method: 'DELETE' });
+    } finally {
+      // Put the descriptor back, so later tests see the instance they expect.
+      app.providers.registerProvider(descriptor);
+      app.refreshCredentialState();
+    }
+  });
+
   it('answers "what happened to this request" for a real agent run', async () => {
     // Three things had to reach the database for this to be answerable, and
     // none of them did: which STEP a call belonged to, WHY the router picked
@@ -919,6 +969,23 @@ describe('E2E: gateway against a real local inference server', () => {
     });
     const before = await json<{ summary: { totals: { requests: number } } }>('/api/usage?limit=1');
 
+    // An account's standing has to outlive the process too. A cooldown that
+    // evaporates on restart means a container bounce silently re-enables a
+    // revoked key and starts hammering the provider with it again.
+    const { credential } = await json<{ credential: { id: string; providerId: string } }>('/api/credentials', {
+      method: 'POST',
+      body: JSON.stringify({ providerId: simProviderId(), label: 'restart-account', scope: 'user' }),
+    });
+    app.credentialHealth.recordFailure(credential.id, credential.providerId, 'rate_limited', 'slow down', 600);
+    app.credentialHealth.recordRateLimit(credential.id, credential.providerId, {
+      requestsLimit: 100,
+      requestsRemaining: 7,
+      requestsResetsAt: Date.now() + 600_000,
+      tokensLimit: null,
+      tokensRemaining: null,
+      tokensResetsAt: null,
+    });
+
     // A full stop and a fresh App over the same directory: exactly what a
     // container restart does. Anything held only in memory disappears here.
     await server.close();
@@ -943,6 +1010,27 @@ describe('E2E: gateway against a real local inference server', () => {
       after.summary.totals.requests >= before.summary.totals.requests,
       'usage history must survive a restart, not start over',
     );
+
+    const accounts = await json<{
+      health: { credentialId: string; state: string; cooldownUntil: number | null; available: boolean; quota: { dimension: string; remaining: number | null }[] }[];
+    }>('/api/credentials');
+    const account = accounts.health.find((h) => h.credentialId === credential.id);
+    assert.ok(account, 'the account must still be reported after a restart');
+    assert.equal(account.state, 'rate_limited', 'and still carry what the provider said about it');
+    assert.ok(account.cooldownUntil != null && account.cooldownUntil > Date.now(), 'a live cooldown must survive the bounce');
+    assert.equal(account.available, false, 'so the account is still out of rotation');
+    assert.equal(
+      account.quota.find((q) => q.dimension === 'requests')?.remaining,
+      7,
+      'and the published allowance is remembered rather than reset to unknown',
+    );
+
+    // An operator can put it back deliberately — the case the system cannot
+    // work out for itself, such as a key rotated at the provider's end.
+    const reset = await api(`/api/credentials/${credential.id}/reset-health`, { method: 'POST', body: '{}' });
+    assert.equal(reset.status, 200);
+    const afterReset = await json<{ health: { credentialId: string; available: boolean }[] }>('/api/credentials');
+    assert.equal(afterReset.health.find((h) => h.credentialId === credential.id)?.available, true);
 
     // And the instance is serving again, on the same data.
     const ready = await api('/api/system/ready');

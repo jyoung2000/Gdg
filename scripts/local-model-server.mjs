@@ -73,6 +73,27 @@ const EMBED_DIMS = Number(flag('embed-dims', '384'));
  */
 const FAIL_WITH = flag('fail-with', '') || null;
 /**
+ * Publish a remaining-requests allowance in the response headers, counting down.
+ *
+ * Real providers report an account's remaining quota this way — on ordinary
+ * successful responses — and this environment can reach no provider that does.
+ * Without it, the reader that turns those headers into account quota could only
+ * ever be tested against a fixture, which proves the parser and nothing about
+ * whether the numbers actually arrive.
+ */
+const RATE_LIMIT_REQUESTS = Number(flag('ratelimit-requests', '0')) || null;
+let requestsRemaining = RATE_LIMIT_REQUESTS;
+
+/** The rate-limit headers to attach to every response, if any. */
+function rateLimitHeaders() {
+  if (RATE_LIMIT_REQUESTS == null) return {};
+  return {
+    'x-ratelimit-limit-requests': String(RATE_LIMIT_REQUESTS),
+    'x-ratelimit-remaining-requests': String(Math.max(0, requestsRemaining ?? 0)),
+    'x-ratelimit-reset-requests': '60s',
+  };
+}
+/**
  * Append one JSON line per chat request to this file: the tools that were
  * offered, the turn, and what the policy decided.
  *
@@ -511,7 +532,7 @@ const ERROR_STATUS = {
 
 function sendJson(res, status, payload, headers = {}) {
   const buf = Buffer.from(JSON.stringify(payload));
-  res.writeHead(status, { 'content-type': 'application/json', 'content-length': buf.length, ...headers });
+  res.writeHead(status, { 'content-type': 'application/json', 'content-length': buf.length, ...rateLimitHeaders(), ...headers });
   res.end(buf);
 }
 
@@ -552,6 +573,7 @@ async function streamChat(res, body, turn) {
     'cache-control': 'no-cache',
     connection: 'keep-alive',
     'x-accel-buffering': 'no',
+    ...rateLimitHeaders(),
   });
 
   const frame = (choice, extra = {}) => {
@@ -689,6 +711,9 @@ const server = createServer(async (req, res) => {
     const body = await readBody(req);
 
     if (path === '/v1/chat/completions' || path === '/chat/completions') {
+      // Counted before the response is built, so the headers report the
+      // allowance left AFTER this call — which is what a provider reports.
+      if (requestsRemaining != null) requestsRemaining = Math.max(0, requestsRemaining - 1);
       if (FAIL_WITH) {
         sendError(res, FAIL_WITH);
         return;

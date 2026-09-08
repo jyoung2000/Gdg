@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Button,
   DataUseTable,
@@ -16,7 +16,7 @@ import {
   EmptyState,
 } from '@meridian/ui';
 import type { CredentialRecord } from '@meridian/shared';
-import { api, type ProviderView } from '../lib/api.js';
+import { api, type AccountHealthView, type ProviderView } from '../lib/api.js';
 import { useStore } from '../lib/store.js';
 import { Screen } from './Screen.js';
 
@@ -147,14 +147,18 @@ function ManageDialog({
   const [trust, setTrust] = useState(provider.trust);
   const [baseUrl, setBaseUrl] = useState(provider.baseUrl);
   const [credentials, setCredentials] = useState<CredentialRecord[]>([]);
+  const [accounts, setAccounts] = useState<AccountHealthView[]>([]);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    void api
-      .credentials()
-      .then((r) => setCredentials(r.credentials.filter((c) => c.providerId === provider.id)))
-      .catch(() => undefined);
+  const loadCredentials = useCallback(async (): Promise<void> => {
+    const r = await api.credentials();
+    setCredentials(r.credentials.filter((c) => c.providerId === provider.id));
+    setAccounts(r.health);
   }, [provider.id]);
+
+  useEffect(() => {
+    void loadCredentials().catch(() => undefined);
+  }, [loadCredentials]);
 
   const addCredential = async (): Promise<void> => {
     if (!secret.trim()) return;
@@ -164,8 +168,7 @@ function ManageDialog({
       // The secret is cleared immediately; it is never held in component state
       // longer than the request that carries it.
       setSecret('');
-      const r = await api.credentials();
-      setCredentials(r.credentials.filter((c) => c.providerId === provider.id));
+      await loadCredentials();
       onChanged();
       toast({ level: 'success', message: 'Credential added' });
     } catch (e) {
@@ -200,25 +203,58 @@ function ManageDialog({
           <h3 className="mrd-panel-title">Credentials</h3>
           {credentials.length > 0 && (
             <Stack direction="column" gap={2}>
-              {credentials.map((c) => (
-                <Stack key={c.id} direction="row" gap={2} align="center">
-                  <span className="mrd-body mrd-truncate">{c.label}</span>
-                  <span className="mrd-code mrd-caption">{c.hint}</span>
-                  <StatusChip status={c.enabled ? 'ready' : 'offline'} label={c.scope} size="sm" />
-                  <div className="mrd-spacer" />
-                  <Button
-                    size="sm"
-                    variant="tertiary"
-                    onClick={async () => {
-                      await api.deleteCredential(c.id);
-                      setCredentials((s) => s.filter((x) => x.id !== c.id));
-                      onChanged();
-                    }}
-                  >
-                    Remove
-                  </Button>
-                </Stack>
-              ))}
+              {credentials.map((c) => {
+                const account = accounts.find((h) => h.credentialId === c.id) ?? null;
+                const requests = account?.quota.find((q) => q.dimension === 'requests') ?? null;
+                return (
+                  <Stack key={c.id} direction="column" gap={1}>
+                    <Stack direction="row" gap={2} align="center">
+                      <span className="mrd-body mrd-truncate">{c.label}</span>
+                      <span className="mrd-code mrd-caption">{c.hint}</span>
+                      <StatusChip status={c.enabled ? 'ready' : 'offline'} label={c.scope} size="sm" />
+                      {/* An account out of rotation is the fact that explains a
+                          provider that "does not work" for one person and is
+                          fine for everyone else. */}
+                      {account && !account.available && <StatusChip status="rate_limited" label={account.state.replace('_', ' ')} size="sm" />}
+                      <div className="mrd-spacer" />
+                      {account && !account.available && (
+                        <Button
+                          size="sm"
+                          variant="tertiary"
+                          onClick={async () => {
+                            await api.resetCredentialHealth(c.id);
+                            await loadCredentials();
+                          }}
+                        >
+                          Put back in rotation
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="tertiary"
+                        onClick={async () => {
+                          await api.deleteCredential(c.id);
+                          setCredentials((s) => s.filter((x) => x.id !== c.id));
+                          setAccounts((s) => s.filter((h) => h.credentialId !== c.id));
+                          onChanged();
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    </Stack>
+                    {account?.unavailableReason && <span className="mrd-caption">{account.unavailableReason}</span>}
+                    {/* Only ever rendered from a number the provider actually
+                        published. Nothing here invents a full allowance for a
+                        provider that says nothing. */}
+                    {requests?.remaining != null && (
+                      <span className="mrd-caption mrd-numeric">
+                        {requests.remaining.toLocaleString()}
+                        {requests.limit != null ? ` of ${requests.limit.toLocaleString()}` : ''} requests left in this window
+                      </span>
+                    )}
+                  </Stack>
+                );
+              })}
             </Stack>
           )}
           {provider.auth === 'none' ? (

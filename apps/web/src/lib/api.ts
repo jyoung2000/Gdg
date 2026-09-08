@@ -1,6 +1,8 @@
 import type {
   AgentTask,
   AuditLogEntry,
+  CredentialHealth,
+  CredentialQuota,
   CredentialRecord,
   FileChange,
   FileNode,
@@ -183,6 +185,20 @@ export interface UsageSummary {
  * the successful attempt would answer "which model served this" and hide the
  * two that did not.
  */
+/**
+ * An account's standing with its provider.
+ *
+ * `available` is the field the UI leads on, because it is the one that answers
+ * "will my next call use this key". `unavailableReason` exists so the answer is
+ * never a bare no: "rate limited, retrying in 24s" and "no requests quota left"
+ * lead to completely different actions, and neither is "add a key".
+ */
+export interface AccountHealthView extends CredentialHealth {
+  available: boolean;
+  unavailableReason: string | null;
+  quota: CredentialQuota[];
+}
+
 export interface RequestTrace {
   requestId: string;
   attempts: UsageRecord[];
@@ -301,7 +317,15 @@ export const api = {
   health: () => get<{ providers: { providerId: string; name: string; supportState: string; health: ProviderHealth; cooldownSec: number | null }[] }>('/api/health'),
 
   /* Credentials */
-  credentials: () => get<{ credentials: CredentialRecord[]; pools: { id: string; providerId: string; name: string; strategy: string }[] }>('/api/credentials'),
+  credentials: () =>
+    get<{
+      credentials: CredentialRecord[];
+      pools: { id: string; providerId: string; name: string; strategy: string }[];
+      /** One row per credential the caller may see — the account's standing. */
+      health: AccountHealthView[];
+    }>('/api/credentials'),
+  /** Put an account back into rotation after an operator has fixed it upstream. */
+  resetCredentialHealth: (id: string) => post<{ health: AccountHealthView }>(`/api/credentials/${id}/reset-health`, {}),
   addCredential: (body: { providerId: string; secret?: string; label?: string; scope?: string; priority?: number; maxConcurrency?: number }) =>
     post<{ credential: CredentialRecord }>('/api/credentials', body),
   updateCredential: (id: string, body: { secret?: string; enabled?: boolean }) => patch<{ ok: boolean }>(`/api/credentials/${id}`, body),

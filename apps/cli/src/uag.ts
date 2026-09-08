@@ -251,6 +251,7 @@ ${c.dim('COMMANDS')}
   compare <prompt>       Run one prompt across several models
   usage [--days N]       Show usage, cost and fallback statistics
   trace <requestId>      Show every attempt one request made, and why
+  accounts               Show each credential's standing and remaining quota
   status                 Show gateway status
   browse <url>           Open a URL in a real browser session and print the page
   scrape <url>           Robots-aware scrape via the research engine
@@ -542,6 +543,59 @@ async function main(): Promise<number> {
             String(p.freeModels),
             health.state,
             `${Math.round(health.errorRate * 100)}%`,
+          ];
+        }),
+      );
+      out();
+      return 0;
+    }
+
+    /* ---------------- accounts ---------------- */
+    case 'accounts': {
+      // An account is a credential: it is what a provider meters, bills and
+      // revokes. This is the answer to "why is this provider not working for
+      // me when it works for everyone else".
+      const res = await client.request<{
+        credentials: { id: string; providerId: string; label: string; hint: string; scope: string; enabled: boolean }[];
+        health: {
+          credentialId: string;
+          state: string;
+          available: boolean;
+          unavailableReason: string | null;
+          lastSuccessAt: number | null;
+          quota: { dimension: string; limit: number | null; remaining: number | null }[];
+        }[];
+      }>('/api/credentials');
+
+      if (json) {
+        out(JSON.stringify(res, null, 2));
+        return 0;
+      }
+      if (!res.credentials.length) {
+        out();
+        out('  No credentials configured.');
+        out();
+        return 0;
+      }
+
+      out();
+      table(
+        ['ACCOUNT', 'PROVIDER', 'SCOPE', 'STATE', 'REQUESTS LEFT', 'NOTE'],
+        res.credentials.map((cred) => {
+          const h = res.health.find((x) => x.credentialId === cred.id);
+          const requests = h?.quota.find((q) => q.dimension === 'requests');
+          const state = h?.state ?? 'unknown';
+          return [
+            `${cred.label} ${c.dim(cred.hint)}`,
+            cred.providerId,
+            cred.scope,
+            !cred.enabled ? c.dim('disabled') : h?.available === false ? c.yellow(state) : state === 'healthy' ? c.green(state) : state,
+            // Unknown is printed as unknown. A provider that publishes no
+            // allowance has not told us there is plenty.
+            requests?.remaining == null
+              ? c.dim('not published')
+              : `${requests.remaining.toLocaleString()}${requests.limit != null ? ` / ${requests.limit.toLocaleString()}` : ''}`,
+            h?.unavailableReason ?? '',
           ];
         }),
       );
