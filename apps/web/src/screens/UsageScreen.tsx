@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Card, EmptyState, SegmentedControl, Stack, StatusChip, Table, IconBarChart, type TableColumn } from '@meridian/ui';
 import { formatCost, formatRelative, type UsageRecord } from '@meridian/shared';
-import { api, type UsageSummary } from '../lib/api.js';
+import { api, type RequestTrace, type UsageSummary } from '../lib/api.js';
 import { Screen } from './Screen.js';
 
 /**
@@ -16,6 +16,9 @@ export function UsageScreen(): React.JSX.Element {
   const [summary, setSummary] = useState<UsageSummary | null>(null);
   const [recent, setRecent] = useState<UsageRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [trace, setTrace] = useState<RequestTrace | null>(null);
+  const [traceError, setTraceError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -27,6 +30,33 @@ export function UsageScreen(): React.JSX.Element {
       })
       .finally(() => setLoading(false));
   }, [days]);
+
+  // Selecting a call asks the gateway what the whole request did, rather than
+  // rendering the one row already in hand: a request can be several attempts,
+  // and the failed ones are the interesting half.
+  useEffect(() => {
+    if (!selected) {
+      setTrace(null);
+      setTraceError(null);
+      return;
+    }
+    let cancelled = false;
+    setTraceError(null);
+    void api
+      .trace(selected)
+      .then((t) => {
+        if (!cancelled) setTrace(t);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTrace(null);
+          setTraceError('That request is no longer on record.');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected]);
 
   const modelColumns: TableColumn<UsageSummary['byModel'][number]>[] = [
     { key: 'model', header: 'Model', render: (r) => <span className="mrd-truncate mrd-code">{r.modelId}</span> },
@@ -129,11 +159,151 @@ export function UsageScreen(): React.JSX.Element {
 
           <section>
             <h2 className="mrd-panel-title">Recent calls</h2>
-            <Table columns={recentColumns} rows={recent.slice(0, 100)} rowKey={(r) => r.id} empty="No calls." />
+            <Table
+              columns={recentColumns}
+              rows={recent.slice(0, 100)}
+              rowKey={(r) => r.id}
+              empty="No calls."
+              selectedKey={recent.find((r) => r.requestId === selected)?.id ?? null}
+              onSelectRow={(r) => setSelected(r.requestId === selected ? null : r.requestId)}
+            />
+            <p className="mrd-caption">Select a call to see every attempt the request made and why it went where it did.</p>
           </section>
+
+          {selected && (
+            <section>
+              {/* The id is set in code and never in the panel title: that title
+                  is upper-cased by the design system, and an upper-cased
+                  request id is one a person cannot copy back into a support
+                  ticket or `uag trace`. */}
+              <h2 className="mrd-panel-title">Request trace</h2>
+              <p className="mrd-code">{selected}</p>
+              {traceError ? <Card>{traceError}</Card> : trace ? <TracePanel trace={trace} /> : <Card>Loading…</Card>}
+            </section>
+          )}
         </>
       )}
     </Screen>
+  );
+}
+
+/**
+ * What one request actually did.
+ *
+ * Ordered oldest first and showing every attempt, not just the one that
+ * worked. A request that took three tries across two providers reads as one
+ * line per try here; collapsing it to the winner would answer the easy
+ * question and hide the expensive one.
+ */
+function TracePanel({ trace }: { trace: RequestTrace }): React.JSX.Element {
+  const winner = trace.attempts.find((a) => a.success) ?? null;
+  const routing = trace.attempts.find((a) => a.routing)?.routing ?? null;
+
+  return (
+    <Stack direction="column" gap={3}>
+      <Card>
+        <Stack direction="row" gap={3} align="center" wrap>
+          <StatusChip
+            status={trace.summary.succeeded ? 'ready' : 'offline'}
+            label={trace.summary.succeeded ? 'served' : 'failed'}
+            size="sm"
+          />
+          <span className="mrd-caption mrd-numeric">
+            {trace.summary.attempts} attempt{trace.summary.attempts === 1 ? '' : 's'}
+          </span>
+          <span className="mrd-caption mrd-numeric">
+            {(trace.summary.promptTokens + trace.summary.completionTokens).toLocaleString()} tokens
+          </span>
+          <span className="mrd-caption mrd-numeric">{formatCost(trace.summary.cost)}</span>
+          {/* Null and zero mean different things here, and only one of them is
+              a saving worth reporting. */}
+          {trace.summary.contextTokensSaved != null && (
+            <span className="mrd-caption mrd-numeric">
+              {trace.summary.contextTokensSaved.toLocaleString()} tokens saved by optimisation
+            </span>
+          )}
+          {winner && <span className="mrd-caption mrd-code mrd-truncate">{winner.modelId}</span>}
+        </Stack>
+      </Card>
+
+      {routing ? (
+        <Card>
+          <Stack direction="column" gap={2}>
+            <span className="mrd-panel-title">Why this model</span>
+            <span className="mrd-body">{routing.summary}</span>
+            <span className="mrd-caption">
+              Ran under {routing.mode}
+              {routing.requestedMode !== routing.mode ? ` — asked for ${routing.requestedMode}` : ''}
+            </span>
+            {routing.considered.length > 0 && (
+              <Stack direction="column" gap={1}>
+                {routing.considered.map((cand) => (
+                  <Stack key={cand.modelId} direction="row" gap={2} align="center">
+                    <span className="mrd-caption mrd-code mrd-truncate">{cand.modelId}</span>
+                    <div className="mrd-spacer" />
+                    <span className="mrd-caption mrd-numeric">{cand.score.toFixed(2)}</span>
+                    <span className="mrd-caption mrd-numeric">
+                      {/* An unpublished price is never rendered as $0.00. */}
+                      {cand.estimatedCost == null ? 'price unknown' : formatCost(cand.estimatedCost)}
+                    </span>
+                  </Stack>
+                ))}
+              </Stack>
+            )}
+            {routing.rejected.length > 0 && (
+              <span className="mrd-caption">
+                Ruled out: {routing.rejected.slice(0, 3).map((r) => `${r.count} × ${r.reason.toLowerCase()}`).join(', ')}
+              </span>
+            )}
+          </Stack>
+        </Card>
+      ) : (
+        <Card>
+          <span className="mrd-caption">
+            No routing decision was recorded for this request — it predates the trace, or it did not go through the router.
+          </span>
+        </Card>
+      )}
+
+      <Table
+        columns={[
+          { key: 'at', header: 'When', width: '110px', render: (r: UsageRecord) => formatRelative(r.at, Date.now()) },
+          { key: 'model', header: 'Model', render: (r: UsageRecord) => <span className="mrd-truncate mrd-code">{r.modelId}</span> },
+          { key: 'latency', header: 'Latency', width: '100px', align: 'end', render: (r: UsageRecord) => <span className="mrd-numeric">{(r.latencyMs / 1000).toFixed(2)}s</span> },
+          { key: 'cost', header: 'Cost', width: '90px', align: 'end', render: (r: UsageRecord) => <span className="mrd-numeric">{formatCost(r.cost)}</span> },
+          {
+            key: 'ok',
+            header: '',
+            width: '120px',
+            render: (r: UsageRecord) => (
+              <StatusChip status={r.success ? 'ready' : 'degraded'} label={r.success ? 'ok' : (r.errorCode ?? 'failed')} size="sm" />
+            ),
+          },
+        ]}
+        rows={trace.attempts}
+        rowKey={(r) => r.id}
+        caption="Every attempt this request made"
+        empty="No attempts recorded."
+      />
+
+      {trace.toolCalls.length > 0 && (
+        <Table
+          columns={[
+            { key: 'name', header: 'Tool', render: (c: RequestTrace['toolCalls'][number]) => <span className="mrd-code mrd-truncate">{c.name}</span> },
+            { key: 'ms', header: 'Duration', width: '110px', align: 'end', render: (c) => <span className="mrd-numeric">{c.durationMs}ms</span> },
+            {
+              key: 'ok',
+              header: '',
+              width: '110px',
+              render: (c) => <StatusChip status={c.error ? 'degraded' : 'ready'} label={c.error ? 'failed' : 'ok'} size="sm" />,
+            },
+          ]}
+          rows={trace.toolCalls}
+          rowKey={(c) => c.id}
+          caption="Tools this step called"
+        />
+      )}
+    </Stack>
   );
 }
 

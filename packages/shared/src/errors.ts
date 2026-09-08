@@ -20,6 +20,7 @@ export const ERROR_CODES = [
   'context_length_exceeded',
   'content_filtered',
   'invalid_request',
+  'not_found',
   'budget_exceeded',
   'cancelled',
   'no_candidates',
@@ -50,6 +51,10 @@ const TRAITS: Record<ErrorCode, ErrorTrait> = {
   context_length_exceeded: { retryable: false, failover: true, cooldownSec: 0, status: 400 },
   content_filtered: { retryable: false, failover: false, cooldownSec: 0, status: 400 },
   invalid_request: { retryable: false, failover: false, cooldownSec: 0, status: 400 },
+  // Meridian's own resources, not a provider's. `classifyStatus` never
+  // produces this — a provider's 404 is `model_unavailable`, which is a fact
+  // about a model rather than about something the caller asked us to find.
+  not_found: { retryable: false, failover: false, cooldownSec: 0, status: 404 },
   budget_exceeded: { retryable: false, failover: false, cooldownSec: 0, status: 402 },
   cancelled: { retryable: false, failover: false, cooldownSec: 0, status: 499 },
   no_candidates: { retryable: false, failover: false, cooldownSec: 0, status: 503 },

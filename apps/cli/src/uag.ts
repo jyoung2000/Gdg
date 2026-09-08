@@ -250,6 +250,7 @@ ${c.dim('COMMANDS')}
   benchmark <model>      Run the benchmark suite against a model
   compare <prompt>       Run one prompt across several models
   usage [--days N]       Show usage, cost and fallback statistics
+  trace <requestId>      Show every attempt one request made, and why
   status                 Show gateway status
   browse <url>           Open a URL in a real browser session and print the page
   scrape <url>           Robots-aware scrape via the research engine
@@ -287,6 +288,7 @@ ${c.dim('EXAMPLES')}
   uag image "a calm desk at dawn" --free
   uag models --free
   uag usage --days 7
+  uag trace req_9f2c1a
 `;
 
 function routingFlags(flags: Args['flags']): Record<string, unknown> {
@@ -617,6 +619,101 @@ async function main(): Promise<number> {
             `${Math.round(Number(m.successRate) * 100)}%`,
           ]),
         );
+      }
+      out();
+      return 0;
+    }
+
+    /* ---------------- trace ---------------- */
+    case 'trace': {
+      const requestId = positional[1];
+      if (!requestId) {
+        err('Usage: uag trace <requestId>');
+        return 1;
+      }
+      // Every response carries `x-request-id`. This is what it is for.
+      const res = await client.request<{
+        requestId: string;
+        attempts: {
+          at: number;
+          modelId: string;
+          latencyMs: number;
+          cost: number;
+          success: boolean;
+          errorCode: string | null;
+          stepId: string | null;
+          agentRole: string | null;
+          routing: {
+            mode: string;
+            requestedMode: string;
+            summary: string;
+            considered: { modelId: string; score: number; estimatedCost: number | null }[];
+            rejected: { reason: string; count: number }[];
+          } | null;
+        }[];
+        summary: { attempts: number; succeeded: boolean; cost: number; promptTokens: number; completionTokens: number; contextTokensSaved: number | null; taskId: string | null };
+      }>(`/api/trace/${encodeURIComponent(requestId)}`);
+
+      if (json) {
+        out(JSON.stringify(res, null, 2));
+        return 0;
+      }
+
+      out();
+      out(`  ${c.bold(res.requestId)}  ${res.summary.succeeded ? c.dim('served') : c.dim('failed')}`);
+      out();
+      table(
+        ['', ''],
+        [
+          ['Attempts', String(res.summary.attempts)],
+          ['Tokens', (res.summary.promptTokens + res.summary.completionTokens).toLocaleString()],
+          ['Cost', formatCost(res.summary.cost)],
+          // Null is a different statement from zero: nothing measured it.
+          ['Saved by optimisation', res.summary.contextTokensSaved == null ? c.dim('not measured') : res.summary.contextTokensSaved.toLocaleString()],
+          ['Task', res.summary.taskId ?? c.dim('—')],
+        ],
+      );
+
+      out();
+      out(c.dim('  ATTEMPTS'));
+      table(
+        ['MODEL', 'ROLE', 'LATENCY', 'COST', 'RESULT'],
+        res.attempts.map((a) => [
+          a.modelId,
+          a.agentRole ?? c.dim('—'),
+          `${(a.latencyMs / 1000).toFixed(2)}s`,
+          formatCost(a.cost),
+          a.success ? 'ok' : (a.errorCode ?? 'failed'),
+        ]),
+      );
+
+      const routing = res.attempts.find((a) => a.routing)?.routing;
+      if (routing) {
+        out();
+        out(c.dim('  WHY THIS MODEL'));
+        out(`  ${routing.summary}`);
+        out(
+          `  ${c.dim(`ran under ${routing.mode}${routing.requestedMode !== routing.mode ? `, asked for ${routing.requestedMode}` : ''}`)}`,
+        );
+        if (routing.considered.length) {
+          out();
+          table(
+            ['CANDIDATE', 'SCORE', 'EST. COST'],
+            routing.considered.map((cand) => [
+              cand.modelId,
+              cand.score.toFixed(2),
+              // Never $0.00 for a price nobody publishes.
+              cand.estimatedCost == null ? c.dim('unknown') : formatCost(cand.estimatedCost),
+            ]),
+          );
+        }
+        if (routing.rejected.length) {
+          out();
+          for (const r of routing.rejected.slice(0, 5)) out(`  ${c.dim(`${r.count} ×`)} ${r.reason}`);
+        }
+      } else {
+        out();
+        out(c.dim('  No routing decision was recorded for this request.'));
       }
       out();
       return 0;

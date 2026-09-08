@@ -16,6 +16,7 @@ import type {
   RoutingMode,
   TaskEstimate,
   TaskStep,
+  ToolCallRecord,
   UsageRecord,
   UserPreferences,
   Workspace,
@@ -172,6 +173,31 @@ export interface UsageSummary {
   byModel: { modelId: string; providerId: string; requests: number; tokens: number; cost: number; avgLatency: number; successRate: number }[];
   byDay: { day: string; requests: number; tokens: number; cost: number }[];
   byProvider: { providerId: string; requests: number; cost: number; errorRate: number }[];
+}
+
+/**
+ * What one request did, reconstructed from what was written down.
+ *
+ * `attempts` is every try the request made, oldest first — including the ones
+ * that failed and the fallback that worked, because a trace that showed only
+ * the successful attempt would answer "which model served this" and hide the
+ * two that did not.
+ */
+export interface RequestTrace {
+  requestId: string;
+  attempts: UsageRecord[];
+  summary: {
+    at: number;
+    attempts: number;
+    succeeded: boolean;
+    cost: number;
+    promptTokens: number;
+    completionTokens: number;
+    /** Null when nothing measured it — not the same as having saved nothing. */
+    contextTokensSaved: number | null;
+    taskId: string | null;
+  };
+  toolCalls: ToolCallRecord[];
 }
 
 export interface RoutingPreview {
@@ -388,6 +414,8 @@ export const api = {
 
   /* Usage */
   usage: (days = 30) => get<{ since: number; days: number; summary: UsageSummary; recent: UsageRecord[] }>(`/api/usage?days=${days}`),
+  /** Everything one request id did, in the order it did it. */
+  trace: (requestId: string) => get<RequestTrace>(`/api/trace/${encodeURIComponent(requestId)}`),
 
   /* Browser */
   browserEngines: () => get<{ engines: BrowserEngineView[]; configured: { lightpandaCdp: string | null; realBrowserCdp: string | null } }>('/api/browser/engines'),

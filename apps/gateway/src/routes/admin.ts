@@ -703,12 +703,12 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
    * spend would be a disclosure, so a non-admin sees only their own rows and
    * an unknown id is indistinguishable from one belonging to someone else.
    */
-  server.get<{ Params: { requestId: string } }>('/api/trace/:requestId', async (req, reply) => {
+  server.get<{ Params: { requestId: string } }>('/api/trace/:requestId', async (req) => {
     const scope = req.auth.role === 'admin' ? undefined : req.auth.userId;
     const attempts = app.store
       .listUsage({ requestId: req.params.requestId, limit: 100, userId: scope })
       .sort((a, b) => a.at - b.at);
-    if (!attempts.length) return reply.code(404).send({ error: 'No record of that request id' });
+    if (!attempts.length) throw new MeridianError('not_found', 'No record of that request id');
 
     const taskId = attempts.find((a) => a.taskId)?.taskId ?? null;
     return {

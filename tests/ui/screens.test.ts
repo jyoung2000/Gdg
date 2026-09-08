@@ -1,6 +1,7 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { AddressInfo } from 'node:net';
@@ -54,6 +55,52 @@ const VIEWPORTS = [
   { name: 'desktop', width: 1440, height: 900 },
 ];
 
+/**
+ * The newest modification time under a directory tree.
+ *
+ * Cheap, and only ever compared against one other number, so it does not need
+ * to be exact — it needs to notice that a source file changed after the bundle
+ * was written.
+ */
+function newestMtime(dir: string): number {
+  let newest = 0;
+  const walk = (d: string): void => {
+    for (const entry of readdirSync(d, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name === 'dist') continue;
+      const full = join(d, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else newest = Math.max(newest, statSync(full).mtimeMs);
+    }
+  };
+  try {
+    walk(dir);
+  } catch {
+    return 0;
+  }
+  return newest;
+}
+
+/**
+ * Rebuild the client when the bundle predates the source it came from.
+ *
+ * This suite is the only place a screen is asked whether it actually runs, and
+ * unlike every other suite it does not read the sources: it reads a bundle
+ * somebody built earlier. A stale bundle therefore passes every test in this
+ * file while testing last week's code — and reads exactly like a real pass,
+ * which is worse than a failure. Found the hard way, by a screen that rendered
+ * its old markup under a test written for the new one.
+ */
+function buildWebIfStale(webRoot: string): void {
+  const built = existsSync(join(webRoot, 'index.html')) ? statSync(join(webRoot, 'index.html')).mtimeMs : 0;
+  const sources = Math.max(
+    newestMtime(resolve(process.cwd(), 'apps/web/src')),
+    newestMtime(resolve(process.cwd(), 'packages/ui/src')),
+  );
+  if (built >= sources) return;
+  process.stdout.write('  the web bundle is older than its sources — rebuilding before testing it\n');
+  execFileSync('node', ['scripts/build.mjs', 'web'], { cwd: process.cwd(), stdio: 'inherit' });
+}
+
 function chromiumPath(): string | null {
   const roots = ['/opt/pw-browsers'];
   for (const root of roots) {
@@ -87,6 +134,7 @@ describe('Web client', async () => {
 
   before(async () => {
     if (skip) return;
+    buildWebIfStale(webRoot);
     dataDir = mkdtempSync(join(tmpdir(), 'meridian-ui-'));
     shotDir = resolve(process.cwd(), 'docs/evidence/screens');
     mkdirSync(shotDir, { recursive: true });
@@ -226,6 +274,39 @@ describe('Web client', async () => {
       // card is narrow, and a truncated note would drop exactly that clause.
       assert.match(body, /Not a security boundary/i, `the home screen must say what the process sandbox is not:\n${body.slice(0, 500)}`);
       assert.ok(!/,\s*$|\.\.\.$/m.test(body.split('\n').find((l) => /security boundary/i.test(l)) ?? ''), 'the warning must be a complete sentence');
+    } finally {
+      await page.close();
+    }
+  });
+
+  it('explains a real request when a call is selected on the usage screen', { skip: skip || false }, async () => {
+    // Serve one call first, so the screen has something real to explain. The
+    // panel reads the trace route, which reads what the executor wrote down —
+    // a failure anywhere along that chain shows up here as an empty panel.
+    const res = await fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'meridian/auto', messages: [{ role: 'user', content: 'trace me' }] }),
+    });
+    assert.equal(res.status, 200, 'the call the trace is about must succeed');
+    const requestId = res.headers.get('x-request-id');
+    assert.ok(requestId, 'every response carries a request id, and this is what it is for');
+
+    const page = await browser.newPage({ viewport: VIEWPORTS[2] });
+    try {
+      const errors = await open(page, 'usage');
+      await page.getByText('Select a call to see every attempt').waitFor({ timeout: 15_000 });
+      // The recent-calls table is the last one on the screen, and it is ordered
+      // newest first — so the top row is the call made a moment ago.
+      await page.locator('table').last().locator('tbody tr').first().click();
+
+      await page.getByText('Why this model').waitFor({ timeout: 15_000 });
+      const body = await page.locator('body').innerText();
+      assert.match(body, /Ran under/, 'the applied routing policy has to be shown, not just the winner');
+      // Lower case, and present: an upper-cased id is one nobody can paste
+      // back into `uag trace` or a support ticket.
+      assert.ok(body.includes(requestId), 'the request id must be shown exactly as it was issued');
+      assert.deepEqual(errors, [], `the trace panel logged errors:\n${errors.join('\n')}`);
     } finally {
       await page.close();
     }
