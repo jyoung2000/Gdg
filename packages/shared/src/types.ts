@@ -1027,6 +1027,16 @@ export interface UsageRecord {
   workspaceId: string | null;
   taskId: string | null;
   agentRole: AgentRole | null;
+  /**
+   * The agent step this call belongs to.
+   *
+   * Distinct from `agentRole`, and the distinction has teeth: a pipeline can
+   * run the same role twice — a failing check appends a repair attempt and
+   * re-runs the tester — so matching a verification verdict to usage rows by
+   * role applied the second run's result to the first run's calls, crediting a
+   * model with a pass it never earned.
+   */
+  stepId: string | null;
   providerId: string;
   modelId: string;
   credentialId: string | null;
@@ -1041,6 +1051,39 @@ export interface UsageRecord {
   success: boolean;
   fallbackCount: number;
   errorCode: string | null;
+  /**
+   * A compact record of why this attempt went where it did.
+   *
+   * The full decision is computed on every call and was returned to the caller
+   * and then dropped, so "why did this request pick that model" had no answer
+   * for anything already finished — including the request that just spent
+   * money. Stored per attempt because a fallback re-routes and each attempt has
+   * its own answer.
+   */
+  routing?: RoutingSnapshot | null;
+  /** Prompt tokens the context optimiser kept out of this call. */
+  contextTokensSaved?: number | null;
+}
+
+/**
+ * The part of a routing decision worth keeping.
+ *
+ * Not the whole `RoutingReason`: the considered list can run to dozens of
+ * candidates and the rejection list to hundreds, and storing all of it on every
+ * attempt would trade a large table for detail nobody reads. What a person
+ * actually asks afterwards is which policy applied, what won, what nearly won,
+ * and what was ruled out — so that is what is kept.
+ */
+export interface RoutingSnapshot {
+  /** The policy the scoring ran under, after aliasing and any pool override. */
+  mode: RoutingMode;
+  /** What the caller asked for, before that resolution. */
+  requestedMode: RoutingMode;
+  summary: string;
+  /** The winner and its closest runners-up. */
+  considered: { modelId: string; score: number; estimatedCost: number | null; costClass: CostClass }[];
+  /** Why the most common rejections happened, with how many each accounted for. */
+  rejected: { reason: string; count: number }[];
 }
 
 export interface AuditLogEntry {

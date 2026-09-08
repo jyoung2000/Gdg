@@ -688,6 +688,56 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
     };
   });
 
+  /**
+   * What happened to one request.
+   *
+   * Every response carries an `x-request-id`, and until now that was a token
+   * with nothing behind it: no index selected on it and no query accepted it,
+   * so a person holding one could not ask what it did. This is the answer —
+   * every attempt the request made, in the order it made them, with the model
+   * each one reached, whether it succeeded, what it cost, and the routing
+   * decision that sent it there.
+   *
+   * Scoped exactly like `/api/usage`: a request id is guessable enough that
+   * letting any caller trade one for another person's model, workspace and
+   * spend would be a disclosure, so a non-admin sees only their own rows and
+   * an unknown id is indistinguishable from one belonging to someone else.
+   */
+  server.get<{ Params: { requestId: string } }>('/api/trace/:requestId', async (req, reply) => {
+    const scope = req.auth.role === 'admin' ? undefined : req.auth.userId;
+    const attempts = app.store
+      .listUsage({ requestId: req.params.requestId, limit: 100, userId: scope })
+      .sort((a, b) => a.at - b.at);
+    if (!attempts.length) return reply.code(404).send({ error: 'No record of that request id' });
+
+    const taskId = attempts.find((a) => a.taskId)?.taskId ?? null;
+    return {
+      requestId: req.params.requestId,
+      attempts,
+      // Derived rather than stored: these are facts about the row set, and
+      // recomputing them cannot drift from it.
+      summary: {
+        at: attempts[0].at,
+        attempts: attempts.length,
+        succeeded: attempts.some((a) => a.success),
+        cost: attempts.reduce((n, a) => n + a.cost, 0),
+        promptTokens: attempts.reduce((n, a) => n + a.promptTokens, 0),
+        completionTokens: attempts.reduce((n, a) => n + a.completionTokens, 0),
+        // Null, not zero, when nothing measured it: no optimiser ran is a
+        // different statement from it ran and saved nothing.
+        contextTokensSaved: attempts.some((a) => a.contextTokensSaved != null)
+          ? attempts.reduce((n, a) => n + (a.contextTokensSaved ?? 0), 0)
+          : null,
+        taskId,
+      },
+      // Only for agent traffic, and only for the step this request served —
+      // a task's other steps are other requests with their own trace.
+      toolCalls: taskId
+        ? app.store.listToolCalls(taskId).filter((c) => attempts.some((a) => a.stepId === c.stepId))
+        : [],
+    };
+  });
+
   server.get('/api/health', async () => ({
     providers: app.providers.list().map((d) => ({
       providerId: d.id,

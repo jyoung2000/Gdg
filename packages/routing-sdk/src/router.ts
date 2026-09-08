@@ -18,6 +18,7 @@ import {
   type RoutingDecision,
   type RoutingMode,
   type RoutingReason,
+  type RoutingSnapshot,
   type UserPreferences,
 } from '@meridian/shared';
 import { ModelRegistry, recommendationScore } from '@meridian/model-sdk';
@@ -658,4 +659,38 @@ export function formatContext(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
   if (n >= 1000) return `${Math.round(n / 1000)}K`;
   return String(n);
+}
+
+/**
+ * The part of a routing decision worth writing down.
+ *
+ * A `RoutingReason` is built for the caller's explanation panel and is sized
+ * for it: the considered list can run to dozens of candidates and the rejection
+ * list into the hundreds, on every single attempt. Storing all of that on every
+ * usage row would trade a large table for detail nobody reads.
+ *
+ * What a person asks afterwards is narrower — which policy applied, what won,
+ * what nearly won, and what ruled the rest out — so the runners-up are capped
+ * and the rejections are collapsed to reason-with-a-count. The count is the
+ * part that carries information: "47 candidates lacked a credential" is a
+ * different problem from "47 candidates were too expensive", and neither is
+ * legible as 47 individual lines.
+ */
+export function routingSnapshot(reason: RoutingReason, keepConsidered = 5): RoutingSnapshot {
+  const counts = new Map<string, number>();
+  for (const r of reason.rejected) counts.set(r.reason, (counts.get(r.reason) ?? 0) + 1);
+  return {
+    mode: reason.mode,
+    requestedMode: reason.requestedMode,
+    summary: reason.summary,
+    considered: reason.considered.slice(0, keepConsidered).map((c) => ({
+      modelId: c.modelId,
+      score: c.score,
+      estimatedCost: c.estimatedCost,
+      costClass: c.costClass,
+    })),
+    rejected: [...counts.entries()]
+      .map(([r, count]) => ({ reason: r, count }))
+      .sort((a, b) => b.count - a.count),
+  };
 }

@@ -33,7 +33,7 @@ import type { ModelRegistry } from '@meridian/model-sdk';
 import type { CredentialResolver } from './credentials.js';
 import type { HealthStore } from './health.js';
 import type { PoolManager } from './pools.js';
-import type { Router } from './router.js';
+import { routingSnapshot, type Router } from './router.js';
 
 export interface ExecutorDeps {
   router: Router;
@@ -62,6 +62,16 @@ export interface ExecuteOptions {
   requestId?: string;
   taskId?: string | null;
   agentRole?: UsageRecord['agentRole'];
+  /**
+   * The agent step this call belongs to.
+   *
+   * Recorded alongside the role because they are not the same thing: a pipeline
+   * can run one role twice, and attributing an outcome by role alone applies
+   * the second run's verdict to the first run's calls.
+   */
+  stepId?: string | null;
+  /** Prompt tokens the optimiser kept out of this call, for the record. */
+  contextTokensSaved?: number | null;
   signal?: AbortSignal;
 }
 
@@ -184,6 +194,7 @@ export class Executor {
   ): AsyncGenerator<StreamChunk & { meta?: { fallbacks: FallbackEvent[]; routingReason: unknown } }> {
     const requestId = opts.requestId ?? shortId();
     const decision = this.deps.router.route(req);
+    const routing = routingSnapshot(decision.routingReason);
     const targets = this.targets(decision);
     const budget = opts.retryBudget ?? Math.min(targets.length + 1, 4);
     const fallbacks: FallbackEvent[] = [];
@@ -231,7 +242,7 @@ export class Executor {
         }
 
         this.deps.health.recordSuccess(target.providerId, this.now() - started);
-        this.recordUsage(req, target, opts, requestId, usage, this.now() - started, ttftMs, true, null, fallbacks.length);
+        this.recordUsage(req, target, opts, requestId, usage, this.now() - started, ttftMs, true, null, fallbacks.length, routing);
         if (req.pool) this.deps.pools.recordSpend(req.pool, usage.cost);
         return;
       } catch (e) {
@@ -247,13 +258,13 @@ export class Executor {
         if (cancelled) {
           // The caller hung up. Not the provider's fault: no breaker, no
           // fallback — there is nobody left to stream a fallback to.
-          this.recordUsage(req, target, opts, requestId, partial, this.now() - started, ttftMs, false, 'cancelled', fallbacks.length);
+          this.recordUsage(req, target, opts, requestId, partial, this.now() - started, ttftMs, false, 'cancelled', fallbacks.length, routing);
           if (req.pool) this.deps.pools.recordSpend(req.pool, partial.cost);
           return;
         }
 
         this.deps.health.recordFailure(target.providerId, err.code, err.message, err.retryAfterSec);
-        this.recordUsage(req, target, opts, requestId, partial, this.now() - started, ttftMs, false, err.code, fallbacks.length);
+        this.recordUsage(req, target, opts, requestId, partial, this.now() - started, ttftMs, false, err.code, fallbacks.length, routing);
         if (req.pool && partial.cost > 0) this.deps.pools.recordSpend(req.pool, partial.cost);
 
         if (emitted || !err.failover || i === targets.length - 1 || attempt >= budget) {
@@ -294,6 +305,7 @@ export class Executor {
     const requestId = opts.requestId ?? shortId();
     const startedAll = this.now();
     const decision = this.deps.router.route(req);
+    const routing = routingSnapshot(decision.routingReason);
     const targets = this.targets(decision);
     const budget = opts.retryBudget ?? Math.min(targets.length + 1, 4);
     const fallbacks: FallbackEvent[] = [];
@@ -320,7 +332,7 @@ export class Executor {
           const m = meter(value);
 
           this.deps.health.recordSuccess(target.providerId, m.latencyMs || this.now() - started);
-          this.recordUsage(req, target, opts, requestId, m.usage, m.latencyMs, m.ttftMs, true, null, fallbacks.length);
+          this.recordUsage(req, target, opts, requestId, m.usage, m.latencyMs, m.ttftMs, true, null, fallbacks.length, routing);
           // Spend outside a pool is still recorded in usage; it just is not
           // charged against a pool budget the caller never chose.
           if (req.pool) this.deps.pools.recordSpend(req.pool, m.usage.cost);
@@ -351,12 +363,12 @@ export class Executor {
           // provider every time a user closes a tab at the wrong moment.
           const cancelled = err.code === 'cancelled' || opts.signal?.aborted === true;
           if (cancelled) {
-            this.recordUsage(req, target, opts, requestId, ZERO_USAGE, this.now() - started, null, false, 'cancelled', fallbacks.length);
+            this.recordUsage(req, target, opts, requestId, ZERO_USAGE, this.now() - started, null, false, 'cancelled', fallbacks.length, routing);
             throw err;
           }
 
           this.deps.health.recordFailure(target.providerId, err.code, err.message, err.retryAfterSec);
-          this.recordUsage(req, target, opts, requestId, ZERO_USAGE, this.now() - started, null, false, err.code, fallbacks.length);
+          this.recordUsage(req, target, opts, requestId, ZERO_USAGE, this.now() - started, null, false, err.code, fallbacks.length, routing);
           log.warn('call failed', { providerId: target.providerId, modelId: target.providerModelId, errorCode: err.code });
 
           // A non-failover error is terminal: no other provider will do better.
@@ -486,6 +498,7 @@ export class Executor {
     success: boolean,
     errorCode: string | null,
     fallbackCount: number,
+    routing: import('@meridian/shared').RoutingSnapshot | null = null,
   ): void {
     this.deps.recordUsage?.({
       id: newId('use'),
@@ -495,6 +508,9 @@ export class Executor {
       workspaceId: req.workspaceId ?? null,
       taskId: opts.taskId ?? null,
       agentRole: opts.agentRole ?? null,
+      stepId: opts.stepId ?? null,
+      routing,
+      contextTokensSaved: opts.contextTokensSaved ?? null,
       providerId: target.providerId,
       modelId: `${target.providerId}:${target.providerModelId}`,
       credentialId: target.credentialId,

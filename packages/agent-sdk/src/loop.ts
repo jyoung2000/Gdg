@@ -231,7 +231,16 @@ export class AgentLoop {
         const res = await this.deps.executor.chat(
           { ...request, messages: optimized.messages },
           { messages: optimized.messages, tools: definitions, temperature: 0.2, maxTokens: 4096 },
-          { taskId: input.taskId, agentRole: agent.role, signal: input.signal },
+          {
+            taskId: input.taskId,
+            agentRole: agent.role,
+            // The step, not just the role. A pipeline can run one role twice —
+            // a failing check appends a repair attempt and re-runs the tester —
+            // and a verdict matched by role alone lands on both runs.
+            stepId: input.stepId,
+            contextTokensSaved: optimized.report.tokensSaved,
+            signal: input.signal,
+          },
         );
 
         modelId = res.modelId;

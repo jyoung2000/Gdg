@@ -362,12 +362,18 @@ export class App {
       // The one judgement Meridian can make for itself. A model whose code
       // fails its own tests should learn from that, and until now nothing told
       // it: `testsPassed` had no producer anywhere in the codebase.
-      // Matched by role rather than step id, because that is what a usage row
-      // records. Within one task a verifying role's calls are exactly the ones
-      // this verdict is about.
-      onVerification: ({ taskId, role, passed }) => {
-        const rows = store.listUsage({ taskId }).filter((r) => r.agentRole === role);
-        for (const row of rows) instance?.recordOutcome(row, { testsPassed: passed });
+      //
+      // Matched by STEP, not by role. Role was what a usage row happened to
+      // record, and it was wrong the moment escalation shipped: a failing
+      // check appends a repair attempt and re-runs the tester, so a task can
+      // hold two `tester` steps. Matching by role applied the second run's
+      // pass to the first run's calls, crediting the model that failed with a
+      // verdict it never earned — in the one loop built to be honest about
+      // exactly that.
+      onVerification: ({ taskId, stepId, passed }) => {
+        for (const row of store.listUsage({ taskId, stepId })) {
+          instance?.recordOutcome(row, { testsPassed: passed });
+        }
       },
       persistStep: (step) => store.saveStep(step),
       persistTask: (task) => store.saveTask(task),

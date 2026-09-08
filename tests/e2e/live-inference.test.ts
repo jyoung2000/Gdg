@@ -638,6 +638,64 @@ describe('E2E: gateway against a real local inference server', () => {
     assert.ok(completed.length >= 3, `expected the pipeline to run, saw ${JSON.stringify(detail.steps.map((s) => s.status))}`);
   });
 
+  it('answers "what happened to this request" for a real agent run', async () => {
+    // Three things had to reach the database for this to be answerable, and
+    // none of them did: which STEP a call belonged to, WHY the router picked
+    // the model it picked, and what the optimiser saved. The request id was
+    // returned on every response and indexed by nothing.
+    const { workspace } = await json<{ workspace: { id: string } }>('/api/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'e2e-trace' }),
+    });
+
+    const { task } = await json<{ task: { id: string } }>('/api/tasks', {
+      method: 'POST',
+      body: JSON.stringify({ workspaceId: workspace.id, request: 'Create a file `trace.md` and describe it.', pipeline: 'code' }),
+    });
+
+    const detail = await waitForTask(task.id);
+    assert.equal(detail.task.status, 'completed', `task did not complete: ${detail.task.error ?? 'timed out'}`);
+
+    const steps = await json<{ steps: { id: string; role: string }[] }>(`/api/tasks/${task.id}`);
+    const stepIds = new Set(steps.steps.map((s) => s.id));
+    const rows = app.store.listUsage({ taskId: task.id, limit: 200 });
+    assert.ok(rows.length > 0, 'the run must have produced usage rows');
+
+    // Every call the agent made belongs to a step that really ran. A row whose
+    // step id is null or names nothing is a broken link in TASK → STEP → CALL,
+    // and it is the last hop that was missing.
+    for (const row of rows) {
+      assert.ok(row.stepId, `usage row ${row.id} has no step`);
+      assert.ok(stepIds.has(row.stepId), `usage row ${row.id} names a step that is not in the task`);
+    }
+
+    // And the decision that sent it there survived. Not asserted as a
+    // particular mode — that is the router's business — but as a real snapshot
+    // with the applied policy and a winner in it.
+    const withRouting = rows.find((r) => r.routing);
+    assert.ok(withRouting, 'no usage row recorded why its model was chosen');
+    assert.ok(withRouting.routing?.mode, 'the applied routing mode must be recorded');
+    assert.ok(withRouting.routing?.summary, 'and the sentence a person actually reads');
+
+    // The trace route is the thing a person holding a request id can call.
+    const trace = await json<{
+      requestId: string;
+      attempts: { modelId: string; stepId: string | null }[];
+      summary: { attempts: number; succeeded: boolean; taskId: string | null };
+      toolCalls: { stepId: string | null }[];
+    }>(`/api/trace/${withRouting.requestId}`);
+    assert.equal(trace.requestId, withRouting.requestId);
+    assert.ok(trace.attempts.length >= 1, 'a known request id must return its attempts');
+    assert.equal(trace.summary.taskId, task.id, 'and lead back to the task it served');
+    assert.ok(
+      trace.toolCalls.every((c) => trace.attempts.some((a) => a.stepId === c.stepId)),
+      'tool calls in a trace must belong to the step this request served, not to the whole task',
+    );
+
+    const missing = await api('/api/trace/req_definitely_not_real');
+    assert.equal(missing.status, 404, 'an unknown request id is not an empty trace, it is not found');
+  });
+
   /* ---------------- MCP tools reaching a real model ---------------- */
 
   it('offers a real MCP server\'s tools to a real model and runs the call it makes', async () => {

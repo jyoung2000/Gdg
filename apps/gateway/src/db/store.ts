@@ -747,15 +747,15 @@ export class Store implements CredentialStore {
   recordUsage(u: UsageRecord): void {
     this.db
       .prepare(
-        `INSERT INTO usage (id, at, request_id, user_id, workspace_id, task_id, agent_role, provider_id, model_id,
+        `INSERT INTO usage (id, at, request_id, user_id, workspace_id, task_id, agent_role, step_id, provider_id, model_id,
            credential_id, pool_id, modality, task_type, prompt_tokens, completion_tokens, cost, latency_ms, ttft_ms,
-           success, fallback_count, error_code)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+           success, fallback_count, error_code, routing, context_tokens_saved)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
-      .run(u.id, u.at, u.requestId, u.userId, u.workspaceId, u.taskId, u.agentRole, u.providerId, u.modelId, u.credentialId, u.poolId, u.modality, u.taskType, u.promptTokens, u.completionTokens, u.cost, u.latencyMs, u.ttftMs, int(u.success), u.fallbackCount, u.errorCode);
+      .run(u.id, u.at, u.requestId, u.userId, u.workspaceId, u.taskId, u.agentRole, u.stepId ?? null, u.providerId, u.modelId, u.credentialId, u.poolId, u.modality, u.taskType, u.promptTokens, u.completionTokens, u.cost, u.latencyMs, u.ttftMs, int(u.success), u.fallbackCount, u.errorCode, u.routing ? JSON.stringify(u.routing) : null, u.contextTokensSaved ?? null);
   }
 
-  listUsage(opts: { since?: number; limit?: number; modelId?: string; taskId?: string; userId?: string | null } = {}): UsageRecord[] {
+  listUsage(opts: { since?: number; limit?: number; modelId?: string; taskId?: string; stepId?: string; requestId?: string; userId?: string | null } = {}): UsageRecord[] {
     const clauses: string[] = [];
     const args: unknown[] = [];
     if (opts.since != null) { clauses.push('at >= ?'); args.push(opts.since); }
@@ -768,6 +768,10 @@ export class Store implements CredentialStore {
     }
     if (opts.modelId) { clauses.push('model_id = ?'); args.push(opts.modelId); }
     if (opts.taskId) { clauses.push('task_id = ?'); args.push(opts.taskId); }
+    if (opts.stepId) { clauses.push('step_id = ?'); args.push(opts.stepId); }
+    // The whole point of handing a caller an `x-request-id`: they can come back
+    // with it and be told what happened.
+    if (opts.requestId) { clauses.push('request_id = ?'); args.push(opts.requestId); }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     args.push(opts.limit ?? 500);
     return (this.db.prepare(`SELECT * FROM usage ${where} ORDER BY at DESC LIMIT ?`).all(...args) as Row[]).map((r) => ({
@@ -778,6 +782,7 @@ export class Store implements CredentialStore {
       workspaceId: (r.workspace_id as string) ?? null,
       taskId: (r.task_id as string) ?? null,
       agentRole: (r.agent_role as UsageRecord['agentRole']) ?? null,
+      stepId: (r.step_id as string) ?? null,
       providerId: String(r.provider_id),
       modelId: String(r.model_id),
       credentialId: (r.credential_id as string) ?? null,
@@ -792,6 +797,8 @@ export class Store implements CredentialStore {
       success: bool(r.success),
       fallbackCount: Number(r.fallback_count),
       errorCode: (r.error_code as string) ?? null,
+      routing: json<UsageRecord['routing']>(r.routing as string | null, null),
+      contextTokensSaved: r.context_tokens_saved == null ? null : Number(r.context_tokens_saved),
     }));
   }
 
