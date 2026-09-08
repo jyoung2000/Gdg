@@ -377,7 +377,9 @@ export class Router {
     // that actually picks the model. Folding evidence in means verifying a
     // model improves its position rather than only its documentation.
     const required = requiredCapabilitiesOf(req);
-    const evidence = capabilityConfidence(m.capabilityClaims, m.capabilities, required);
+    // The clock matters: a verification is evidence about the model as it was
+    // when it ran, and providers move models under stable ids.
+    const evidence = capabilityConfidence(m.capabilityClaims, m.capabilities, required, this.now());
     const reliability = clamp01((view?.scores?.stability ?? 0.85) * (1 - health.errorRate) * evidence);
 
     const factors = {

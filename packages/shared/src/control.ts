@@ -127,6 +127,43 @@ const STATE_CONFIDENCE: Record<CapabilityState, number> = {
 };
 
 /**
+ * How long a claim stays current.
+ *
+ * Matches the 90 days the price and intelligence layers already use, so
+ * Meridian has one idea of "old" rather than two.
+ */
+export const CLAIM_STALE_AFTER_DAYS = 90;
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Is this claim old enough that it describes a model that may have changed?
+ *
+ * Providers move models under stable ids: a context window doubles, vision
+ * appears, a quantisation changes what the weights can do. Every producer wrote
+ * `at` and nothing ever compared it to a clock, so a `user_confirmed` claim
+ * from two years ago outranked a `provider_declared` one from this morning,
+ * permanently, and a verification run's value never expired.
+ */
+export function claimIsStale(claim: CapabilityClaim | undefined, now: number): boolean {
+  if (!claim) return false;
+  return now - claim.at > CLAIM_STALE_AFTER_DAYS * DAY_MS;
+}
+
+/**
+ * What a stale claim is still worth.
+ *
+ * Decayed rather than discarded. "We watched this work, six months ago" is
+ * weaker than "we watched it work this morning" and much stronger than "the
+ * name suggests it" — dropping it to zero would throw away real evidence and
+ * make an aged verification worse than never having run one.
+ *
+ * The floor is `inferred`'s confidence: however old, a claim someone actually
+ * established is never worth less than a guess.
+ */
+export const STALE_CONFIDENCE_FACTOR = 0.85;
+
+/**
  * Confidence that a model really has every capability named.
  *
  * The weakest link decides: a model with a probe-verified `tools` and a guessed
@@ -136,6 +173,7 @@ export function capabilityConfidence(
   claims: CapabilityClaims | undefined,
   declared: readonly Capability[],
   required: readonly Capability[],
+  now = Date.now(),
 ): number {
   if (!required.length) return 1;
   let weakest = 1;
@@ -144,7 +182,10 @@ export function capabilityConfidence(
     // No claim at all, but the model's own listing includes it: that is a
     // provider declaration that predates the evidence system, and is treated as
     // one rather than as an unknown.
-    const confidence = claim ? STATE_CONFIDENCE[claim.state] : declared.includes(cap) ? STATE_CONFIDENCE.provider_declared : 0;
+    let confidence = claim ? STATE_CONFIDENCE[claim.state] : declared.includes(cap) ? STATE_CONFIDENCE.provider_declared : 0;
+    if (claim && confidence > 0 && claimIsStale(claim, now)) {
+      confidence = Math.max(STATE_CONFIDENCE.inferred, confidence * STALE_CONFIDENCE_FACTOR);
+    }
     if (confidence < weakest) weakest = confidence;
   }
   return weakest;

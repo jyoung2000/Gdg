@@ -201,10 +201,9 @@ Ordered by what would matter most next.
 1. **Live quota.** Nothing constructs a `QuotaState`. Free-first routing cannot
    avoid a route whose daily allowance is spent. The rate-limit header names are
    already carried as metadata, waiting for a reader.
-2. **Claim staleness.** `CapabilityClaim.at` is written everywhere and compared
-   against a clock nowhere, so a two-year-old confirmation outranks this
-   morning's provider listing forever. The age-adjustment logic exists in the
-   pricing layer and has not been ported.
+2. **Re-verification scheduling.** A claim older than 90 days is now discounted,
+   but nothing decides when to spend quota re-probing it. That is a policy
+   question with a real bill attached.
 3. **Review model diversity.** The reviewer's *verdict* now counts; whose
    verdict it is does not. `AIRequest` has no field that could exclude the
    implementer's model, and there is no model-family concept in the codebase.

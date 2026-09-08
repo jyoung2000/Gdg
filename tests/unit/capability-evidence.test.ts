@@ -3,7 +3,14 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig, nullLogger, type ModelDescriptor } from '@meridian/shared';
+import {
+  CLAIM_STALE_AFTER_DAYS,
+  capabilityConfidence,
+  claimIsStale,
+  loadConfig,
+  nullLogger,
+  type ModelDescriptor,
+} from '@meridian/shared';
 import { enrich } from '@meridian/model-sdk';
 import { openDatabase } from '../../apps/gateway/src/db/database.js';
 import { SecretBox } from '../../apps/gateway/src/db/crypto.js';
@@ -163,5 +170,41 @@ describe('Capability evidence — survives a restart', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('Capability evidence — a verification does not stay fresh forever', () => {
+  const DAY = 86_400_000;
+  const now = 1_800_000_000_000;
+
+  it('treats a recent claim as current', () => {
+    const fresh = { state: 'probe_verified' as const, source: 'live probe', confidence: 1, at: now - 10 * DAY };
+    assert.equal(claimIsStale(fresh, now), false);
+    assert.equal(capabilityConfidence({ tools: fresh }, ['tools'], ['tools'], now), 1);
+  });
+
+  it('discounts a claim older than the staleness window', () => {
+    const old = { state: 'probe_verified' as const, source: 'live probe', confidence: 1, at: now - (CLAIM_STALE_AFTER_DAYS + 30) * DAY };
+    assert.equal(claimIsStale(old, now), true);
+    const confidence = capabilityConfidence({ tools: old }, ['tools'], ['tools'], now);
+    assert.ok(confidence < 1, 'a verification from months ago is weaker than one from this morning');
+    assert.ok(confidence > 0.7, 'but it is still worth more than a guess, or running one would be pointless');
+  });
+
+  it('never decays established evidence below a bare guess', () => {
+    const ancient = { state: 'provider_declared' as const, source: 'listing', confidence: 0.9, at: 0 };
+    const guessed = { state: 'inferred' as const, source: 'model-name heuristic', confidence: 0.5, at: now };
+    assert.ok(
+      capabilityConfidence({ tools: ancient }, ['tools'], ['tools'], now) >=
+        capabilityConfidence({ tools: guessed }, ['tools'], ['tools'], now),
+      'however old, something someone established beats something nobody did',
+    );
+  });
+
+  it('lets the weakest required capability decide', () => {
+    const strong = { state: 'probe_verified' as const, source: 'probe', confidence: 1, at: now };
+    const weak = { state: 'inferred' as const, source: 'heuristic', confidence: 0.5, at: now };
+    const both = capabilityConfidence({ tools: strong, vision: weak }, ['tools', 'vision'], ['tools', 'vision'], now);
+    assert.equal(both, capabilityConfidence({ vision: weak }, ['vision'], ['vision'], now));
   });
 });

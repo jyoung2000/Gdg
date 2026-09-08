@@ -121,6 +121,20 @@ unroutable until someone probed it, which is how a system ends up never using
 anything new. Verification earns a better position rather than being the price
 of entry. For a request needing several capabilities, the weakest link decides.
 
+### Evidence ages
+
+A claim older than 90 days — the same window the price and intelligence layers
+use, so Meridian has one idea of "old" — is discounted rather than discarded.
+Providers move models under stable ids: a context window doubles, vision
+appears, a quantisation changes what the weights can do, and a verification is
+evidence about the model as it was when it ran.
+
+"We watched this work six months ago" is weaker than "we watched it work this
+morning" and much stronger than "the name suggests it", so the decay floors at
+`inferred`'s confidence. However old, something someone actually established is
+never worth less than a guess — otherwise an aged verification would be worse
+than never having run one.
+
 ## Using it
 
 ```
@@ -136,13 +150,10 @@ button.
 
 ## Known gaps
 
-- **No staleness on claims.** `CapabilityClaim.at` is written by every producer
-  and compared against a clock nowhere. A `user_confirmed` claim from two years
-  ago outranks a `provider_declared` one from this morning, permanently. The
-  age-adjustment logic exists in the price/intelligence layer
-  (`STALE_AFTER_DAYS = 90`) and has not been ported.
-- **No re-verification schedule.** Nothing decides a claim is old enough to
-  re-check.
+- **No re-verification schedule.** A stale claim is discounted, as above, but
+  nothing schedules a re-probe. Deciding *when* to spend quota re-checking is a
+  policy question with a real bill attached, and guessing at it would spend an
+  operator's money on their behalf.
 - **`setVerified` still stores compile-time introspection.**
   `adapter.capabilities()` derives from `typeof adapter.chat === 'function'` —
   which methods were written, not which ones work. It describes the adapter's
