@@ -312,6 +312,24 @@ describe('Web client', async () => {
     }
   });
 
+  it('separates what a provider can run from what it has evidence for', { skip: skip || false }, async () => {
+    const page = await browser.newPage({ viewport: VIEWPORTS[2] });
+    try {
+      const errors = await open(page, 'ai');
+      await page.getByRole('tab', { name: /^matrix$/i }).click();
+      await page.getByText('What Meridian can do, and how it knows').waitFor({ timeout: 15_000 });
+
+      const body = await page.locator('body').innerText();
+      // Both halves have to be on the screen, and labelled. A matrix that shows
+      // only one of them is the confusion it was built to end.
+      assert.match(body, /Can run/, 'the adapter ceiling must be shown');
+      assert.match(body, /Evidence across its models/, 'and the evidence, separately');
+      assert.deepEqual(errors, [], `the matrix logged errors:\n${errors.join('\n')}`);
+    } finally {
+      await page.close();
+    }
+  });
+
   it('shows live data from the gateway rather than an empty shell', { skip: skip || false }, async () => {
     const page = await browser.newPage({ viewport: VIEWPORTS[2] });
     try {
