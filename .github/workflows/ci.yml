@@ -1,0 +1,108 @@
+name: CI
+
+# The existing suites, on every push. Nothing here is Windows-specific; the
+# Windows build has its own workflow because it needs a Windows runner and
+# produces an artefact rather than a verdict.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned to the runtime the desktop build ships, so what CI proves and what
+  # users run are the same Node. apps/desktop/runtime.json is the source of
+  # truth; this must match its `version`.
+  NODE_VERSION: '22.23.2'
+
+jobs:
+  verify:
+    name: Typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # Matches `packageManager` in package.json. A different pnpm resolves
+          # a different tree, and the whole point of a lockfile is that it does
+          # not.
+          version: 10.33.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Confirm the pinned runtime matches this job
+        run: |
+          PINNED=$(node -p "require('./apps/desktop/runtime.json').version")
+          ACTUAL=$(node -p "process.versions.node")
+          echo "runtime.json pins $PINNED; this job runs $ACTUAL"
+          if [ "$PINNED" != "$ACTUAL" ]; then
+            echo "::error::The Node this job runs must match the runtime the desktop build ships."
+            echo "better-sqlite3 is a native addon and its ABI is decided here; a mismatch fails at require() on a user's machine."
+            exit 1
+          fi
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      # Chromium for the UI suite. Without it those tests skip, and a silently
+      # skipped UI suite reads exactly like a passing one.
+      - name: Install Chromium for the browser suite
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Test
+        run: pnpm test
+
+      # The payload and its verification run on Linux too. The Windows job
+      # proves the Windows payload; this proves the packaging logic itself, on
+      # every push, so a break is found before release day.
+      - name: Assemble and boot the Linux payload
+        run: |
+          node scripts/fetch-node-runtime.mjs --platform linux --arch x64
+          node scripts/package-desktop.mjs --platform linux --arch x64
+          node scripts/verify-desktop-payload.mjs
+
+  docker:
+    name: Docker image builds and serves
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -f docker/Dockerfile -t meridian:ci .
+
+      - name: Start it and wait for health
+        run: |
+          docker run -d --name meridian-ci -p 4639:4639 \
+            -e MERIDIAN_MASTER_KEY=ci-only-not-a-real-key \
+            -e MERIDIAN_LOG_LEVEL=error \
+            meridian:ci
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:4639/api/system/health > /dev/null; then
+              echo "healthy after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::The container never became healthy."
+          docker logs meridian-ci
+          exit 1
+
+      - name: Stop
+        if: always()
+        run: docker rm -f meridian-ci || true

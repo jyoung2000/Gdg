@@ -150,10 +150,48 @@ for (const mod of RUNTIME_MODULES) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Describe what was built                                             */
+/* Refuse a payload that cannot run                                    */
 /* ------------------------------------------------------------------ */
 
 const nativePath = join(outDir, 'server/node_modules/better-sqlite3', RUNTIME_MODULES[0].native);
+
+/**
+ * A native addon built for the wrong operating system.
+ *
+ * The most likely packaging mistake there is, and the least visible: cross-
+ * building a Windows payload on Linux copies the Linux `.node`, which looks
+ * entirely correct on disk and fails at `require` on a user's machine with an
+ * error most people would read as a corrupt install.
+ *
+ * The magic bytes settle it without running anything. Failing here rather than
+ * in the verifier is deliberate — a bad artefact that exists is a bad artefact
+ * somebody can ship by skipping a step.
+ */
+function binaryFormat(path) {
+  const head = readFileSync(path).subarray(0, 4);
+  if (head[0] === 0x4d && head[1] === 0x5a) return 'pe';
+  if (head[0] === 0x7f && head.subarray(1, 4).toString() === 'ELF') return 'elf';
+  if (head.readUInt32LE(0) === 0xfeedfacf || head.readUInt32BE(0) === 0xcafebabe) return 'macho';
+  return 'unknown';
+}
+
+const expectedFormat = platform === 'win32' ? 'pe' : platform === 'darwin' ? 'macho' : 'elf';
+const actualFormat = binaryFormat(nativePath);
+if (actualFormat !== expectedFormat) {
+  rmSync(outDir, { recursive: true, force: true });
+  fail(
+    `better-sqlite3's native addon is a ${actualFormat} binary, and a ${platform} payload needs ${expectedFormat}.\n\n` +
+      `The installed node_modules were built for ${process.platform}, so this payload would fail at require() on a\n` +
+      `user's machine — after installing cleanly, which is the worst way to find out.\n\n` +
+      `A ${platform} payload has to be assembled on ${platform}, where \`pnpm install\` fetches or builds the right\n` +
+      `binary. That is what the Windows CI job is for. The output directory has been removed rather than left\n` +
+      `as something that looks finished.`,
+  );
+}
+/* ------------------------------------------------------------------ */
+/* Describe what was built                                             */
+/* ------------------------------------------------------------------ */
+
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 
 const payload = {
