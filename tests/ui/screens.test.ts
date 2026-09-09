@@ -45,9 +45,24 @@ const SCREENS = [
  * from the route that reaches them; the test navigates the way a user does, so
  * it has to know the visible name.
  */
+/**
+ * Where the sidebar label differs from the screen id.
+ *
+ * The navigation was reduced from twenty-two permanent destinations to six,
+ * with the rest behind one disclosure. Nothing was deleted — this map and the
+ * disclosure click below are what prove it: every screen in SCREENS is still
+ * reachable by clicking through the real navigation, which is the only claim
+ * that matters after an information-architecture change.
+ */
 const NAV_LABEL: Partial<Record<(typeof SCREENS)[number], string>> = {
   versioncontrol: 'Version Control',
+  chat: 'Chats',
+  usage: 'Activity',
+  providers: 'Connections',
 };
+
+/** The six that remain permanently visible. Everything else is under "More". */
+const PRIMARY_NAV = new Set(['chat', 'projects', 'models', 'usage', 'settings']);
 
 const VIEWPORTS = [
   { name: 'phone', width: 390, height: 844 },
@@ -181,11 +196,23 @@ describe('Web client', async () => {
     page.on('pageerror', (e) => errors.push(String(e)));
 
     await page.goto(base, { waitUntil: 'networkidle' });
-    if (screen !== 'home') {
+    // Chat is the default landing screen now, not Home.
+    if (screen !== 'chat') {
       // Through the real navigation rather than a URL, because that is the path
       // a user takes and the one that can leave a screen half-mounted.
       const toggle = page.locator('.app__nav-toggle');
       if (await toggle.isVisible().catch(() => false)) await toggle.click();
+      // Anything outside the six primary destinations lives behind the "More"
+      // disclosure, so open it the way a person would before looking for the
+      // label. A screen that cannot be reached this way is orphaned, whatever
+      // its route still resolves to.
+      if (!PRIMARY_NAV.has(screen)) {
+        const more = page.getByRole('button', { name: /^(Everything else|Hide advanced)$/i }).first();
+        if (await more.isVisible().catch(() => false)) {
+          const expanded = await more.getAttribute('aria-expanded');
+          if (expanded !== 'true') await more.click();
+        }
+      }
       const label = NAV_LABEL[screen as (typeof SCREENS)[number]] ?? screen;
       await page.getByRole('button', { name: new RegExp(`^${label}$`, 'i') }).first().click();
     }
@@ -196,7 +223,8 @@ describe('Web client', async () => {
   it('boots without a console error and applies its own policy', { skip: skip || false }, async () => {
     const page = await browser.newPage({ viewport: VIEWPORTS[2] });
     try {
-      const errors = await open(page, 'home');
+      // Chat is where a fresh load lands, so that is the first paint to check.
+      const errors = await open(page, 'chat');
       // A CSP that blocks the bundle shows up here and nowhere else.
       assert.deepEqual(errors, [], `the shell logged errors on first paint:\n${errors.join('\n')}`);
       const title = await page.title();

@@ -11,6 +11,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:desktop": "node scripts/build.mjs && node scripts/fetch-node-runtime.mjs && node scripts/package-desktop.mjs && node scripts/verify-desktop-payload.mjs",
+    "build:offline-ui": "node scripts/build-offline-ui.mjs",
     "build:windows": "node scripts/build.mjs && node scripts/fetch-node-runtime.mjs --platform win32 --arch x64 && node scripts/package-desktop.mjs --platform win32 --arch x64 && node scripts/verify-desktop-payload.mjs",
     "desktop:dev": "tauri dev --config apps/desktop/src-tauri/tauri.conf.json",
     "desktop:icon": "node scripts/make-desktop-icon.mjs",

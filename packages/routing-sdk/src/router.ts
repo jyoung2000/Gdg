@@ -189,6 +189,32 @@ export class Router {
       });
     }
 
+    // FREE_FIRST is an ordering, not a weighting.
+    //
+    // It was described as "exhausts free capacity before considering anything
+    // paid" and implemented as `free: 0.42` in the weight table — which means a
+    // sufficiently good paid model outranks a free one and the promise is
+    // quietly broken. A weight is a preference; "first" is a guarantee.
+    //
+    // So: if any free candidate survived the hard constraints, paid candidates
+    // are removed from consideration entirely. They stay in `rejected` with a
+    // reason, so the decision is explainable and so the operator can see that
+    // paid options existed and why they were not used.
+    //
+    // Hard constraints have already applied quota, rate-limit cooldown, health
+    // and credential availability, so "free candidate survived" genuinely means
+    // free capacity is available — not merely that a free model exists.
+    const freeFirst = effectiveMode === 'FREE_FIRST';
+    const freeEligible = freeFirst ? eligible.filter((m) => isFree(m.pricing)) : [];
+    const considered = freeFirst && freeEligible.length > 0 ? freeEligible : eligible;
+    if (freeFirst && freeEligible.length > 0) {
+      for (const m of eligible) {
+        if (!isFree(m.pricing)) {
+          rejected.push({ modelId: m.id, reason: 'FREE_FIRST: free capacity is still available' });
+        }
+      }
+    }
+
     const weights = this.weightsFor(effectiveMode);
     // Explicitly preferred candidates rank first, then by score within each
     // group. A preference is an instruction the operator typed, not a hint, so
@@ -197,7 +223,7 @@ export class Router {
     // someone asked for. Hard constraints have already removed anything
     // unusable, so this only reorders candidates that could all serve, and the
     // rest of the list stays behind it as the fallback chain.
-    const scored = eligible
+    const scored = considered
       .map((m) => this.score(m, req, weights, pool, prefs))
       .sort((a, b) => Number(b.preferred ?? false) - Number(a.preferred ?? false) || b.score - a.score);
 

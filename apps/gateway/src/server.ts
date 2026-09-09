@@ -22,6 +22,7 @@ import { registerDockerRoutes } from './routes/docker.js';
 import { registerGitRoutes } from './routes/git.js';
 import { registerControlPlaneRoutes } from './routes/control-plane.js';
 import { registerDiscoveryRoutes } from './routes/discovery.js';
+import { registerDiagnosticsRoutes } from './routes/diagnostics.js';
 import { registerComputerRoutes } from './routes/computer.js';
 
 declare module 'fastify' {
@@ -337,6 +338,7 @@ export async function createServer(app: App): Promise<FastifyInstance> {
   await registerGitRoutes(server, app);
   await registerControlPlaneRoutes(server, app);
   await registerDiscoveryRoutes(server, app);
+  await registerDiagnosticsRoutes(server, app);
   await registerComputerRoutes(server, app);
 
   /* ---- Static assets and the web client --------------------------- */

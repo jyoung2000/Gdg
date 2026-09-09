@@ -21,6 +21,8 @@ import {
   IconBolt,
   IconBookmark,
   IconBox,
+  IconChevronDown,
+  IconChevronRight,
   IconCommand,
   IconCompass,
   IconCpu,
@@ -36,6 +38,7 @@ import {
   IconMessageSquare,
   IconPanelBottom,
   IconPanelRight,
+  IconPlus,
   IconRefresh,
   IconRobot,
   IconServer,
@@ -85,28 +88,38 @@ function Mark({ className }: { className?: string }): React.JSX.Element {
   );
 }
 
-const NAV: { id: ScreenId; label: string; icon: React.JSX.Element; section: 'work' | 'infrastructure' }[] = [
-  { id: 'home', label: 'Home', icon: <IconHome />, section: 'work' },
-  { id: 'workspace', label: 'Workspace', icon: <IconFolder />, section: 'work' },
-  { id: 'chat', label: 'Chat', icon: <IconMessageSquare />, section: 'work' },
-  { id: 'projects', label: 'Projects', icon: <IconFolderOpen />, section: 'work' },
-  { id: 'director', label: 'Director', icon: <IconSparkle />, section: 'work' },
-  { id: 'tasks', label: 'Tasks', icon: <IconActivity />, section: 'work' },
-  { id: 'agents', label: 'Agents', icon: <IconRobot />, section: 'work' },
-  { id: 'browser', label: 'Browser', icon: <IconGlobe />, section: 'work' },
-  { id: 'computer', label: 'Computer', icon: <IconMonitor />, section: 'work' },
-  { id: 'versioncontrol', label: 'Version Control', icon: <IconGitBranch />, section: 'work' },
-  { id: 'generations', label: 'Generations', icon: <IconImage />, section: 'work' },
-  { id: 'discover', label: 'Discover', icon: <IconCompass />, section: 'infrastructure' },
-  { id: 'ai', label: 'AI', icon: <IconCpu />, section: 'infrastructure' },
-  { id: 'skills', label: 'Skills', icon: <IconBookmark />, section: 'infrastructure' },
-  { id: 'models', label: 'Models', icon: <IconSliders />, section: 'infrastructure' },
-  { id: 'providers', label: 'Providers', icon: <IconServer />, section: 'infrastructure' },
-  { id: 'pools', label: 'Pools', icon: <IconLayers />, section: 'infrastructure' },
-  { id: 'mcp', label: 'MCP', icon: <IconBolt />, section: 'infrastructure' },
-  { id: 'devops', label: 'DevOps', icon: <IconBox />, section: 'infrastructure' },
-  { id: 'usage', label: 'Usage', icon: <IconBarChart />, section: 'infrastructure' },
-  { id: 'settings', label: 'Settings', icon: <IconSettings />, section: 'infrastructure' },
+const NAV: { id: ScreenId; label: string; icon: React.JSX.Element; section: 'primary' | 'more' }[] = [
+  /* The six that answer "what do I want to do right now". */
+  { id: 'chat', label: 'Chats', icon: <IconMessageSquare />, section: 'primary' },
+  { id: 'projects', label: 'Projects', icon: <IconFolderOpen />, section: 'primary' },
+  { id: 'models', label: 'Models', icon: <IconSliders />, section: 'primary' },
+  { id: 'usage', label: 'Activity', icon: <IconBarChart />, section: 'primary' },
+  { id: 'settings', label: 'Settings', icon: <IconSettings />, section: 'primary' },
+
+  /* Everything else, one disclosure away.
+   *
+   * Not removed and not demoted in capability — only in default visibility.
+   * Twenty-two permanent destinations is a filing cabinet, and it made the
+   * first screen read as an administration console rather than as somewhere to
+   * ask for something. Each of these is still a real screen, still routable,
+   * still reachable from the command palette, and still linked from the
+   * surface it belongs to. */
+  { id: 'home', label: 'Home', icon: <IconHome />, section: 'more' },
+  { id: 'workspace', label: 'Workspace', icon: <IconFolder />, section: 'more' },
+  { id: 'director', label: 'Director', icon: <IconSparkle />, section: 'more' },
+  { id: 'tasks', label: 'Tasks', icon: <IconActivity />, section: 'more' },
+  { id: 'agents', label: 'Agents', icon: <IconRobot />, section: 'more' },
+  { id: 'browser', label: 'Browser', icon: <IconGlobe />, section: 'more' },
+  { id: 'computer', label: 'Computer', icon: <IconMonitor />, section: 'more' },
+  { id: 'versioncontrol', label: 'Version Control', icon: <IconGitBranch />, section: 'more' },
+  { id: 'generations', label: 'Generations', icon: <IconImage />, section: 'more' },
+  { id: 'discover', label: 'Discover', icon: <IconCompass />, section: 'more' },
+  { id: 'ai', label: 'AI', icon: <IconCpu />, section: 'more' },
+  { id: 'skills', label: 'Skills', icon: <IconBookmark />, section: 'more' },
+  { id: 'providers', label: 'Connections', icon: <IconServer />, section: 'more' },
+  { id: 'pools', label: 'Pools', icon: <IconLayers />, section: 'more' },
+  { id: 'mcp', label: 'MCP', icon: <IconBolt />, section: 'more' },
+  { id: 'devops', label: 'DevOps', icon: <IconBox />, section: 'more' },
 ];
 
 const SCREENS: Record<ScreenId, () => React.JSX.Element> = {
@@ -181,6 +194,8 @@ export function App(): React.JSX.Element {
 function Shell(): React.JSX.Element {
   const screen = useStore((s) => s.screen);
   const setScreen = useStore((s) => s.setScreen);
+  const newChat = useStore((s) => s.newChat);
+  const chatEpoch = useStore((s) => s.chatEpoch);
   const layout = useStore((s) => s.layout);
   const patchLayout = useStore((s) => s.patchLayout);
   const info = useStore((s) => s.info);
@@ -337,10 +352,24 @@ function Shell(): React.JSX.Element {
   }, [layout, patchLayout]);
 
   const Screen = SCREENS[screen];
-  const sections: { key: 'work' | 'infrastructure'; title: string }[] = [
-    { key: 'work', title: 'Workspace' },
-    { key: 'infrastructure', title: 'Infrastructure' },
-  ];
+  /**
+   * Six destinations, then everything else behind one disclosure.
+   *
+   * The rule this follows: the sidebar answers "what do I want to do", not
+   * "what subsystems exist". Everything under More is still a first-class
+   * screen — it is one click and one keystroke away, and the palette reaches it
+   * by name — but it is no longer competing for attention with the thing the
+   * user actually came to do.
+   *
+   * More opens automatically when the current screen lives inside it, so the
+   * navigation never hides where you are.
+   */
+  const moreIds = NAV.filter((n) => n.section === 'more').map((n) => n.id);
+  const inMore = moreIds.includes(screen);
+  const [moreOpen, setMoreOpen] = useState(false);
+  useEffect(() => {
+    if (inMore) setMoreOpen(true);
+  }, [inMore]);
 
   return (
     <div className="app">
@@ -412,9 +441,41 @@ function Shell(): React.JSX.Element {
           className={`app__sidebar${mobileNavOpen ? ' app__sidebar--open' : ''}`}
           onToggle={() => patchLayout({ sidebarCollapsed: !layout.sidebarCollapsed })}
         >
-          {sections.map((section) => (
-            <SidebarSection key={section.key} title={section.title}>
-              {NAV.filter((n) => n.section === section.key).map((n) => (
+          <SidebarSection title="Meridian">
+            <SidebarItem
+              icon={<IconPlus />}
+              label="New chat"
+              active={false}
+              onClick={() => {
+                newChat();
+                setMobileNavOpen(false);
+              }}
+            />
+            {NAV.filter((n) => n.section === 'primary').map((n) => (
+              <SidebarItem
+                key={n.id}
+                icon={n.icon}
+                label={n.label}
+                active={screen === n.id}
+                onClick={() => {
+                  setScreen(n.id);
+                  setMobileNavOpen(false);
+                }}
+                badge={n.id === 'usage' && runningTasks.length ? String(runningTasks.length) : undefined}
+              />
+            ))}
+          </SidebarSection>
+
+          <SidebarSection title="More">
+            <SidebarItem
+              icon={moreOpen ? <IconChevronDown /> : <IconChevronRight />}
+              label={moreOpen ? 'Hide advanced' : 'Everything else'}
+              active={false}
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen((v) => !v)}
+            />
+            {moreOpen &&
+              NAV.filter((n) => n.section === 'more').map((n) => (
                 <SidebarItem
                   key={n.id}
                   icon={n.icon}
@@ -427,14 +488,13 @@ function Shell(): React.JSX.Element {
                   badge={n.id === 'tasks' && runningTasks.length ? String(runningTasks.length) : undefined}
                 />
               ))}
-            </SidebarSection>
-          ))}
+          </SidebarSection>
         </Sidebar>
 
         <main className="app__main" id="main" ref={mainRef} tabIndex={-1}>
           <div className="app__stage">
             <div className="app__content">
-              <Screen />
+              <Screen key={screen === 'chat' ? `chat-${chatEpoch}` : screen} />
             </div>
             {layout.inspectorOpen && !narrow && <Inspector />}
           </div>

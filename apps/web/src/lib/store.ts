@@ -53,7 +53,15 @@ export interface LayoutState {
 
 const DEFAULT_LAYOUT: LayoutState = {
   sidebarCollapsed: false,
-  inspectorOpen: true,
+  // Closed by default.
+  //
+  // A permanently reserved right-hand column spent a third of the width on
+  // metadata about a request that has not been made yet, and it was the single
+  // biggest reason the first screen read as an operations console. Nothing was
+  // removed: the panel is one keystroke and one toolbar button away, it keeps
+  // its state, and everything it shows is still shown — when there is something
+  // to show it about.
+  inspectorOpen: false,
   drawerOpen: false,
   columns: [0.2, 0.55, 0.25],
   drawerTab: 'terminal',
@@ -119,6 +127,17 @@ interface State {
   /* Actions */
   boot: () => Promise<void>;
   setScreen: (screen: ScreenId) => void;
+  /**
+   * Bumped to start a fresh conversation.
+   *
+   * A conversation lives in ChatScreen's own state, so "New chat" is a remount
+   * rather than a store mutation: App keys the chat screen on this number, and
+   * incrementing it gives a genuinely empty conversation. A button labelled
+   * "New chat" that navigated to a screen still holding the last exchange would
+   * be a lie told every time someone pressed it.
+   */
+  chatEpoch: number;
+  newChat: () => void;
   setPaletteOpen: (open: boolean) => void;
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
   setReduceMotion: (value: boolean) => void;
@@ -209,7 +228,10 @@ export const useStore = create<State>((set, get) => ({
   reduceMotion: readStored('meridian.reduceMotion', 'false') === 'true',
   layout: loadLayout(),
 
-  screen: 'home',
+  // Chat, not Home. The first thing Meridian should ask is what you need, not
+  // present a directory of its own subsystems.
+  screen: 'chat',
+  chatEpoch: 0,
   paletteOpen: false,
 
   workspaces: [],
@@ -282,6 +304,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setScreen: (screen) => set({ screen }),
+  newChat: () => set((state) => ({ chatEpoch: state.chatEpoch + 1, screen: 'chat' })),
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
 
   /**

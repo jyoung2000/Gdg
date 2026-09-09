@@ -362,6 +362,7 @@ What has and has not been verified is written down rather than implied — see
 | `docs/MODEL_INTELLIGENCE.md` | Free-access taxonomy, catalog sync, routes, the free radar |
 | `docs/DISCOVERY.md` | The free-inference discovery engine: sources, merging, ranking, and what it will never do |
 | `docs/MERIDIAN_DISCOVERY_IMPLEMENTATION.md` | What the discovery work built, what was proved against live upstreams, and what was not |
+| `docs/UI_ARCHITECTURE.md` | The navigation: what moved, where everything went, and what deliberately did not change |
 | `docs/VERIFICATION.md` | Capability evidence, probes, and what a probe may conclude |
 | `docs/PRICING_ENGINE.md` | Cost classes, unknown prices, and how a budget binds |
 | `docs/PRICING_AND_QUOTA.md` | The rate card: where the numbers come from and how they are matched |

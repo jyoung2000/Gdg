@@ -34,6 +34,7 @@ export function ModelsScreen(): React.JSX.Element {
   const models = useStore((s) => s.models);
   const refreshModels = useStore((s) => s.refreshModels);
   const toast = useStore((s) => s.toast);
+  const setScreen = useStore((s) => s.setScreen);
 
   const [query, setQuery] = useState('');
   const [freeOnly, setFreeOnly] = useState(false);
@@ -163,6 +164,30 @@ export function ModelsScreen(): React.JSX.Element {
         </>
       }
     >
+      {/*
+        Models is the answer to "what AI can Meridian use", and that question
+        has three halves that used to be three unrelated destinations in a
+        twenty-two item sidebar: the catalogue, the accounts that reach it, and
+        the search for more. They are one place now.
+
+        Links rather than embedded tabs on purpose: Connections and Discover are
+        substantial screens with their own state, their own deep links and their
+        own tests, and re-parenting them into this component would have meant
+        rewriting three working screens to change where they are reached from.
+        The navigation changed; the screens did not.
+      */}
+      <Stack direction="row" gap={2} align="center" wrap>
+        <Button variant="tertiary" size="sm" onClick={() => setScreen('providers')}>
+          Connections
+        </Button>
+        <Button variant="tertiary" size="sm" onClick={() => setScreen('discover')}>
+          Discover free models
+        </Button>
+        <Button variant="tertiary" size="sm" onClick={() => setScreen('pools')}>
+          Pools
+        </Button>
+      </Stack>
+
       <Stack direction="row" gap={3} align="center" wrap>
         <SearchField
           value={query}
