@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { MeridianError, type Logger } from '@meridian/shared';
 
@@ -347,12 +347,71 @@ export class ProcessSandbox implements Sandbox {
 
   async exec(command: string, opts: ExecOptions): Promise<ExecResult> {
     this.logger.debug('sandbox exec', { sandbox: 'process', cwd: opts.cwd });
-    return runProcess('/bin/sh', ['-lc', command], {
+    const [program, args] = shellFor(command);
+    return runProcess(program, args, {
       ...opts,
       env: baseEnv(opts.env),
       timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT,
     });
   }
+}
+
+/**
+ * The shell that runs an agent's command, on this operating system.
+ *
+ * `/bin/sh` is not a path on Windows. Hardcoding it meant every command an
+ * agent ran — every build, every test, every `git commit`, every clone into a
+ * new workspace — failed with `spawn /bin/sh ENOENT` on a Windows desktop. The
+ * gateway still started, so it presented as "all the agent features are
+ * broken" with no error at startup to explain why.
+ *
+ * The Windows choice is a real shell and not `cmd.exe`. Meridian's own tooling
+ * composes POSIX-shaped commands — `git add -A && git commit -m '...'`, with
+ * single-quoted arguments — and `cmd.exe` understands neither the quoting nor,
+ * reliably, the `&&`. Git for Windows ships `bash.exe` and is present on any
+ * machine that has git at all, which is every machine doing the work these
+ * commands describe. `cmd.exe` is the last resort so that a machine without it
+ * degrades to something rather than nothing.
+ */
+export function shellFor(command: string, platform: NodeJS.Platform = process.platform): [string, string[]] {
+  if (platform !== 'win32') return ['/bin/sh', ['-lc', command]];
+
+  const bash = findWindowsBash();
+  if (bash) return [bash, ['-lc', command]];
+  // No POSIX shell. The command will probably fail on its quoting, but failing
+  // with the command's own error is more useful than failing to start a shell.
+  return [process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', command]];
+}
+
+/**
+ * Find Git for Windows' bash, without shelling out to look for it.
+ *
+ * The standard install locations plus PATH. Deliberately not `where.exe`: this
+ * runs on the path that executes agent commands, and spawning a process to
+ * decide how to spawn a process is a failure mode waiting for a machine with an
+ * unusual PATH.
+ */
+function findWindowsBash(): string | null {
+  const candidates: string[] = [];
+  for (const key of ['ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'LOCALAPPDATA']) {
+    const root = process.env[key];
+    if (root) {
+      candidates.push(join(root, 'Git', 'bin', 'bash.exe'));
+      candidates.push(join(root, 'Git', 'usr', 'bin', 'bash.exe'));
+      candidates.push(join(root, 'Programs', 'Git', 'bin', 'bash.exe'));
+    }
+  }
+  for (const dir of (process.env.PATH ?? '').split(';')) {
+    if (dir.trim()) candidates.push(join(dir.trim(), 'bash.exe'));
+  }
+  for (const candidate of candidates) {
+    try {
+      if (existsSync(candidate)) return candidate;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 /** Refuses every command. Chosen when the operator wants no execution at all. */

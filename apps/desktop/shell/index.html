@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en" data-state="starting">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Meridian</title>
+    <style>
+      /*
+       * The shell page.
+       *
+       * This is what a person looks at before Meridian exists and after it has
+       * failed, which makes it the one screen that cannot depend on the server,
+       * the design system, or a framework. It is plain HTML with the product's
+       * own tokens copied in — a deliberate, small duplication, because the
+       * alternative is a diagnostics screen that goes blank exactly when it is
+       * needed.
+       */
+      :root {
+        --bg: #0b0f19;
+        --surface: #141a28;
+        --line: #232c40;
+        --text: #e8ecf5;
+        --muted: #99a3b8;
+        --accent: #5a8cff;
+        --danger: #ff6b6b;
+        --ok: #4ade80;
+        --radius: 12px;
+        color-scheme: dark;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #f6f7fb;
+          --surface: #ffffff;
+          --line: #e2e6ef;
+          --text: #12161f;
+          --muted: #5b6478;
+          --accent: #2f6bff;
+          color-scheme: light;
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: grid;
+        place-items: center;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      main { width: min(560px, calc(100vw - 48px)); text-align: center; }
+
+      .mark { width: 76px; height: 76px; margin: 0 auto 22px; display: block; }
+      /* The meridian turns while work is happening and stops when it is not,
+         so motion means something rather than being decoration. */
+      [data-state="starting"] .mark ellipse,
+      [data-state="starting-gateway"] .mark ellipse {
+        transform-origin: 50% 50%;
+        animation: sweep 2.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+      }
+      @keyframes sweep {
+        0% { transform: scaleX(1); }
+        50% { transform: scaleX(0.12); }
+        100% { transform: scaleX(1); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .mark ellipse { animation: none !important; }
+      }
+
+      h1 { font-size: 20px; font-weight: 600; margin: 0 0 6px; letter-spacing: -0.01em; }
+      .detail { color: var(--muted); margin: 0 0 24px; min-height: 44px; }
+
+      .actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-bottom: 22px; }
+      button {
+        font: inherit;
+        font-weight: 500;
+        padding: 9px 18px;
+        border-radius: 9px;
+        border: 1px solid var(--line);
+        background: var(--surface);
+        color: var(--text);
+        cursor: pointer;
+      }
+      button:hover { border-color: var(--accent); }
+      button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+      /* Everything below the fold is for the failure case only. */
+      [data-state]:not([data-state="gateway-unavailable"]) .on-failure { display: none; }
+      [data-state="gateway-unavailable"] .while-starting { display: none; }
+
+      .facts {
+        text-align: left;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 14px 16px;
+        margin-bottom: 14px;
+        font-size: 12.5px;
+      }
+      .facts dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
+      .facts dt { color: var(--muted); }
+      .facts dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+
+      details { text-align: left; }
+      summary { cursor: pointer; color: var(--muted); font-size: 12.5px; padding: 4px 0; }
+      pre {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 12px 14px;
+        margin: 8px 0 0;
+        max-height: 220px;
+        overflow: auto;
+        font: 11.5px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+        color: var(--muted);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      .note { color: var(--muted); font-size: 12px; margin: 16px 0 0; }
+      .badge {
+        display: inline-block;
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <svg class="mark" viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="50" r="34" fill="none" stroke="currentColor" stroke-width="3" opacity="0.35" />
+        <ellipse cx="50" cy="50" rx="15" ry="34" fill="none" stroke="var(--accent)" stroke-width="3" />
+      </svg>
+
+      <h1 id="headline">Starting Meridian</h1>
+      <p class="detail" id="detail">Getting the local gateway ready.</p>
+
+      <div class="actions on-failure">
+        <button class="primary" id="retry">Try again</button>
+        <button id="logs">Open logs</button>
+        <button id="data">Open data folder</button>
+      </div>
+
+      <div class="on-failure">
+        <div class="facts">
+          <dl>
+            <dt>Data folder</dt><dd id="fact-data">—</dd>
+            <dt>Log file</dt><dd id="fact-log">—</dd>
+            <dt>Credential key</dt><dd id="fact-key">—</dd>
+          </dl>
+        </div>
+        <details>
+          <summary>What the gateway said</summary>
+          <pre id="output">Nothing yet.</pre>
+        </details>
+        <p class="note">
+          Nothing has been lost. Your data folder is untouched, and Meridian will use it again as soon as it starts.
+        </p>
+      </div>
+
+      <p class="note while-starting" id="slow" hidden>
+        Still working. The first start applies the database schema and looks for local model servers, which can take a moment.
+      </p>
+    </main>
+
+    <script type="module">
+      /*
+       * The shell talks to the Rust side and to nothing else. There is no
+       * network here by design: this page has to work when the network half of
+       * the application is the thing that is broken.
+       */
+      const { invoke } = window.__TAURI__.core;
+      const { listen } = window.__TAURI__.event;
+
+      const el = (id) => document.getElementById(id);
+      const headlines = {
+        starting: 'Starting Meridian',
+        'starting-gateway': 'Starting Meridian',
+        'gateway-ready': 'Almost there',
+        ready: 'Meridian is running',
+        degraded: 'Meridian is running, with a problem',
+        'gateway-unavailable': "Meridian couldn't start its local gateway",
+        'shutting-down': 'Closing Meridian',
+      };
+
+      function render(status) {
+        document.documentElement.dataset.state = status.phase;
+        el('headline').textContent = headlines[status.phase] ?? 'Meridian';
+        el('detail').textContent = status.detail ?? '';
+        el('fact-data').textContent = status.dataDir || status.data_dir || '—';
+        el('fact-log').textContent = status.logPath || status.log_path || '—';
+        // Two different promises, so they are worded differently rather than
+        // both being called "encrypted".
+        const protection = status.keyProtection || status.key_protection;
+        el('fact-key').textContent =
+          protection === 'windows-dpapi'
+            ? 'Protected by Windows, for your account only'
+            : protection === 'file-permissions'
+              ? 'A file only your account can read'
+              : 'Unavailable';
+        const recent = status.recent ?? [];
+        el('output').textContent = recent.length ? recent.join('\n') : 'The gateway produced no output.';
+        el('output').scrollTop = el('output').scrollHeight;
+      }
+
+      el('retry').addEventListener('click', () => {
+        el('headline').textContent = 'Starting Meridian';
+        el('detail').textContent = 'Trying again.';
+        document.documentElement.dataset.state = 'starting-gateway';
+        invoke('retry');
+      });
+      el('logs').addEventListener('click', () => invoke('open_logs'));
+      el('data').addEventListener('click', () => invoke('open_data_dir'));
+
+      await listen('meridian://status', (event) => render(event.payload));
+      render(await invoke('status'));
+
+      // If the first start is taking a while, say so rather than letting the
+      // user assume it has hung. Silence for fifteen seconds reads as a crash.
+      setTimeout(() => {
+        const phase = document.documentElement.dataset.state;
+        if (phase === 'starting' || phase === 'starting-gateway') el('slow').hidden = false;
+      }, 15000);
+    </script>
+  </body>
+</html>

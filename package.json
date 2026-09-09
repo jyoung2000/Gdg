@@ -2,7 +2,7 @@
   "name": "meridian",
   "version": "1.0.0",
   "private": true,
-  "description": "Meridian \u2014 Universal AI Gateway. One interface for every model, provider and modality.",
+  "description": "Meridian — Universal AI Gateway. One interface for every model, provider and modality.",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -30,6 +30,7 @@
     "verify:providers": "node dist/cli/uag.js verify"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.5",
     "@types/react": "^19.0.7",

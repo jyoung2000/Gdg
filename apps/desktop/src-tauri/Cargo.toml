@@ -1,0 +1,48 @@
+[package]
+name = "meridian-desktop"
+version = "1.0.0"
+description = "Meridian — Universal AI Gateway"
+authors = ["Meridian"]
+edition = "2021"
+rust-version = "1.77"
+publish = false
+
+# The binary the installer ships. Named for the product, because this is the
+# name a person sees in Task Manager when they go looking for what is running.
+[[bin]]
+name = "meridian"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `tray-icon` is not optional for this product: the gateway keeps serving after
+# the window closes, so there has to be somewhere the user can see that and stop
+# it. An app with a hidden background process and no affordance to reach it is
+# the thing nobody should ship.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+# DPAPI, and only DPAPI. The master key that decrypts every stored provider
+# credential is wrapped with `CryptProtectData` so the database file alone is
+# not enough to read them — copying it to another machine or another user
+# account yields ciphertext.
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security_Cryptography",
+  "Win32_System_Memory",
+] }
+
+[profile.release]
+# A desktop application ships once and runs many times; the extra link time
+# buys a smaller binary and a faster start for everyone who installs it.
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

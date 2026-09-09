@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The smallest set of permissions the shell needs. Meridian's own UI is served by the gateway over loopback and uses no Tauri APIs at all; only the local splash and diagnostics page calls into the shell, and it only needs to ask what state the app is in and to open a folder or a link.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:allow-listen",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus",
+    "opener:default"
+  ]
+}

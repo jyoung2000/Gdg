@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import fastifyCors from '@fastify/cors';
@@ -58,8 +59,22 @@ function inlineScriptHashes(webRoot: string | null): string[] {
 
 /** Locate the built web client, whether running from source or a bundle. */
 function findWebRoot(configured: string | null): string | null {
+  // Bundle-relative first, cwd second. `migrationsDir()` already learned this
+  // lesson: a process launched from a shortcut has a working directory nobody
+  // chose — `%USERPROFILE%`, or `C:\\Windows\\System32` — and every cwd-relative
+  // candidate misses. The gateway then boots API-only and the application looks
+  // completely broken, with the only clue in a log the user cannot see.
+  const here = dirname(fileURLToPath(import.meta.url));
   const candidates = [
     configured,
+    // Beside a packaged bundle: server/gateway/main.js next to server/web.
+    resolve(here, '../web'),
+    // From dist/gateway in a checkout.
+    resolve(here, '../web'),
+    resolve(here, '../../dist/web'),
+    // From apps/gateway/src when running the sources.
+    resolve(here, '../../../dist/web'),
+    resolve(here, '../../../apps/web/dist'),
     resolve(process.cwd(), 'apps/web/dist'),
     resolve(process.cwd(), 'dist/web'),
     resolve(process.cwd(), 'web'),

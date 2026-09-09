@@ -1,0 +1,9 @@
+{
+  "name": "@meridian/desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Meridian desktop shell — owns the local gateway's lifecycle and gives it a window",
+  "scripts": {
+    "tauri": "tauri"
+  }
+}
