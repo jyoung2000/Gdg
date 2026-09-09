@@ -130,8 +130,31 @@ export async function createServer(app: App): Promise<FastifyInstance> {
   /* ---- Rate limiting -------------------------------------------- */
 
   const buckets = new Map<string, { count: number; resetAt: number }>();
+  /**
+   * What the limiter counts.
+   *
+   * It used to count `/v1` and `/anthropic` and nothing else, which left every
+   * other route that starts a provider call unmetered: agent tasks, media
+   * generation, benchmarks and comparisons, research, verification probes, the
+   * computer agent. A limit that covers two of the ways to spend money is a
+   * limit in name.
+   *
+   * The line is drawn by method rather than by a list of paths, because a list
+   * of paths goes stale the next time a route is added and nobody notices
+   * until a bill arrives. Reading costs nothing and the UI does a great deal
+   * of it, so `GET` and `HEAD` are free; everything that changes state or
+   * starts work is counted, along with the two inference dialects whose
+   * requests are POSTs anyway.
+   */
+  const metered = (req: { method: string; url: string }): boolean => {
+    const path = req.url.split('?')[0];
+    if (path.startsWith('/v1') || path.startsWith('/anthropic')) return true;
+    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return false;
+    return path.startsWith('/api/');
+  };
+
   server.addHook('onRequest', async (req, reply) => {
-    if (!req.url.startsWith('/v1') && !req.url.startsWith('/anthropic')) return;
+    if (!metered(req)) return;
     const key = clientKey(req);
     const now = Date.now();
     const bucket = buckets.get(key);

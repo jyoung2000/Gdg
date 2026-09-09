@@ -5,6 +5,7 @@ import {
   REASONING_EFFORTS,
   isFree,
   isUnknownMeridianAlias,
+  redact,
   resolveAlias,
   type AIRequest,
   type ChatMessage,
@@ -432,12 +433,20 @@ async function streamChat(
           send({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: chunk.finishReason }] });
           break;
         case 'error':
-          send({ error: { code: chunk.code, message: chunk.error } });
+          // The same rule as the non-streaming handler: a provider's message
+          // can carry a key the caller pasted into a field, so it is scrubbed
+          // before it goes back out. A 200 with an error frame inside is still
+          // a response to a client.
+          send({ error: { code: chunk.code, message: redact(chunk.error) } });
           break;
       }
     }
   } catch (e) {
-    send({ error: { code: 'internal', message: e instanceof Error ? e.message : String(e) } });
+    // An unexpected throw here is an internal message with paths and stack
+    // detail in it. Clients get the stable sentence and a request id to quote,
+    // exactly as they do outside a stream.
+    app.logger.error('stream failed', { requestId, detail: redact(e instanceof Error ? e.message : String(e)) });
+    send({ error: { code: 'internal', message: `Internal error. Request id ${requestId}` } });
   } finally {
     reply.raw.write('data: [DONE]\n\n');
     reply.raw.end();

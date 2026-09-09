@@ -416,7 +416,9 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
       details: { checkpointId, restored: result.restored.length, removed: result.removed.length, droppedCheckpoints: dropped },
       ip: req.ip,
     });
-    app.events.publish({ type: 'task', event: { type: 'diff', changes: ws.pendingChanges() } });
+    // A diff is the contents of one person's workspace, so it goes to the
+    // task's owner rather than to every connected client.
+    app.events.publish({ type: 'task', event: { type: 'diff', changes: ws.pendingChanges() } }, { userId: task.userId });
 
     return { ...result, checkpoint: { id: record.snapshot.id, label: record.snapshot.label, at: record.snapshot.at }, droppedCheckpoints: dropped };
   });

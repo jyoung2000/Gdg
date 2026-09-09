@@ -30,6 +30,13 @@ export async function registerBrowserRoutes(server: FastifyInstance, app: App): 
       idleTimeoutMs?: number;
       policy?: Partial<DomainPolicy>;
     };
+    // Naming a private host in `allowPrivate` is how a session is permitted to
+    // reach 127.0.0.1, an RFC1918 address or a cloud metadata endpoint. That
+    // is a decision about the machine Meridian runs on, not about one task, so
+    // it belongs to whoever administers the instance — otherwise any caller
+    // who can open a browser session can read the operator's internal
+    // services through it.
+    if (body.policy?.allowPrivate?.length) requireAdmin(req);
     const info = await browser.createSession(body);
     reply.code(201);
     return { session: info };

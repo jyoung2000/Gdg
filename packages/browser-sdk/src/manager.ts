@@ -276,10 +276,16 @@ export class BrowserManager {
     }
     const requested = input.engine ?? 'auto';
     const profileName = input.profile ?? 'default';
+    // A per-session policy narrows what the operator allowed; it does not
+    // widen it. `allow` is the caller's own business — an empty list already
+    // means "anywhere not denied" — but a deny list the caller could replace
+    // is not a deny list, and a private-network opt-in the caller could write
+    // for themselves is not a guard. Both are unions with the operator's, so
+    // a session can only ever be more restricted than the instance is.
     const policy: DomainPolicy = {
       allow: input.policy?.allow ?? this.defaultPolicy.allow,
-      deny: input.policy?.deny ?? this.defaultPolicy.deny,
-      allowPrivate: input.policy?.allowPrivate ?? this.defaultPolicy.allowPrivate,
+      deny: [...new Set([...this.defaultPolicy.deny, ...(input.policy?.deny ?? [])])],
+      allowPrivate: [...new Set([...this.defaultPolicy.allowPrivate, ...(input.policy?.allowPrivate ?? [])])],
     };
 
     const managed: ManagedSession = {

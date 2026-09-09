@@ -69,6 +69,11 @@ export function createControlPlane(opts: {
       // wiring reaches a project under test.
       allowPrivate: (process.env.MERIDIAN_BROWSER_ALLOW_PRIVATE ?? 'localhost,127.0.0.1').split(',').map((s) => s.trim()).filter(Boolean),
     },
+    // Instance-wide on purpose, and consistent with `GET /api/browser/sessions`,
+    // which lists every session to any caller holding the `workspaces` scope: a
+    // browser session is a resource of the machine Meridian runs on, not of the
+    // person who opened it. If sessions ever become per-user, this audience and
+    // that listing have to change together.
     onEvent: (sessionId, entry) => events.publish({ type: 'browser', sessionId, entry }),
   });
 

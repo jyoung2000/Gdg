@@ -286,4 +286,78 @@ describe('Security: multi-user isolation', () => {
     });
     assert.equal(inference.status, 200, 'a key with the inference scope must still be able to infer');
   });
+
+  it('does not stream one member\'s work to another member', async () => {
+    // `/api/events` is a live feed of task prompts, model output and spend. It
+    // used to be one stream for the whole instance, so any key could watch
+    // everybody's work go past.
+    const listen = async (key: string, ms: number): Promise<string> => {
+      const ac = new AbortController();
+      const res = await call('/api/events', key, { signal: ac.signal });
+      assert.equal(res.status, 200);
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let text = '';
+      const deadline = Date.now() + ms;
+      try {
+        while (Date.now() < deadline) {
+          const next = await Promise.race([
+            reader.read(),
+            new Promise<{ done: true; value: undefined }>((r) => setTimeout(() => r({ done: true, value: undefined }), deadline - Date.now())),
+          ]);
+          if (next.done) break;
+          text += decoder.decode(next.value, { stream: true });
+        }
+      } finally {
+        ac.abort();
+      }
+      return text;
+    };
+
+    const marker = 'alice-private-prompt-marker-0001';
+    const bobStream = listen(bobKey, 1500);
+    const adminStream = listen(adminKey, 1500);
+    // Give both listeners a moment to attach before the work happens.
+    await new Promise((r) => setTimeout(r, 200));
+    await call('/v1/chat/completions', aliceKey, {
+      method: 'POST',
+      body: JSON.stringify({ model: 'auto', messages: [{ role: 'user', content: marker }] }),
+    });
+
+    const [bobSaw, adminSaw] = await Promise.all([bobStream, adminStream]);
+    assert.ok(!bobSaw.includes(aliceId), `Bob's event stream carried Alice's activity: ${bobSaw.slice(0, 300)}`);
+    // And the operator console still works, or the fix would have been to
+    // break the feature rather than to scope it.
+    assert.ok(adminSaw.includes(aliceId), 'an administrator stopped seeing instance activity');
+  });
+
+  it('treats benchmarking and comparing as the inference they are', async () => {
+    // Both routes send the caller's prompt to a provider and can spend the
+    // caller's money. A key issued only to read the catalogue was not issued
+    // to make calls against it.
+    const reader = app.store.createApiKey(aliceId, 'catalogue only', ['models']).key;
+
+    const benchmark = await call('/api/models/benchmark', reader, {
+      method: 'POST',
+      body: JSON.stringify({ modelId: 'local:sim-model' }),
+    });
+    assert.ok(benchmark.status >= 400, `benchmarking ran without the inference scope (${benchmark.status})`);
+
+    const compare = await call('/api/models/compare', reader, {
+      method: 'POST',
+      body: JSON.stringify({ models: ['local:sim-model'], prompt: 'hello' }),
+    });
+    assert.ok(compare.status >= 400, `comparing ran without the inference scope (${compare.status})`);
+  });
+
+  it('lets only an administrator open a browser session onto private addresses', async () => {
+    // `allowPrivate` is what permits a session to reach 127.0.0.1, an RFC1918
+    // address or a cloud metadata endpoint. Any member could set it for
+    // themselves, which made the SSRF guard opt-out by request body.
+    const res = await call('/api/browser/sessions', aliceKey, {
+      method: 'POST',
+      body: JSON.stringify({ policy: { allowPrivate: ['169.254.169.254'] } }),
+    });
+    assert.ok(res.status >= 400, `a member widened the SSRF guard (${res.status})`);
+  });
 });

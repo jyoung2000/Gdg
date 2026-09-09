@@ -553,6 +553,11 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
 
   /** Run the benchmark suite against a model and fold the result into its scores. */
   server.post<{ Body: { modelId?: string } }>('/api/models/benchmark', async (req) => {
+    // Benchmarking is inference: it sends prompts to a provider and can spend
+    // the caller's money. A key without the `inference` scope is a key its
+    // holder was not trusted to spend with, and reading a catalogue is not
+    // permission to make calls against it.
+    requireScope(req, 'inference');
     const modelId = req.body?.modelId ?? '';
     const model = app.models.get(modelId);
     if (!model) throw new MeridianError('model_unavailable', `No model "${modelId}"`);
@@ -631,6 +636,9 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
   server.post<{ Body: { models?: string[]; prompt?: string; taskType?: AIRequest['taskType']; maxTokens?: number } }>(
     '/api/models/compare',
     async (req) => {
+      // Same as `/api/models/benchmark`: this runs the prompt against every
+      // model named, which is inference and is billable.
+      requireScope(req, 'inference');
       const body = req.body ?? {};
       if (!body.models?.length || !body.prompt) throw new MeridianError('invalid_request', '"models" and "prompt" are required');
       if (body.models.length > 6) throw new MeridianError('invalid_request', 'Compare at most six models at a time');

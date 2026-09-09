@@ -385,7 +385,9 @@ export class App {
       logger,
       recordUsage: (row) => {
         store.recordUsage(row);
-        events.publish({ type: 'usage', record: row });
+        // A usage row names the model, the prompt size and the money spent on
+        // one person's request. It goes to that person and to an administrator.
+        events.publish({ type: 'usage', record: row }, { userId: row.userId });
         // Every completed call feeds the measurement pipeline, not just the
         // ones a user later rates. Latency percentiles, jitter and uptime are
         // only meaningful if they come from ordinary traffic — measuring the
@@ -421,10 +423,39 @@ export class App {
       executor,
       logger,
       persist: (job) => store.saveGenerationJob(job),
-      onUpdate: (job) => events.publish({ type: 'generation', job }),
+      onUpdate: (job) => events.publish({ type: 'generation', job }, { userId: job.userId }),
       storeAsset: createAssetStore(config.assetRoot),
     });
     for (const corrected of media.load(store.listGenerationJobs(200))) store.saveGenerationJob(corrected);
+
+    /**
+     * Whose task an event belongs to.
+     *
+     * A task event carries a person's prompt, the model's answer and the diff
+     * it produced. Only `task-update` names its owner outright; the rest name
+     * a step or nothing at all, so the owner is learned as the run goes and
+     * remembered. The map is bounded by the tasks a process has actually seen
+     * and each entry is a task id and a user id.
+     */
+    const ownerOfTask = new Map<string, string | null>();
+    const taskOfStep = new Map<string, string>();
+    const taskEventOwner = (event: TaskEvent): string | null => {
+      if (event.type === 'task-update') {
+        ownerOfTask.set(event.task.id, event.task.userId);
+        return event.task.userId;
+      }
+      if (event.type === 'step-update') {
+        taskOfStep.set(event.step.id, event.step.taskId);
+        return ownerOfTask.get(event.step.taskId) ?? store.getTask(event.step.taskId)?.userId ?? null;
+      }
+      if (event.type === 'agent') {
+        const taskId = taskOfStep.get(event.event.stepId);
+        return taskId ? (ownerOfTask.get(taskId) ?? null) : null;
+      }
+      // A bare diff names no task. It is the one shape that cannot be
+      // attributed, and the route that publishes it attributes it instead.
+      return null;
+    };
 
     const orchestrator = new Orchestrator({
       executor,
@@ -454,7 +485,7 @@ export class App {
       persistTask: (task) => store.saveTask(task),
       persistToolCall: (record) => store.saveToolCall(record),
       persistCheckpoint: (taskId, stepId, checkpoint) => store.saveCheckpoint(taskId, stepId, checkpoint),
-      onEvent: (event: TaskEvent) => events.publish({ type: 'task', event }),
+      onEvent: (event: TaskEvent) => events.publish({ type: 'task', event }, { userId: taskEventOwner(event) }),
     });
 
     const parallel = new ParallelRunner(orchestrator);
@@ -478,6 +509,11 @@ export class App {
     // The computer agent is constructed but idle: registering backends probes
     // nothing and starts nothing, so a gateway that never runs a session pays
     // no cost and holds no control over the machine.
+    //
+    // The registry is referenced through a holder rather than through
+    // `computer` itself: the event hook is passed *into* the constructor, so
+    // naming the const it is about to produce would read it before it exists.
+    let computerSessions: ComputerService['sessions'] | null = null;
     const computer = new ComputerService({
       executor,
       models,
@@ -488,7 +524,7 @@ export class App {
       logger,
       grounding: config.computerGrounding,
       startUrl: config.computerStartUrl,
-      onEvent: (event) => events.publish({ type: 'computer', event }),
+      onEvent: (event) => events.publish({ type: 'computer', event }, { userId: computerSessions?.find(event.sessionId)?.userId ?? null }),
       persistSession: (info) =>
         store.saveComputerSession({
           id: info.id,
@@ -512,6 +548,7 @@ export class App {
         return ai.profiles.skillPrompt(effective);
       },
     });
+    computerSessions = computer.sessions;
 
     const app = new App({
       config,

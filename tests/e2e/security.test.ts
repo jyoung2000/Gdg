@@ -281,6 +281,21 @@ describe('Security: adversarial', () => {
     assert.ok(!body.includes(secret), `the error echoed a secret back: ${body.slice(0, 300)}`);
   });
 
+  it('redacts a secret a caller puts into a request that fails mid-stream', async () => {
+    // A streamed failure is reported inside a 200 response, so it never passes
+    // through the error handler that scrubs the non-streaming path. That made
+    // `stream: true` the way to get the same message back unredacted.
+    const secret = 'sk-ant-leaked-through-a-stream-frame-0002';
+    for (const [path, body] of [
+      ['/v1/chat/completions', { model: `nonexistent-${secret}`, messages: [{ role: 'user', content: 'hi' }], stream: true }],
+      ['/anthropic/v1/messages', { model: `nonexistent-${secret}`, max_tokens: 16, messages: [{ role: 'user', content: 'hi' }], stream: true }],
+    ] as const) {
+      const res = await api(path, { method: 'POST', body: JSON.stringify(body) });
+      const text = await res.text();
+      assert.ok(!text.includes(secret), `${path} echoed a secret back in a stream frame: ${text.slice(0, 300)}`);
+    }
+  });
+
   /* ---------------- Response hardening ---------------- */
 
   it('serves model output as data, with a policy that cannot execute it', async () => {

@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { MeridianError, type ChatMessage, type ContentPart, type ToolDefinition } from '@meridian/shared';
+import { MeridianError, redact, type ChatMessage, type ContentPart, type ToolDefinition } from '@meridian/shared';
 import { beginSse } from './shared.js';
 import { requireScope } from './authz.js';
 import type { App } from '../services/app.js';
@@ -210,12 +210,16 @@ async function streamMessages(
           send('message_stop', { type: 'message_stop' });
           break;
         case 'error':
-          send('error', { type: 'error', error: { type: chunk.code, message: chunk.error } });
+          // See the note in the OpenAI stream: a provider message can echo
+          // something the caller typed, and a key typed into the wrong field
+          // is the case that matters.
+          send('error', { type: 'error', error: { type: chunk.code, message: redact(chunk.error) } });
           break;
       }
     }
   } catch (e) {
-    send('error', { type: 'error', error: { type: 'internal', message: e instanceof Error ? e.message : String(e) } });
+    app.logger.error('stream failed', { requestId, detail: redact(e instanceof Error ? e.message : String(e)) });
+    send('error', { type: 'error', error: { type: 'internal', message: `Internal error. Request id ${requestId}` } });
   } finally {
     reply.raw.end();
   }
