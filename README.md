@@ -360,6 +360,7 @@ What has and has not been verified is written down rather than implied — see
 | `docs/SECURITY.md` | Threat model and the guarantees |
 | `docs/ROUTING.md` | Modes, pools, reservations, economics |
 | `docs/MODEL_INTELLIGENCE.md` | Free-access taxonomy, catalog sync, routes, the free radar |
+| `docs/DISCOVERY.md` | The free-inference discovery engine: sources, merging, ranking, and what it will never do |
 | `docs/VERIFICATION.md` | Capability evidence, probes, and what a probe may conclude |
 | `docs/PRICING_ENGINE.md` | Cost classes, unknown prices, and how a budget binds |
 | `docs/PRICING_AND_QUOTA.md` | The rate card: where the numbers come from and how they are matched |

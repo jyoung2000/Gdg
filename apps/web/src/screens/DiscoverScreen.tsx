@@ -14,6 +14,9 @@ import {
 import {
   api,
   type CatalogStatus,
+  type DiscoveryStatusView,
+  type FreeListView,
+  type RankedFreeModelView,
   type ProviderIntelligenceView,
   type RadarEntryView,
   type RouteGroupView,
@@ -36,7 +39,7 @@ import { Screen } from './Screen.js';
  * it rather than quietly counting it as a yes.
  */
 
-type Tab = 'radar' | 'routes' | 'providers';
+type Tab = 'free' | 'radar' | 'routes' | 'providers';
 
 /** Renders a tri-state the way it deserves: three outcomes, not two. */
 function TriChip({ value, yes, no }: { value: Tri; yes: string; no: string }): React.JSX.Element {
@@ -131,7 +134,7 @@ const PROVIDER_COLUMNS: TableColumn<ProviderIntelligenceView>[] = [
 ];
 
 export function DiscoverScreen(): React.JSX.Element {
-  const [tab, setTab] = useState<Tab>('radar');
+  const [tab, setTab] = useState<Tab>('free');
   const [status, setStatus] = useState<CatalogStatus | null>(null);
   const [syncing, setSyncing] = useState(false);
   const toast = useStore((s) => s.toast);
@@ -182,12 +185,14 @@ export function DiscoverScreen(): React.JSX.Element {
           value={tab}
           onChange={(v) => setTab(v as Tab)}
           options={[
+            { value: 'free', label: 'Free inference' },
             { value: 'radar', label: 'Free radar' },
             { value: 'routes', label: 'Routes' },
             { value: 'providers', label: 'Providers & terms' },
           ]}
         />
 
+        {tab === 'free' && <FreeInferenceTab />}
         {tab === 'radar' && <RadarTab />}
         {tab === 'routes' && <RoutesTab />}
         {tab === 'providers' && <ProvidersTab />}
@@ -248,6 +253,303 @@ function CatalogBanner({ status }: { status: CatalogStatus | null }): React.JSX.
 
         {status.error && <span className="mrd-caption mrd-warn">Last sync problem: {status.error}</span>}
         <span className="mrd-caption mrd-secondary">{status.attribution}</span>
+      </Stack>
+    </Card>
+  );
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Free inference                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Everything that costs nothing, in order, with the evidence attached.
+ *
+ * The radar tab answers this question from Meridian's own registry — models it
+ * has descriptors for. This one answers it from the discovery engine, which
+ * merges several independent catalogues and provider listings, and therefore
+ * knows about things this instance is not configured for. Both are worth
+ * having: one is "what can I use right now", the other is "what exists".
+ *
+ * Two display rules carry the whole design.
+ *
+ * **Nothing appears here on the strength of a repository's title.** A model
+ * whose cost is not established is excluded, and the count of what was excluded
+ * and why is shown — because "no free models found" and "everything was
+ * excluded for reasons you can read" are different statements.
+ *
+ * **Every row can be opened.** The score is not a verdict from nowhere: the
+ * reasons that produced it, the source that supplied the claim, and the date it
+ * was last checked are all one click away, so a wrong answer can be traced
+ * rather than argued with.
+ */
+function FreeInferenceTab(): React.JSX.Element {
+  const toast = useStore((s) => s.toast);
+  const [list, setList] = useState<FreeListView | null>(null);
+  const [status, setStatus] = useState<DiscoveryStatusView | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [needs, setNeeds] = useState<string[]>([]);
+  const [showAll, setShowAll] = useState(false);
+  const [search, setSearch] = useState('');
+  const [open, setOpen] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [free, s] = await Promise.all([
+        api.freeInference({ requires: needs, includeNonFree: showAll, limit: 200 }),
+        api.freeDiscoveryStatus(),
+      ]);
+      setList(free);
+      setStatus(s.status);
+      setNote(s.note);
+    } catch (e) {
+      toast({ level: 'error', message: 'Could not load free inference', detail: (e as Error).message });
+    } finally {
+      setLoading(false);
+    }
+  }, [needs, showAll, toast]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      const { status: s } = await api.refreshFreeDiscovery(true);
+      setStatus(s);
+      const failed = s.sources.filter((x) => !x.ok);
+      toast({
+        level: failed.length === 0 ? 'success' : 'info',
+        message:
+          failed.length === 0
+            ? `Refreshed ${s.sources.length} sources — ${s.freeModels} free models`
+            : `${s.sources.length - failed.length} of ${s.sources.length} sources refreshed`,
+        detail: failed.length ? failed.map((x) => `${x.displayName}: ${x.error}`).join('\n') : undefined,
+      });
+      await load();
+    } catch (e) {
+      toast({ level: 'error', message: 'Refresh failed', detail: (e as Error).message });
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const shown = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return list?.models ?? [];
+    return (list?.models ?? []).filter(
+      (m) => m.modelId.toLowerCase().includes(q) || m.providerId.toLowerCase().includes(q),
+    );
+  }, [list, search]);
+
+  const toggle = (cap: string) =>
+    setNeeds((current) => (current.includes(cap) ? current.filter((c) => c !== cap) : [...current, cap]));
+
+  return (
+    <Stack direction="column" gap={4}>
+      <SourcesBanner status={status} note={note} onRefresh={() => void refresh()} refreshing={refreshing} />
+
+      <Stack direction="row" gap={3} align="center" wrap>
+        <SearchField
+          value={search}
+          onValueChange={setSearch}
+          onClear={() => setSearch('')}
+          placeholder="Filter by model or provider"
+          style={{ flex: 1, minWidth: 220 }}
+        />
+        {(['vision', 'tools', 'reasoning', 'imageGeneration', 'audio', 'embedding'] as const).map((cap) => (
+          <Checkbox key={cap} checked={needs.includes(cap)} onChange={() => toggle(cap)} label={capabilityLabel(cap)} />
+        ))}
+        <Checkbox
+          checked={showAll}
+          onChange={() => setShowAll((v) => !v)}
+          label="Include paid and unestablished"
+        />
+      </Stack>
+
+      {loading && !list ? (
+        <span className="mrd-secondary">Loading…</span>
+      ) : shown.length === 0 ? (
+        <EmptyState
+          title="Nothing matched"
+          description={
+            list?.excluded.length
+              ? `Everything was excluded: ${list.excluded.map((e) => `${e.count} ${e.reason}`).join(', ')}.`
+              : 'No sources have loaded yet. Refresh to fetch them.'
+          }
+        />
+      ) : (
+        <Stack direction="column" gap={2}>
+          <span className="mrd-caption mrd-secondary">
+            {shown.length} of {list?.total ?? 0} shown.
+            {list?.excluded.length
+              ? ` Excluded: ${list.excluded.map((e) => `${e.count} because ${e.reason}`).join('; ')}.`
+              : ''}
+          </span>
+          {shown.map((m) => (
+            <FreeModelRow
+              key={m.modelId}
+              model={m}
+              expanded={open === m.modelId}
+              onToggle={() => setOpen(open === m.modelId ? null : m.modelId)}
+            />
+          ))}
+        </Stack>
+      )}
+    </Stack>
+  );
+}
+
+function capabilityLabel(cap: string): string {
+  return cap === 'imageGeneration' ? 'Image generation' : cap.charAt(0).toUpperCase() + cap.slice(1);
+}
+
+/**
+ * How the answer was assembled, before the answer.
+ *
+ * A source that failed and a source that returned nothing look identical in a
+ * result list, and the difference decides whether the list is short because the
+ * world is small or because half of it did not load.
+ */
+function SourcesBanner({
+  status,
+  note,
+  onRefresh,
+  refreshing,
+}: {
+  status: DiscoveryStatusView | null;
+  note: string | null;
+  onRefresh: () => void;
+  refreshing: boolean;
+}): React.JSX.Element {
+  if (!status) return <span className="mrd-secondary">Loading sources…</span>;
+  const failed = status.sources.filter((s) => !s.ok);
+
+  return (
+    <Card>
+      <Stack direction="column" gap={2}>
+        <Stack direction="row" gap={2} align="center" wrap>
+          <strong>Discovery sources</strong>
+          <StatusChip
+            status={failed.length === 0 ? 'ready' : failed.length === status.sources.length ? 'offline' : 'degraded'}
+            size="sm"
+            label={`${status.sources.length - failed.length}/${status.sources.length} loaded`}
+          />
+          <span className="mrd-caption mrd-numeric">
+            {status.providers} providers · {status.models} models · {status.freeModels} free
+          </span>
+          <Button variant="secondary" onClick={onRefresh} disabled={refreshing}>
+            {refreshing ? 'Refreshing…' : 'Refresh sources'}
+          </Button>
+        </Stack>
+
+        {note && <span className="mrd-caption mrd-warn">{note}</span>}
+
+        <Stack direction="column" gap={1}>
+          {status.sources.map((s) => (
+            <Stack key={s.id} direction="row" gap={2} align="center" wrap>
+              <StatusChip status={s.ok ? 'ready' : 'offline'} size="sm" label={s.ok ? 'ok' : 'failed'} />
+              <span>{s.displayName}</span>
+              <span className="mrd-caption mrd-secondary">{s.sourceClass}</span>
+              <span className="mrd-caption mrd-numeric">
+                {s.providers} providers · {s.models} models
+              </span>
+              {s.fromCache && (
+                <span className="mrd-caption mrd-secondary">
+                  cached{s.cacheAgeDays !== null ? ` ${s.cacheAgeDays}d ago` : ''}
+                </span>
+              )}
+              {s.error && <span className="mrd-caption mrd-warn">{s.error}</span>}
+            </Stack>
+          ))}
+        </Stack>
+
+        {status.refusals.length > 0 && (
+          <span className="mrd-caption mrd-secondary">
+            {status.refusals.map((r) => `${r.count} claims from ${r.sourceId} about ${r.field}`).join('; ')} were
+            not used: the source had not declared that it observes them.
+          </span>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
+/** One model, with its score openable into the reasons that produced it. */
+function FreeModelRow({
+  model,
+  expanded,
+  onToggle,
+}: {
+  model: RankedFreeModelView;
+  expanded: boolean;
+  onToggle: () => void;
+}): React.JSX.Element {
+  const caps = Object.entries(model.capabilities ?? {})
+    .filter(([, v]) => v)
+    .map(([k]) => capabilityLabel(k));
+
+  return (
+    <Card>
+      <Stack direction="column" gap={2}>
+        <Stack direction="row" gap={2} align="center" wrap>
+          <StatusChip
+            status={model.verdict === 'free' || model.verdict === 'free-locally' ? 'ready' : model.verdict === 'unknown' ? 'unknown' : 'degraded'}
+            size="sm"
+            label={model.accessLabel}
+          />
+          <strong>{model.providerModelId}</strong>
+          <span className="mrd-caption mrd-secondary">{model.providerId}</span>
+          {model.reachable === true && <StatusChip status="ready" size="sm" label="Configured" />}
+          {model.reachable === false && <StatusChip status="unknown" size="sm" label="Needs a key" />}
+          {model.contextLength && (
+            <span className="mrd-caption mrd-numeric">{model.contextLength.toLocaleString()} ctx</span>
+          )}
+          {caps.length > 0 && <span className="mrd-caption mrd-secondary">{caps.join(' · ')}</span>}
+          <Button variant="tertiary" size="sm" onClick={onToggle}>
+            {expanded ? 'Hide why' : 'Why this rank'}
+          </Button>
+        </Stack>
+
+        {model.freeQuota && (
+          <span className="mrd-caption mrd-secondary">
+            Published allowance:{' '}
+            {[
+              model.freeQuota.requestsPerMinute && `${model.freeQuota.requestsPerMinute}/min`,
+              model.freeQuota.requestsPerDay && `${model.freeQuota.requestsPerDay}/day`,
+              model.freeQuota.tokensPerMinute && `${model.freeQuota.tokensPerMinute.toLocaleString()} tok/min`,
+              model.freeQuota.tokensPerDay && `${model.freeQuota.tokensPerDay.toLocaleString()} tok/day`,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
+        )}
+
+        {expanded && (
+          <Stack direction="column" gap={1}>
+            <span className="mrd-caption mrd-secondary">Score {model.score}, made up of:</span>
+            {model.reasons.map((r) => (
+              <span key={r} className="mrd-caption">
+                · {r}
+              </span>
+            ))}
+            <span className="mrd-caption mrd-secondary">
+              Claimed by {model.contributors.join(', ')}. Cited from {model.provenance.source}
+              {model.provenance.lastVerified ? `, last checked ${model.provenance.lastVerified}` : ', with no date attached'}
+              {model.ageDays !== null ? ` (${model.ageDays} days ago)` : ''}.
+            </span>
+            {model.provenance.sourceUrl && (
+              <a className="mrd-caption" href={model.provenance.sourceUrl} target="_blank" rel="noreferrer noopener">
+                Check it yourself
+              </a>
+            )}
+          </Stack>
+        )}
       </Stack>
     </Card>
   );

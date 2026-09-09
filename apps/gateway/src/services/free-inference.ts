@@ -177,7 +177,10 @@ export class FreeInferenceService {
         const schedule = this.scheduler.scheduleOf(s.id);
         return {
           ...s,
-          nextEligibleAt: schedule.nextEligibleAt || null,
+          // Rounded: the scheduler adds sub-millisecond jitter, and a
+          // fractional epoch in a JSON API is noise every consumer has to
+          // decide what to do with.
+          nextEligibleAt: schedule.nextEligibleAt ? Math.round(schedule.nextEligibleAt) : null,
           consecutiveFailures: schedule.consecutiveFailures,
         };
       }),

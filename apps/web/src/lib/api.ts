@@ -316,6 +316,90 @@ function queryString(params: Record<string, string | undefined>): string {
   return s ? `?${s}` : '';
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Free-inference discovery                                            */
+/* ------------------------------------------------------------------ */
+
+/** What a claim is worth, and where it came from. Shown, never hidden. */
+export interface DiscoveryProvenanceView {
+  source: string;
+  sourceUrl: string | null;
+  sourceVersion: string | null;
+  lastVerified: string | null;
+  confidence: 'high' | 'medium' | 'low';
+}
+
+export type FreeVerdictView = 'free' | 'free-while-credit-lasts' | 'free-locally' | 'paid' | 'unknown';
+
+export interface RankedFreeModelView {
+  modelId: string;
+  providerId: string;
+  providerModelId: string;
+  verdict: FreeVerdictView;
+  accessLabel: string;
+  score: number;
+  /** Every component of the score, in the order it was applied. */
+  reasons: string[];
+  contextLength: number | null;
+  capabilities?: Record<string, boolean>;
+  freeQuota: { requestsPerDay?: number; requestsPerMinute?: number; tokensPerDay?: number; tokensPerMinute?: number } | null;
+  confidence: string;
+  ageDays: number | null;
+  contributors: string[];
+  provenance: DiscoveryProvenanceView;
+  reachable: boolean | null;
+}
+
+export interface DiscoverySourceStatusView {
+  id: string;
+  displayName: string;
+  sourceClass: string;
+  ok: boolean;
+  fromCache: boolean;
+  cacheAgeDays: number | null;
+  providers: number;
+  models: number;
+  error: string | null;
+  license: string;
+  attribution: string;
+  nextEligibleAt: number | null;
+  consecutiveFailures: number;
+}
+
+export interface DiscoveryStatusView {
+  lastRunAt: number | null;
+  everRanOnline: boolean;
+  providers: number;
+  models: number;
+  freeModels: number;
+  sources: DiscoverySourceStatusView[];
+  refusals: { sourceId: string; field: string; count: number }[];
+}
+
+export interface DiscoveryProviderView {
+  providerId: string;
+  shipped: boolean;
+  registered: boolean;
+  freeAccess: string;
+  accessLabel: string;
+  freeTierSummary: string | null;
+  caveat: string | null;
+  requirements: { apiKey: Tri; account: Tri; card: Tri; phone: Tri } | null;
+  commercialUse: Tri;
+  contributors: string[];
+  unroutableReason: string | null;
+  provenance: DiscoveryProvenanceView | null;
+}
+
+export interface FreeListView {
+  models: RankedFreeModelView[];
+  total: number;
+  returned: number;
+  /** Why the list is as short as it is. An empty result must be explicable. */
+  excluded: { reason: string; count: number }[];
+}
+
 export const api = {
   /* System */
   info: () => get<SystemInfo>('/api/system/info'),
@@ -383,6 +467,23 @@ export const api = {
   /* Model intelligence: synced catalog, routes, free radar */
   catalogStatus: () => get<{ status: CatalogStatus }>('/api/catalog/status'),
   syncCatalog: () => post<{ status: CatalogStatus }>('/api/catalog/sync', {}),
+
+  /* Free-inference discovery.
+   * Named apart from `discoveryStatus`, which is the per-provider model
+   * discovery scheduler — a different thing that asks providers about their
+   * models, rather than asking datasets about the world. */
+  freeDiscoveryStatus: () => get<{ status: DiscoveryStatusView; note: string | null }>('/api/discovery/status'),
+  refreshFreeDiscovery: (force = false) => post<{ status: DiscoveryStatusView }>('/api/discovery/refresh', { force }),
+  freeInference: (opts: { requires?: string[]; minContext?: number; includeNonFree?: boolean; limit?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.requires?.length) q.set('requires', opts.requires.join(','));
+    if (opts.minContext) q.set('minContext', String(opts.minContext));
+    if (opts.includeNonFree) q.set('includeNonFree', 'true');
+    q.set('limit', String(opts.limit ?? 100));
+    return get<FreeListView>(`/api/discovery/free?${q.toString()}`);
+  },
+  freeDiscoveryProviders: (freeOnly = false) =>
+    get<{ providers: DiscoveryProviderView[] }>(`/api/discovery/providers${freeOnly ? '?free=true' : ''}`),
   catalogIntelligence: (q: { free?: boolean; noCard?: boolean; commercial?: boolean } = {}) =>
     get<{ providers: ProviderIntelligenceView[]; total: number }>(
       `/api/catalog/intelligence${queryString({

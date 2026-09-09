@@ -32,6 +32,7 @@ import { Store, defaultPreferences } from '../db/store.js';
 import { Discovery } from './discovery.js';
 import { VerificationService } from './verification.js';
 import { CatalogSync } from './catalog-sync.js';
+import { FreeInferenceService } from './free-inference.js';
 import { PriceBookService } from './price-book.js';
 import { EventBus, type ServerEvent } from './events.js';
 import { browserTools, createControlPlane, type ControlPlane } from './control.js';
@@ -67,6 +68,7 @@ interface AppParts {
   events: EventBus;
   discovery: Discovery;
   catalogSync: CatalogSync;
+  freeInference: FreeInferenceService;
   priceBook: PriceBookService;
   control: ControlPlane;
   ai: AIControlPlane;
@@ -107,6 +109,8 @@ export class App {
   readonly discovery: Discovery;
   /** Keeps the provider catalog in step with the free-model dataset. */
   readonly catalogSync: CatalogSync;
+  /** Every source of free-inference knowledge, merged under precedence. */
+  readonly freeInference: FreeInferenceService;
   /** Rates for paid providers, so cost accounting is not always zero. */
   readonly priceBook: PriceBookService;
   readonly control: ControlPlane;
@@ -146,6 +150,7 @@ export class App {
     this.events = parts.events;
     this.discovery = parts.discovery;
     this.catalogSync = parts.catalogSync;
+    this.freeInference = parts.freeInference;
     this.priceBook = parts.priceBook;
     this.control = parts.control;
     this.verification = parts.verification;
@@ -236,6 +241,7 @@ export class App {
     });
     await catalogSync.runOnce({ offline: true });
 
+
     // Persisted models are only trustworthy while their provider exists. A
     // dynamically-discovered local server from a previous run leaves its models
     // in the database; loading them without their provider would hand the
@@ -284,6 +290,27 @@ export class App {
     credentialHealth.onQuota((q) => store.saveCredentialQuota(q));
 
     const credentials = new CredentialResolver(store, () => Date.now(), credentialHealth);
+
+    // The discovery engine, from cache only: a gateway has to come up when
+    // GitHub is down, and come up in the same time either way. The first
+    // network refresh is a scheduled event after start, not part of start.
+    //
+    // Constructed *after* the credential resolver, and not a line earlier.
+    // `reachable` closes over `credentials`, and the boot refresh ranks what it
+    // loaded — so with an empty cache nothing is ranked and nothing notices,
+    // while on the second boot the cache has models, the closure runs, and the
+    // gateway dies in the temporal dead zone before it can say why. First run
+    // fine, every run after it broken, is the shape of bug worth moving four
+    // lines to make impossible.
+    const freeInference = new FreeInferenceService({
+      logger,
+      config,
+      reachable: (providerId) => {
+        if (!providers.descriptor(providerId)) return null;
+        return credentials.resolve({ providerId }, true).credential !== null;
+      },
+    });
+    await freeInference.refresh({ offline: true, existingIds: new Set(PROVIDER_CATALOG.map((p) => p.id)) });
     for (const d of providers.list()) providers.setCredentialed(d.id, credentials.hasAny(d.id));
 
     const health = new HealthStore();
@@ -487,6 +514,7 @@ export class App {
       discovery,
       verification,
       catalogSync,
+      freeInference,
       priceBook,
       control,
       ai,
@@ -538,6 +566,18 @@ export class App {
     if (this.config.healthIntervalMs > 0) {
       this.every(this.config.healthIntervalMs, () => this.discovery.checkHealth(), 'health check');
     }
+
+    // The datasets, over the network, after start rather than during it. The
+    // service's own scheduler decides which sources are actually due, so this
+    // interval is how often it is *asked*, not how often anything is fetched:
+    // these are free, community-run repositories, and the polite interval is
+    // measured in hours.
+    const refreshDatasets = () =>
+      this.freeInference.refresh({ existingIds: new Set(PROVIDER_CATALOG.map((p) => p.id)) });
+    void refreshDatasets().catch((e: unknown) =>
+      this.logger.warn('the first discovery refresh failed', { errorCode: e instanceof Error ? e.message : String(e) }),
+    );
+    this.every(60 * 60_000, refreshDatasets, 'discovery refresh');
   }
 
   /**

@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { isAbsolute } from 'node:path';
-import { defaultDataDir, loadConfig, platformPaths, runtimeStatePath } from '@meridian/shared';
+import { isAbsolute, posix, win32 } from 'node:path';
+import { defaultDataDir, joinFor, joinWith, loadConfig, platformPaths, runtimeStatePath } from '@meridian/shared';
 
 /**
  * Where Meridian writes, on a platform that is not this one.
@@ -162,5 +162,83 @@ describe('The runtime state file', () => {
   it('can be pointed somewhere explicitly, for tests and for portable installs', () => {
     const p = runtimeStatePath({ MERIDIAN_RUNTIME_STATE: '/tmp/x/instance.json' } as NodeJS.ProcessEnv, 'linux');
     assert.equal(p, '/tmp/x/instance.json');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+describe('The path join, against the one it replaces', () => {
+  /**
+   * `platform.ts` composes paths without `node:path`, because it is exported
+   * from `@meridian/shared` and the web client imports that barrel — a static
+   * `import from 'node:path'` anywhere in the graph fails the browser build at
+   * link time, before tree-shaking can drop anything.
+   *
+   * Replacing a standard library function is worth doing only if the
+   * replacement is the same function, so this asserts exactly that, over every
+   * shape the codebase produces and a set of shapes chosen to break it. This
+   * table is the contract; `joinWith` is only correct in the ways it is
+   * checked here.
+   */
+  const CASES: string[][] = [
+    // The shapes this module actually produces.
+    ['C:\\Users\\ada', 'AppData', 'Roaming'],
+    ['C:\\Users\\ada\\AppData\\Roaming', 'Meridian'],
+    ['C:\\Users\\ada\\AppData\\Local\\Meridian', 'logs'],
+    ['/home/ada/.local/share', 'meridian'],
+    ['/home/ada/Library/Application Support/Meridian', 'workspaces'],
+    ['/tmp', 'meridian'],
+    // Trailing separators, which environment variables carry all the time.
+    ['C:\\Users\\ada\\', 'AppData'],
+    ['/home/ada/', 'meridian'],
+    ['/home/ada', 'meridian/'],
+    // Mixed and duplicated separators, which Windows accepts and people type.
+    ['C:/Users/ada', 'AppData\\Roaming'],
+    ['C:\\\\Users', 'ada'],
+    ['/home//ada', 'meridian'],
+    // Relative traversal.
+    ['a', 'b', '..', 'c'],
+    ['a', '..', '..', 'b'],
+    ['.', 'a'],
+    ['a', '.', 'b'],
+    ['/', 'a'],
+    ['/a', '..'],
+    ['/a', '..', '..'],
+    // Roots and near-empty input.
+    ['/'],
+    ['C:\\'],
+    ['a'],
+    [''],
+    ['', 'a'],
+    ['a', ''],
+    // UNC, which win32.join treats specially and posix does not.
+    ['\\\\server\\share', 'dir'],
+    ['\\\\server\\share\\', 'dir'],
+  ];
+
+  it('agrees with node:path on POSIX', () => {
+    for (const parts of CASES) {
+      assert.equal(
+        joinWith('/', parts),
+        posix.join(...parts),
+        `posix.join(${parts.map((p) => JSON.stringify(p)).join(', ')})`,
+      );
+    }
+  });
+
+  it('agrees with node:path on Windows', () => {
+    for (const parts of CASES) {
+      assert.equal(
+        joinWith('\\', parts),
+        win32.join(...parts),
+        `win32.join(${parts.map((p) => JSON.stringify(p)).join(', ')})`,
+      );
+    }
+  });
+
+  it('is the same function joinFor hands out', () => {
+    assert.equal(joinFor('win32')('C:\\a', 'b'), win32.join('C:\\a', 'b'));
+    assert.equal(joinFor('linux')('/a', 'b'), posix.join('/a', 'b'));
+    assert.equal(joinFor('darwin')('/a', 'b'), posix.join('/a', 'b'));
   });
 });

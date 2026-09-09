@@ -1,5 +1,3 @@
-import { homedir, tmpdir } from 'node:os';
-import { posix, resolve, win32 } from 'node:path';
 
 /**
  * Where Meridian's state lives, per operating system.
@@ -48,7 +46,70 @@ const APP_DIR_POSIX = 'meridian';
  * `path.join`, so nothing about the shipped behaviour changes.
  */
 export function joinFor(platform: NodeJS.Platform): (...parts: string[]) => string {
-  return platform === 'win32' ? win32.join : posix.join;
+  const sep = platform === 'win32' ? '\\' : '/';
+  return (...parts: string[]) => joinWith(sep, parts);
+}
+
+/**
+ * `path.join`, without `node:path`.
+ *
+ * This module is exported from `@meridian/shared`, and the web client imports
+ * that barrel. A static `import ... from 'node:path'` anywhere in the graph
+ * fails the browser build at link time — not at tree-shaking time, because the
+ * named import has to resolve before anything can be dropped. So the two lines
+ * of path grammar this file needs are written out rather than imported, and the
+ * web client stops paying for a module it never uses.
+ *
+ * It is not a general replacement for `path.join` and does not try to be:
+ * `tests/unit/platform-paths.test.ts` asserts it agrees with `node:path`
+ * exactly, over every shape this codebase produces and a set of adversarial
+ * ones, and that test is the contract. Anything outside it should use
+ * `node:path` in code that is allowed to.
+ */
+export function joinWith(sep: '/' | '\\', parts: string[]): string {
+  const present = parts.filter((p) => p.length > 0);
+  if (present.length === 0) return '.';
+
+  const win = sep === '\\';
+  const isSep = (c: string | undefined) => c === '/' || (win && c === '\\');
+  const raw = present.join(sep);
+
+  // A leading UNC root (\\server\share) or POSIX root has to survive
+  // normalisation; everything else is a relative path.
+  //
+  // Whether this is UNC is decided by the FIRST argument, not by the joined
+  // string — which is what `node:path` does, and the difference is visible:
+  // `join('/', 'a')` produces the intermediate `/\a`, whose first two
+  // characters are separators without it being a UNC path at all. Reading the
+  // joined string there yields `\\a`, a share name where a root was meant.
+  const first = present[0];
+  const leading = isSep(raw[0]);
+  const unc = win && isSep(first[0]) && isSep(first[1]) && first.length > 2 && !isSep(first[2]);
+  const trailing = raw.length > 1 && isSep(raw[raw.length - 1]);
+
+  const segments: string[] = [];
+  for (const segment of raw.split(win ? /[\\/]+/ : /\/+/)) {
+    if (segment === '' || segment === '.') continue;
+    if (segment === '..') {
+      const last = segments[segments.length - 1];
+      if (segments.length > 0 && last !== '..') segments.pop();
+      // `..` above a root is still the root; above a relative path it is kept,
+      // because `../x` means something and silently dropping it would resolve
+      // to a different directory.
+      else if (!leading) segments.push('..');
+      continue;
+    }
+    segments.push(segment);
+  }
+
+  const body = segments.join(sep);
+  if (body === '') {
+    if (unc) return `${sep}${sep}`;
+    if (leading) return sep;
+    return trailing ? `.${sep}` : '.';
+  }
+  const prefix = unc ? `${sep}${sep}` : leading ? sep : '';
+  return `${prefix}${body}${trailing ? sep : ''}`;
 }
 
 export interface PlatformPaths {
@@ -79,7 +140,13 @@ export interface PlatformPaths {
  * before it could say why.
  */
 function windowsRoots(env: NodeJS.ProcessEnv, join: (...p: string[]) => string): { roaming: string; local: string } {
-  const home = env.USERPROFILE || homedir();
+  // %USERPROFILE% first, then the %HOMEDRIVE%%HOMEPATH% pair that domain
+  // profiles set. `os.homedir()` is not consulted: this function takes `env`
+  // precisely so a Windows layout can be computed on a Linux CI runner, and
+  // reading the real home directory behind the caller's back would make that
+  // claim false.
+  const home =
+    env.USERPROFILE || (env.HOMEDRIVE && env.HOMEPATH ? `${env.HOMEDRIVE}${env.HOMEPATH}` : '') || 'C:\\Users\\Default';
   return {
     roaming: env.APPDATA || join(home, 'AppData', 'Roaming'),
     local: env.LOCALAPPDATA || join(home, 'AppData', 'Local'),
@@ -98,7 +165,7 @@ export function platformPaths(
   env: NodeJS.ProcessEnv = process.env,
 ): PlatformPaths {
   if (platform === 'win32') {
-    const join = win32.join;
+    const join = joinFor('win32');
     const { roaming, local } = windowsRoots(env, join);
     const data = join(roaming, APP_DIR_WINDOWS);
     const localRoot = join(local, APP_DIR_WINDOWS);
@@ -111,9 +178,12 @@ export function platformPaths(
     };
   }
 
-  const join = posix.join;
+  const join = joinFor(platform === 'darwin' ? 'darwin' : 'linux');
 
-  const home = env.HOME || homedir();
+  // Same reasoning: derived from the environment that was passed in, not from
+  // the host. A caller asking "where would this live on macOS" gets an answer
+  // about macOS rather than about this machine.
+  const home = env.HOME || '/root';
 
   if (platform === 'darwin') {
     const support = join(home, 'Library', 'Application Support', APP_DIR_WINDOWS);
@@ -176,8 +246,13 @@ export function defaultDataDir(env: NodeJS.ProcessEnv = process.env, platform: N
  * Exists so nothing hardcodes `/tmp`, which on Windows is not a directory at
  * all — `os.tmpdir()` returns `%TEMP%` there and the right thing everywhere.
  */
-export function meridianTmpDir(platform: NodeJS.Platform = process.platform): string {
-  return joinFor(platform)(tmpdir(), APP_DIR_POSIX);
+export function meridianTmpDir(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const fallback = platform === 'win32' ? 'C:\\Windows\\Temp' : '/tmp';
+  const dir = env.TMPDIR || env.TEMP || env.TMP || fallback;
+  return joinFor(platform)(dir, APP_DIR_POSIX);
 }
 
 /**
@@ -193,7 +268,7 @@ export function meridianTmpDir(platform: NodeJS.Platform = process.platform): st
  */
 export function runtimeStatePath(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {
   const override = env.MERIDIAN_RUNTIME_STATE;
-  if (override) return resolve(override);
+  if (override) return override;
   return joinFor(platform)(platformPaths(platform, env).runtime, 'instance.json');
 }
 

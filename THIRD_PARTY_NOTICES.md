@@ -96,10 +96,14 @@ Copyright (c) 2023 Berri AI, under the same MIT terms quoted in full above.
   redistribution and use need no further permission. Verified against each
   repository's licence file.
 - **What Meridian uses:** their machine-readable registries of free-tier LLM
-  APIs, fetched at runtime (`packages/model-sdk/src/sources/community-registries.ts`).
-  mnfst contributes model listings and parsed rate-limit strings; uzair004
-  contributes structured free-tier limits (`rpm`/`rpd`/`tpd`), access terms and
-  rate-limit header names.
+  APIs, fetched at runtime — schemas and normalisation in
+  `community-registries.ts`, the sources themselves in `dataset-sources.ts`.
+  mnfst contributes model listings and parsed rate-limit strings from
+  `data.json`; uzair004 contributes structured free-tier limits
+  (`rpm`/`rpd`/`tpd`), per-model capabilities, access terms and rate-limit
+  header names from `registry.json` — one file for every provider, rather than
+  a directory listing through the GitHub API and one call per provider against
+  a rate limit shared with the whole host.
 - **How the claims are treated:** as sourced community claims, never as
   Meridian's own verification. mnfst entries enter at `UNVERIFIED` confidence;
   uzair004 entries carry a `lastVerified` date and can reach `LIKELY`, decaying
@@ -185,6 +189,28 @@ Meridian's source under Meridian's licence. Its npm dependencies are compiled
 into those bundles; `pnpm licenses list --prod` enumerates them, and every one
 of them is MIT, ISC, BSD or Apache-2.0 — the check is part of the release
 routine in [docs/RELEASE_WINDOWS.md](docs/RELEASE_WINDOWS.md).
+
+---
+
+## Provider listing endpoints — read, cached, not redistributed
+
+Three sources ask a provider about its own models rather than reading a
+third-party document: OpenRouter's `/api/v1/models`, Pollinations' model
+endpoints, and Hugging Face's router listing. All three are public — no key, no
+account — which is the reason they are here: someone who has configured nothing
+should still be able to see what free inference exists.
+
+These are **used as served**. The responses are cached on the operator's own
+disk so a refresh is polite and an outage is survivable; nothing is republished,
+vendored, or presented as Meridian's own data. Every model that comes from one
+carries a `provenance` block naming the endpoint and the date it was read, and
+`GET /api/discovery/attribution` returns the same list at runtime — generated
+from the sources that actually loaded, so it cannot drift from what is being
+used.
+
+No terms of service are worked around to obtain any of it: these are documented
+public endpoints, requested once per refresh interval, with conditional headers
+so an unchanged response costs the provider nothing.
 
 ---
 
