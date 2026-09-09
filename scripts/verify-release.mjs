@@ -130,6 +130,8 @@ const GATES = [
       "does not hand the gateway's environment to the command",
       'kills a command that runs past its timeout',
     ],
+    blocked:
+      'Container isolation needs a Docker daemon and a sandbox image; this environment has neither. The process-sandbox fallback and its degraded-mode warning ARE verified here.',
   },
   {
     id: 'multimodal',
@@ -196,6 +198,55 @@ async function step(name, cmd, args, env) {
 await step('Typecheck', 'npx', ['tsc', '--noEmit', '-p', 'tsconfig.json']);
 await step('Build', 'node', ['scripts/build.mjs']);
 
+/**
+ * The offline artefacts are things people download, so they are release
+ * artefacts and they get a release gate.
+ *
+ * They are generated from the running application, which is what makes them
+ * faithful and also what makes them dangerous: they go stale in silence. This
+ * step is why a release cannot ship an offline UI that shows last week's
+ * interface — it compares the fingerprint of the UI source that exists now
+ * against the one each artefact was built from.
+ */
+await step('Offline artefacts are current and self-contained', 'node', ['scripts/check-offline-ui.mjs']);
+
+/**
+ * Docker, when there is a Docker.
+ *
+ * Recorded as a step either way. An environment without a daemon produces
+ * `skipped`, which is a different word from `pass` on purpose: the container
+ * gates below stay BLOCKED_EXTERNAL rather than being quietly satisfied by an
+ * absent runtime.
+ */
+const dockerAvailable = (await run('docker', ['info'], {})).code === 0;
+if (dockerAvailable) {
+  await step('Docker image builds', 'docker', ['build', '-f', 'docker/Dockerfile', '-t', 'meridian:verify', '.']);
+} else {
+  process.stdout.write('→ Docker\n  skipped — no Docker daemon reachable from this environment\n');
+  report.steps.push({ name: 'Docker image builds', ok: true, skipped: true, reason: 'no Docker daemon in this environment', ms: 0 });
+}
+
+/**
+ * Live provider checks run only when someone has asked for them.
+ *
+ * Absent credentials are not a failure — they are the normal case, and a
+ * release run that failed without them would simply be a release run nobody
+ * does. The skip carries its reason so the report can say which providers were
+ * never contacted rather than implying they were.
+ */
+if (process.env.MERIDIAN_LIVE_TESTS === '1') {
+  await step('Live provider checks', 'node', ['scripts/test-live.mjs']);
+} else {
+  process.stdout.write('→ Live provider checks\n  skipped — set MERIDIAN_LIVE_TESTS=1 with provider credentials to run them\n');
+  report.steps.push({
+    name: 'Live provider checks',
+    ok: true,
+    skipped: true,
+    reason: 'not requested (set MERIDIAN_LIVE_TESTS=1 with credentials configured)',
+    ms: 0,
+  });
+}
+
 const seen = new Set();
 for (const suite of SUITES) {
   process.stdout.write(`→ ${suite.label} tests\n`);
@@ -223,13 +274,30 @@ for (const gate of GATES) {
   // dressing-up this report exists to prevent.
   // A gate whose evidence covers only part of what it names is PARTIAL, never
   // VERIFIED. Rounding that up is how a report starts describing intentions.
-  const status = missing.length > 0 ? 'FAILED' : gate.blocked ? 'PARTIAL' : 'VERIFIED';
+  // Four outcomes, and the distinction between the last two is the whole point
+  // of this report.
+  //
+  //   VERIFIED         every named test passed here
+  //   PARTIAL          the evidence passed but covers only part of what the gate names
+  //   BLOCKED_EXTERNAL the evidence could not run, and the reason is outside the product
+  //   FAILED           the evidence could not run and nothing explains why
+  //
+  // Reporting a blocked gate as FAILED was as misleading as reporting it as
+  // VERIFIED: it says the product is broken when what is missing is a Docker
+  // daemon. Neither status counts as passing, and the summary below names them.
+  const status =
+    missing.length > 0 ? (gate.blocked ? 'BLOCKED_EXTERNAL' : 'FAILED') : gate.blocked ? 'PARTIAL' : 'VERIFIED';
   report.gates.push({ ...gate, status, missing });
 }
 
+await step('Scorecard', 'node', ['scripts/scorecard.mjs']);
+
 const suitesOk = report.suites.every((s) => s.ok);
 const stepsOk = report.steps.every((s) => s.ok);
-const gatesOk = report.gates.every((g) => g.status === 'VERIFIED' || g.status === 'PARTIAL');
+// BLOCKED_EXTERNAL does not fail the run — the product is not broken because
+// this machine has no Docker — but it is never counted as passing either, and
+// the report names every one of them.
+const gatesOk = report.gates.every((g) => g.status !== 'FAILED');
 report.finishedAt = new Date().toISOString();
 report.ok = suitesOk && stepsOk && gatesOk;
 
@@ -243,7 +311,12 @@ lines.push('## Checks');
 lines.push('');
 lines.push('| Check | Result | Duration |');
 lines.push('| --- | --- | --- |');
-for (const s of report.steps) lines.push(`| ${s.name} | ${s.ok ? 'pass' : 'FAIL'} | ${(s.ms / 1000).toFixed(1)}s |`);
+for (const s of report.steps) {
+  // "skipped" is its own word. A step that did not run has not passed, and
+  // writing `pass` for it is the exact rounding-up this report exists to stop.
+  const result = s.skipped ? `skipped — ${s.reason}` : s.ok ? 'pass' : 'FAIL';
+  lines.push(`| ${s.name} | ${result} | ${s.skipped ? '—' : `${(s.ms / 1000).toFixed(1)}s`} |`);
+}
 for (const s of report.suites) {
   lines.push(`| ${s.label} tests | ${s.ok ? `pass (${s.pass})` : `FAIL (${s.fail} failing)`} | ${(s.ms / 1000).toFixed(1)}s |`);
 }
@@ -253,9 +326,12 @@ lines.push('');
 lines.push('| Gate | Status | Backed by |');
 lines.push('| --- | --- | --- |');
 for (const g of report.gates) {
-  const backing = g.missing.length
-    ? `no result for: ${g.missing.join('; ')}`
-    : `${g.tests.length} passing test(s)${g.status === 'PARTIAL' ? ', covering part of this gate — see below' : ''}`;
+  const backing =
+    g.status === 'BLOCKED_EXTERNAL'
+      ? `could not run here: ${g.blocked}`
+      : g.missing.length
+        ? `no result for: ${g.missing.join('; ')}`
+        : `${g.tests.length} passing test(s)${g.status === 'PARTIAL' ? ', covering part of this gate — see below' : ''}`;
   lines.push(`| ${g.title} | ${g.status} | ${backing} |`);
 }
 const blocked = report.gates.filter((g) => g.blocked);
@@ -268,10 +344,15 @@ if (blocked.length) {
   for (const g of blocked) lines.push(`- **${g.title}** — ${g.blocked}`);
 }
 lines.push('');
+const blockedCount = report.gates.filter((g) => g.status === 'BLOCKED_EXTERNAL').length;
+const failedCount = report.gates.filter((g) => g.status === 'FAILED').length;
 lines.push(
-  report.ok
-    ? 'Every gate is backed by evidence from this run; the ones marked PARTIAL name what is not covered.'
-    : 'At least one gate is not backed by evidence from this run.',
+  failedCount > 0
+    ? `${failedCount} gate(s) have no evidence and no reason. That is a defect in this repository, not in the environment.`
+    : blockedCount > 0
+      ? `Every gate that could run here passed. ${blockedCount} could not run at all — each is listed above with the ` +
+        'external dependency it needs, and none of them is counted as passing.'
+      : 'Every gate is backed by evidence from this run; the ones marked PARTIAL name what is not covered.',
 );
 lines.push('');
 

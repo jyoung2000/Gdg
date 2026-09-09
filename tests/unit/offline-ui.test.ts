@@ -1,7 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -75,9 +76,26 @@ describe('The offline edition', { skip: !hasPage ? 'not generated; run pnpm buil
   it('regenerates deterministically from the current build', () => {
     // A generated artefact that differs every run cannot be reviewed in a diff,
     // and an artefact nobody reviews is one that quietly stops matching the app.
-    const before = readFileSync(PAGE);
-    execFileSync(process.execPath, [join(ROOT, 'scripts/build-offline-ui.mjs')], { cwd: ROOT, stdio: 'pipe' });
-    assert.deepEqual(readFileSync(PAGE), before, 'regenerating produced different bytes');
+    //
+    // Generated into a temporary directory rather than over the tracked file:
+    // a test that rewrites the thing it is checking repairs its own failure and
+    // can never fail twice, which is the least useful kind of test there is.
+    const scratch = mkdtempSync(join(tmpdir(), 'meridian-offline-'));
+    try {
+      execFileSync(process.execPath, [join(ROOT, 'scripts/build-offline-ui.mjs'), '--out', scratch], {
+        cwd: ROOT,
+        stdio: 'pipe',
+      });
+      const regenerated = readFileSync(join(scratch, 'index.html'));
+      assert.deepEqual(
+        regenerated,
+        readFileSync(PAGE),
+        'regenerating produced different bytes — either the generator is not deterministic, ' +
+          'or the committed artefact is stale and needs `pnpm build:offline-ui`',
+      );
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 
   it('ships a README that tells someone how to open it', () => {

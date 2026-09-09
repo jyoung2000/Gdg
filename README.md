@@ -310,7 +310,7 @@ See `docs/SECURITY.md`.
 ## Testing
 
 ```bash
-pnpm test              # 237 tests, nothing outside this machine
+pnpm test              # the whole suite, nothing outside this machine
 pnpm test:router       # routing, fallback, pools, credentials
 pnpm test:contract     # the provider contract and the router's invariants
 pnpm test:e2e          # the gateway against a real inference server, over a real socket

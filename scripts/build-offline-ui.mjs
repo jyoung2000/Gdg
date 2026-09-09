@@ -21,9 +21,16 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fingerprintComment, uiFingerprint } from './ui-fingerprint.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const OUT_DIR = join(ROOT, 'offline-ui');
+/**
+ * Where to write. Overridable so a test can regenerate into a temporary
+ * directory and compare bytes without mutating the tracked artefact — a test
+ * that rewrites the thing it is checking is a test that can never fail twice.
+ */
+const outIndex = process.argv.indexOf('--out');
+const OUT_DIR = outIndex >= 0 && process.argv[outIndex + 1] ? resolve(process.argv[outIndex + 1]) : join(ROOT, 'offline-ui');
 
 function fail(message) {
   process.stderr.write(`\nbuild-offline-ui: ${message}\n\n`);
@@ -135,10 +142,13 @@ const DATA = {
 /* The page                                                            */
 /* ------------------------------------------------------------------ */
 
+const fingerprint = uiFingerprint(ROOT);
+
 const html = `<!doctype html>
 <html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
+${fingerprintComment(fingerprint)}
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Meridian — offline preview</title>
 <meta name="description" content="A self-contained offline preview of the Meridian interface. No installation, no server, no network.">

@@ -36,6 +36,20 @@ import {
   type ModeWeights,
 } from './policy.js';
 
+/**
+ * Output tokens a budget reservation assumes when the caller declared no
+ * `maxTokens` ceiling of their own.
+ *
+ * Chosen to sit above the default maximum output of the models Meridian
+ * routes to, so the reservation is a ceiling the settled cost rarely passes
+ * rather than a midpoint it passes half the time. It is only ever held while a
+ * call is in flight; the moment the call settles the hold is returned and the
+ * real cost is recorded in its place, so an over-estimate here narrows how
+ * many calls run at once against a tight budget and never inflates what a pool
+ * reports as spent.
+ */
+const RESERVE_COMPLETION_TOKENS = 4096;
+
 export interface RouterDeps {
   models: ModelRegistry;
   providers: ProviderRegistry;
@@ -239,6 +253,7 @@ export class Router {
       fallbackChain: this.buildFallbackChain(scored, req, winner),
       routingReason: this.explain(winner, winnerModel, scored, rejected, effectiveMode, requestedMode, credential.reason, req),
       expectedCost: winner.estimatedCost,
+      reservationCost: this.reserveCall(winnerModel, req).usd,
       expectedLatency: winner.estimatedLatencyMs,
     };
   }
@@ -396,7 +411,11 @@ export class Router {
     // Pool capacity and budget. A pool with a budget is a limit like any other,
     // so an uncomputable cost cannot be charged against it either.
     if (req.pool) {
-      const block = this.deps.pools.capacityBlock(req.pool, estimate.usd, estimate.known);
+      // Checked against the reservation, not the prediction. The executor holds
+      // the reservation for the length of the call, so admitting on a smaller
+      // number would admit calls the pool cannot actually cover.
+      const reserve = this.reserveCall(m, req);
+      const block = this.deps.pools.capacityBlock(req.pool, reserve.usd, reserve.known);
       if (block) return no(block);
     }
 
@@ -564,6 +583,32 @@ export class Router {
     // Assume a response roughly a third the length of the prompt, floored so a
     // one-line prompt still budgets for a real answer.
     const completionTokens = Math.max(256, Math.round(promptTokens / 3));
+    return estimateCall(m.pricing, { promptTokens, completionTokens });
+  }
+
+  /**
+   * What to hold against a budget while this call is in flight.
+   *
+   * `estimateCall` guesses the answer will be about a third the length of the
+   * prompt, which is a reasonable average and a bad ceiling: a call that
+   * settles above its own estimate is ordinary, and under concurrency a pool
+   * that admitted every caller on that guess bills past its budget. Ten
+   * callers each reading `spentToday = 0` and each committing a third of what
+   * they end up spending is not a budget.
+   *
+   * So the reservation prices the output the caller has actually left room for
+   * — `maxTokens` when they declared one, and otherwise
+   * `RESERVE_COMPLETION_TOKENS`, which is a deliberate over-estimate rather
+   * than a prediction. Being wrong high costs a call that could have been
+   * afforded; being wrong low costs money the operator said not to spend.
+   */
+  private reserveCall(m: ModelDescriptor, req: AIRequest): CallEstimate {
+    if (isFree(m.pricing)) return estimateCall(m.pricing, { promptTokens: 0, completionTokens: 0 });
+    if (req.modality === 'image' || req.modality === 'video') {
+      return estimateCall(m.pricing, { promptTokens: 0, completionTokens: 0, requests: 1 });
+    }
+    const promptTokens = estimatePromptTokens(req);
+    const completionTokens = Math.max(req.maxTokens ?? RESERVE_COMPLETION_TOKENS, Math.round(promptTokens / 3));
     return estimateCall(m.pricing, { promptTokens, completionTokens });
   }
 

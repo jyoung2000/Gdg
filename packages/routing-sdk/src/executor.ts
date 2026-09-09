@@ -131,7 +131,7 @@ export class Executor {
   /* ---------------------------------------------------------------- */
 
   chat(req: AIRequest, completion: Omit<CompletionRequest, 'model'>, opts: ExecuteOptions = {}): Promise<ExecutionResult<CompletionResponse>> {
-    return this.run(req, opts, async (adapter, target, ctx) => {
+    return this.run(withOutputCeiling(req, completion), opts, async (adapter, target, ctx) => {
       if (!adapter.chat) throw new MeridianError('unsupported_capability', 'Adapter cannot chat', { providerId: target.providerId });
       return adapter.chat({ ...this.gateEffort(completion, target), model: target.providerModelId, signal: ctx.signal }, ctx);
     }, (r) => ({ usage: r.usage, latencyMs: r.latencyMs, ttftMs: r.ttftMs }));
@@ -204,6 +204,7 @@ export class Executor {
     opts: ExecuteOptions = {},
   ): AsyncGenerator<StreamChunk & { meta?: { fallbacks: FallbackEvent[]; routingReason: unknown } }> {
     const requestId = opts.requestId ?? shortId();
+    req = withOutputCeiling(req, completion);
     const decision = this.deps.router.route(req);
     const routing = routingSnapshot(decision.routingReason);
     const targets = this.targets(decision);
@@ -220,7 +221,7 @@ export class Executor {
       const target = targets[i];
       attempt += 1;
       const started = this.now();
-      const release = this.acquire(target, req.pool ?? null);
+      const release = this.acquire(target, req.pool ?? null, decision.reservationCost);
       let usage = ZERO_USAGE;
       let ttftMs: number | null = null;
 
@@ -341,7 +342,7 @@ export class Executor {
         attempt += 1;
         sameTargetTries += 1;
         const started = this.now();
-        const release = this.acquire(target, req.pool ?? null);
+        const release = this.acquire(target, req.pool ?? null, decision.reservationCost);
 
         try {
           const { adapter, ctx } = this.prepare(target, req, requestId, opts, log);
@@ -481,9 +482,17 @@ export class Executor {
     return { adapter, ctx };
   }
 
-  private acquire(target: Target, poolId: string | null): () => void {
+  /**
+   * Take a slot for this call, and commit its estimated cost while it runs.
+   *
+   * The estimate is what closes the budget's check-then-act window: without it,
+   * every caller that arrives before the first one settles reads the same
+   * "spent so far" and all of them are admitted. The commitment is released
+   * whatever happens, and `recordSpend` then adds what the call actually cost.
+   */
+  private acquire(target: Target, poolId: string | null, reservationCost: number | null = null): () => void {
     const releaseCred = this.deps.credentials.acquire(target.credentialId);
-    const releasePool = poolId ? this.deps.pools.acquire(poolId) : () => undefined;
+    const releasePool = poolId ? this.deps.pools.acquire(poolId, reservationCost ?? 0) : () => undefined;
     return () => {
       releaseCred();
       releasePool();
@@ -598,6 +607,20 @@ export class Executor {
       errorCode,
     });
   }
+}
+
+/**
+ * Carry a chat call's declared output ceiling into the routing request.
+ *
+ * `maxTokens` is stated on the completion request, but it is needed one step
+ * earlier: routing sizes the budget reservation, and the ceiling the caller
+ * declared is a far better bound on what this call can cost than the router's
+ * blanket default. A ceiling set explicitly on the routing request wins, so a
+ * caller that knows better than the completion payload can still say so.
+ */
+function withOutputCeiling(req: AIRequest, completion: { maxTokens?: number }): AIRequest {
+  if (req.maxTokens != null || completion.maxTokens == null) return req;
+  return { ...req, maxTokens: completion.maxTokens };
 }
 
 /**

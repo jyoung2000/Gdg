@@ -51,7 +51,8 @@ Two things make a project:
 There are two ways in, backed by the **same** manager component so they behave
 identically:
 
-- A **Projects** tab in the left sidebar (Workspace section) — a full screen for
+- A **Projects** destination in the left sidebar — one of the five that stay
+  visible — a full screen for
   browsing, creating and curating projects, the way other assistants make
   projects a first-class destination.
 - A **project selector** in the chat header that opens the same manager in a

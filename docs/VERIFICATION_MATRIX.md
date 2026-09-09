@@ -75,10 +75,10 @@ Covered in detail in [AGENT_VERIFICATION.md](AGENT_VERIFICATION.md).
 
 | Capability | Status |
 | --- | --- |
-| Nine specialist agents | PARTIAL — six exercised in a real pipeline, three not |
+| Nine specialist agents | PARTIAL — every role is now selectable and its definition is checked (`tests/e2e/agent-roles.test.ts`); six have run in a real pipeline, three have not. `orchestrator` and `browser` were previously unreachable by any pipeline at all |
 | Pipeline chosen from the request | VERIFIED |
 | Tool loop with failures fed back to the model | VERIFIED |
-| Eleven tools | PARTIAL — nine exercised; `delete_file` and `web_fetch`'s success path are not |
+| Twelve tools | VERIFIED — every tool in the registry is run through `executeTool` in `tests/unit/agent-tools.test.ts`, and the coverage assertion is derived from the registry so a new tool without a test fails. `web_fetch`'s success path against a public page remains BLOCKED_EXTERNAL; its refusal path is verified |
 | Workspace containment | VERIFIED |
 | Change review, diff, accept and reject | VERIFIED |
 | Checkpoints and rewind | VERIFIED |

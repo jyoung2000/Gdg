@@ -1,7 +1,15 @@
 import { cp, mkdir } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { MeridianError, newId, type AgentTask, type PrivacyMode, type RoutingMode, type Workspace as WorkspaceRecord } from '@meridian/shared';
+import {
+  MeridianError,
+  newId,
+  type AgentTask,
+  type PipelineKind,
+  type PrivacyMode,
+  type RoutingMode,
+  type Workspace as WorkspaceRecord,
+} from '@meridian/shared';
 import { Workspace, newTask, taskDiff, type Lane } from '@meridian/agent-sdk';
 import { requireScope } from './authz.js';
 import type { App } from '../services/app.js';
@@ -228,7 +236,7 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
   );
 
   server.post<{
-    Body: { workspaceId?: string; request?: string; mode?: RoutingMode; allowPaid?: boolean; budget?: number; lane?: string; pipeline?: 'auto' | 'research' | 'debug' | 'tests' | 'code' };
+    Body: { workspaceId?: string; request?: string; mode?: RoutingMode; allowPaid?: boolean; budget?: number; lane?: string; pipeline?: PipelineKind };
   }>('/api/tasks', async (req) => {
     const body = req.body ?? {};
     if (!body.workspaceId || !body.request) throw new MeridianError('invalid_request', '"workspaceId" and "request" are required');

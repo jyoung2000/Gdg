@@ -61,7 +61,9 @@ export type TaskEvent =
   | { type: 'agent'; event: AgentEvent }
   | { type: 'diff'; changes: import('@meridian/shared').FileChange[] };
 
-export type PipelineKind = 'auto' | 'research' | 'debug' | 'tests' | 'code';
+/** Defined in `@meridian/shared` so the web client can use it too. */
+export { PIPELINE_KINDS, type PipelineKind } from '@meridian/shared';
+import type { PipelineKind } from '@meridian/shared';
 
 export interface RunTaskInput {
   /** Explicit pipeline choice; omitted means infer from the request text. */
@@ -165,6 +167,22 @@ export class Orchestrator {
           return { steps: ['file-finder', 'tester', 'reviewer'], rationale: 'Tests were requested explicitly.' };
         case 'code':
           return { steps: ['file-finder', 'planner', 'implementer', 'tester', 'reviewer'], rationale: 'The full coding pipeline was requested explicitly.' };
+        // Two roles used to be defined and unreachable: `browser` and
+        // `orchestrator` existed in AGENT_DEFINITIONS, in AGENT_ROLES_ORDER and
+        // in the AgentRole union, and no pipeline ever emitted them. A defined
+        // agent nobody can select is dead weight that reads as a capability, so
+        // each one now has the way in its definition already implied.
+        case 'browse':
+          return {
+            steps: ['browser'],
+            rationale: 'Reading public web pages was requested explicitly; nothing here touches the workspace.',
+          };
+        case 'orchestrate':
+          return {
+            steps: ['orchestrator', 'file-finder', 'planner', 'implementer', 'tester', 'reviewer'],
+            rationale:
+              'A model was asked to survey the request before the pipeline runs, rather than the request being classified by rule.',
+          };
       }
     }
     const text = request.toLowerCase();

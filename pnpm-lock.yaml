@@ -48,6 +48,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/shared
 
+  apps/desktop: {}
+
   apps/gateway:
     dependencies:
       '@fastify/cors':
@@ -68,6 +70,12 @@ importers:
       '@meridian/computer-sdk':
         specifier: workspace:*
         version: link:../../packages/computer-sdk
+      '@meridian/context-sdk':
+        specifier: workspace:*
+        version: link:../../packages/context-sdk
+      '@meridian/control-sdk':
+        specifier: workspace:*
+        version: link:../../packages/control-sdk
       '@meridian/docker-sdk':
         specifier: workspace:*
         version: link:../../packages/docker-sdk

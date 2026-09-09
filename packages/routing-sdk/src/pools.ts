@@ -142,6 +142,16 @@ export interface PoolUsage {
   inFlight: number;
   /** USD spent in the current UTC day. */
   spentToday: number;
+  /**
+   * USD committed by calls that are in flight and have not settled yet.
+   *
+   * Without this, a budget is checked before a call and recorded after it, and
+   * every caller that arrives in the window between reads the same "spent so
+   * far" — so ten concurrent requests against a budget with room for three all
+   * see room for three and all proceed. Counting a call's estimate from the
+   * moment it is admitted closes that window: the next caller sees it.
+   */
+  pendingSpend: number;
   /** Day key the spend applies to, as YYYY-MM-DD. */
   day: string;
 }
@@ -282,7 +292,7 @@ export class PoolManager {
     const today = dayKey(this.now());
     let u = this.usage.get(poolId);
     if (!u || u.day !== today) {
-      u = { poolId, inFlight: u?.inFlight ?? 0, spentToday: 0, day: today };
+      u = { poolId, inFlight: u?.inFlight ?? 0, spentToday: 0, pendingSpend: u?.pendingSpend ?? 0, day: today };
       this.usage.set(poolId, u);
     }
     return u;
@@ -337,7 +347,7 @@ export class PoolManager {
           ? `Reservation "${active.label}" is a no-spend reservation and this model publishes no rate, so it cannot be shown to cost nothing`
           : `Reservation "${active.label}" has a budget of $${active.budget.toFixed(2)} and this model publishes no rate, so the call cannot be shown to fit it`;
       }
-      if (active.spend + floor > active.budget) {
+      if (active.spend + u.pendingSpend + floor > active.budget) {
         return active.budget === 0
           ? `Reservation "${active.label}" is a no-spend reservation and this call would cost money`
           : `Reservation "${active.label}" would exceed its budget of $${active.budget.toFixed(2)}`;
@@ -352,7 +362,7 @@ export class PoolManager {
           ? `Pool ${pool.name} is a no-spend pool and this model publishes no rate, so it cannot be shown to cost nothing`
           : `Pool ${pool.name} has a daily budget of $${budget.toFixed(2)} and this model publishes no rate, so the call cannot be shown to fit it`;
       }
-      if (u.spentToday + floor > budget) {
+      if (u.spentToday + u.pendingSpend + floor > budget) {
         return budget === 0
           ? `Pool ${pool.name} is a no-spend pool and this call would cost money`
           : `Pool ${pool.name} would exceed its daily budget of $${budget.toFixed(2)}`;
@@ -361,16 +371,28 @@ export class PoolManager {
     return null;
   }
 
-  /** Bracket a call against a pool's concurrency ceiling. */
-  acquire(poolId: string): () => void {
+  /**
+   * Bracket a call against a pool's concurrency ceiling and its budget.
+   *
+   * `estimatedCost` is committed for as long as the call is in flight, so a
+   * concurrent caller checking the budget sees it. Releasing gives the
+   * commitment back; `recordSpend` then adds what the call actually cost. A
+   * call that never settles — cancelled, or failed before it billed — gives its
+   * commitment back and adds nothing, which is the correct outcome for a budget
+   * that is about money actually spent.
+   */
+  acquire(poolId: string, estimatedCost = 0): () => void {
     const u = this.usageFor(poolId);
     u.inFlight += 1;
+    const committed = Math.max(0, estimatedCost);
+    u.pendingSpend = Math.round((u.pendingSpend + committed) * 1e6) / 1e6;
     let released = false;
     return () => {
       if (released) return;
       released = true;
       const cur = this.usageFor(poolId);
       cur.inFlight = Math.max(0, cur.inFlight - 1);
+      cur.pendingSpend = Math.max(0, Math.round((cur.pendingSpend - committed) * 1e6) / 1e6);
     };
   }
 

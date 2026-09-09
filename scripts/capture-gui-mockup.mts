@@ -9,19 +9,41 @@
  *
  * Run: npx tsx scripts/capture-gui-mockup.mts <baseUrl> <cssPath> <outPath>
  */
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
+// @ts-expect-error — plain ESM helper shared with the other generator.
+import { uiFingerprint, fingerprintComment } from './ui-fingerprint.mjs';
 
 const base = process.argv[2] ?? 'http://localhost:4655';
-const cssPath = process.argv[3] ?? 'dist/web/assets/index-CPbt0mMy.css';
 const outPath = process.argv[4] ?? 'docs/mockup/meridian-gui-mockup.html';
+
+/**
+ * Find the compiled stylesheet rather than being told where it is.
+ *
+ * The default was a literal content hash — `index-CPbt0mMy.css` — which stops
+ * existing the first time anyone changes a token. A generator that silently
+ * embeds the wrong stylesheet, or dies on a filename, is a generator nobody
+ * runs, and an offline artefact nobody regenerates is one that quietly stops
+ * matching the app.
+ */
+function findStylesheet(explicit?: string): string {
+  if (explicit) return explicit;
+  const dir = 'dist/web/assets';
+  const found = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.css')) : [];
+  if (found.length === 0) {
+    throw new Error(`no stylesheet in ${dir} — run \`pnpm build\` first`);
+  }
+  return join(dir, found[0]);
+}
+
+const cssPath = findStylesheet(process.argv[3]);
 
 /** Every screen in the shell, with the visible nav label where it differs. */
 const SCREENS: { id: string; label: string; nav?: string }[] = [
   { id: 'home', label: 'Home' },
   { id: 'workspace', label: 'Workspace' },
-  { id: 'chat', label: 'Chat' },
+  { id: 'chat', label: 'Chat', nav: 'Chats' },
   { id: 'projects', label: 'Projects' },
   { id: 'director', label: 'Director' },
   { id: 'tasks', label: 'Tasks' },
@@ -34,11 +56,11 @@ const SCREENS: { id: string; label: string; nav?: string }[] = [
   { id: 'ai', label: 'AI' },
   { id: 'skills', label: 'Skills' },
   { id: 'models', label: 'Models' },
-  { id: 'providers', label: 'Providers' },
+  { id: 'providers', label: 'Providers', nav: 'Connections' },
   { id: 'pools', label: 'Pools' },
   { id: 'mcp', label: 'MCP' },
   { id: 'devops', label: 'DevOps' },
-  { id: 'usage', label: 'Usage' },
+  { id: 'usage', label: 'Usage', nav: 'Activity' },
   { id: 'settings', label: 'Settings' },
 ];
 
@@ -59,23 +81,45 @@ const browser = await chromium.launch({ executablePath: chromiumPath(), args: ['
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 
 const captured: { id: string; label: string; html: string }[] = [];
+const failures: string[] = [];
 
 for (const screen of SCREENS) {
   // 'load', not 'networkidle': the app holds an open SSE event stream, so the
   // network never goes idle and networkidle would hang until timeout.
   await page.goto(base, { waitUntil: 'load' });
   await page.waitForTimeout(700);
-  if (screen.id !== 'home') {
-    const toggle = page.locator('.app__nav-toggle');
-    if (await toggle.isVisible().catch(() => false)) await toggle.click();
-    const name = screen.nav ?? screen.label;
-    try {
-      await page.getByRole('button', { name: new RegExp(`^${name}$`, 'i') }).first().click({ timeout: 8000 });
-    } catch {
-      process.stderr.write(`! could not navigate to ${screen.id}\n`);
-    }
+  const toggle = page.locator('.app__nav-toggle');
+  if (await toggle.isVisible().catch(() => false)) await toggle.click();
+
+  // Sixteen of the twenty-one screens now live behind the "More" disclosure, so
+  // open it before looking for a label — and leave it open, because every
+  // captured screen carries its own copy of the sidebar and the mockup is
+  // navigated through those. Capturing a collapsed sidebar would produce a
+  // mockup you could enter and not leave.
+  const more = page.getByRole('button', { name: /^(Everything else|Hide advanced)$/i }).first();
+  if (await more.isVisible().catch(() => false)) {
+    if ((await more.getAttribute('aria-expanded')) !== 'true') await more.click();
+    await page.waitForTimeout(200);
+  }
+
+  const name = screen.nav ?? screen.label;
+  try {
+    await page.getByRole('button', { name: new RegExp(`^${name}$`, 'i') }).first().click({ timeout: 8000 });
+  } catch {
+    // Loud, and fatal below: a mockup missing a screen is worse than no mockup,
+    // because it looks complete.
+    process.stderr.write(`! could not navigate to ${screen.id} (looked for "${name}")\n`);
+    failures.push(screen.id);
   }
   await page.waitForTimeout(700);
+
+  // Re-open the disclosure after navigating: landing on a primary screen
+  // collapses it again, and the captured sidebar has to stay complete.
+  const more2 = page.getByRole('button', { name: /^Everything else$/i }).first();
+  if (await more2.isVisible().catch(() => false)) {
+    await more2.click();
+    await page.waitForTimeout(200);
+  }
   // The whole shell, so the sidebar, status bar and inspector are all real.
   const html = await page.evaluate(() => {
     const root = document.getElementById('root');
@@ -90,8 +134,11 @@ await browser.close();
 const theme = 'dark';
 const sections = captured
   .map(
-    (s, i) =>
-      `<section class="mock-screen" data-screen="${s.id}"${i === 2 ? '' : ' hidden'}>\n<div id="root">${s.html}</div>\n</section>`,
+    (s) =>
+      // Chat is what the app itself opens on, so it is what the mockup opens on.
+      // Chosen by id rather than by array index, which silently pointed at a
+      // different screen every time the list was reordered.
+      `<section class="mock-screen" data-screen="${s.id}"${s.id === 'chat' ? '' : ' hidden'}>\n<div id="root">${s.html}</div>\n</section>`,
   )
   .join('\n');
 
@@ -101,10 +148,13 @@ const labelToId = JSON.stringify(
   Object.fromEntries(captured.map((s) => [(SCREENS.find((x) => x.id === s.id)?.nav ?? s.label).toLowerCase(), s.id])),
 );
 
+const fingerprint = uiFingerprint(process.cwd());
+
 const doc = `<!doctype html>
 <html lang="en" data-theme="${theme}">
 <head>
 <meta charset="utf-8" />
+${fingerprintComment(fingerprint)}
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Meridian GUI — 1:1 local mockup</title>
 <!--
@@ -160,5 +210,15 @@ ${sections}
 </html>
 `;
 
+if (failures.length) {
+  process.stderr.write(
+    `\nrefusing to write ${outPath}: could not reach ${failures.length} screen(s) — ${failures.join(', ')}\n` +
+      'A mockup that is missing screens looks complete and is not, which is the one failure mode worth being loud about.\n',
+  );
+  process.exit(1);
+}
+
 writeFileSync(join(process.cwd(), outPath), doc, 'utf8');
-process.stderr.write(`\nwrote ${outPath} (${Math.round(doc.length / 1024)} KB, ${captured.length} screens)\n`);
+process.stderr.write(
+  `\nwrote ${outPath} (${Math.round(doc.length / 1024)} KB, ${captured.length} screens, ui ${fingerprint.hash})\n`,
+);

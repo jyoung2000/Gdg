@@ -38,15 +38,16 @@ To reach hosted models, add a provider key.
 providers, including free ones.
 
 1. Get a key at [openrouter.ai/keys](https://openrouter.ai/keys).
-2. In Meridian, open **Providers**, choose **OpenRouter**, and paste the key.
+2. In Meridian, open **Models → Connections**, choose **OpenRouter**, and paste
+   the key.
 
 Meridian discovers what that key can reach and adds those models to its
 registry. Nothing routes to a paid model until you turn paid routing on: a free
 tier and a paid account are never treated as the same thing.
 
 You can add as many providers as you like, or none. Anthropic, OpenAI, Google,
-Groq, Cerebras, Mistral, DeepSeek and others each appear on the Providers screen
-with what they need.
+Groq, Cerebras, Mistral, DeepSeek and others each appear under **Models →
+Connections** with what they need.
 
 ---
 

@@ -423,6 +423,17 @@ export interface CredentialPool {
  * The complete routing mode set. The first six are the plain-language modes
  * surfaced in the UI (spec §31); the rest are the explicit policies (spec §39).
  */
+/**
+ * The agent pipelines a caller may ask for by name.
+ *
+ * Lives here rather than in agent-sdk because the web client needs it too, and
+ * agent-sdk is a Node package. It was previously written out as a string-literal
+ * union in three separate places — the orchestrator, the gateway route and the
+ * web store — so adding a pipeline to one left the other two rejecting it.
+ */
+export const PIPELINE_KINDS = ['auto', 'research', 'debug', 'tests', 'code', 'browse', 'orchestrate'] as const;
+export type PipelineKind = (typeof PIPELINE_KINDS)[number];
+
 export const ROUTING_MODES = [
   'AUTO',
   'BEST',
@@ -473,6 +484,15 @@ export interface AIRequest {
   sensitive?: boolean;
   /** Explicit permission to spend money on this request. */
   allowPaid?: boolean;
+  /**
+   * The output ceiling this call will carry, when the caller declared one.
+   *
+   * Routing does not send it to a provider — the completion request does that.
+   * It is here because a budget reservation has to be sized before the call is
+   * made, and `maxTokens` is the only ceiling anyone has actually stated. Left
+   * unset, the reservation falls back to a conservative default instead.
+   */
+  maxTokens?: number | null;
 }
 
 export interface RoutingCandidate {
@@ -539,6 +559,23 @@ export interface RoutingDecision {
    * — which is not the same thing and must not be rendered as `$0.00`.
    */
   expectedCost: number | null;
+  /**
+   * USD held against a pool's budget for as long as the call is in flight.
+   *
+   * This is deliberately **not** `expectedCost`. `expectedCost` is a prediction
+   * — a mid-range guess used for ranking and for telling the caller what a call
+   * is likely to cost. A budget ceiling needs the opposite bias: the amount
+   * reserved has to be one the settled cost is unlikely to exceed, because two
+   * callers that both read an optimistic estimate can each be admitted and then
+   * together bill past the ceiling. So this is priced at the call's output
+   * ceiling rather than at a guess about how long the answer will be, and it is
+   * returned in full when the call settles, at which point `recordSpend` adds
+   * what it actually cost.
+   *
+   * `null` carries the same meaning as on `expectedCost`: the provider
+   * publishes no rate, so nothing can be shown to fit a budget.
+   */
+  reservationCost: number | null;
   expectedLatency: number | null;
 }
 

@@ -8,6 +8,7 @@ import type {
   TaskStep,
   UserPreferences,
   Workspace,
+  PipelineKind,
 } from '@meridian/shared';
 import { api, type ModelView, type PoolView, type ProviderView, type SystemInfo, type Vocabulary } from './api.js';
 import { eventStream, type ConnectionState, type ServerEvent } from './events.js';
@@ -161,7 +162,7 @@ interface State {
   openTask: (id: string) => Promise<void>;
   runTask: (
     request: string,
-    opts?: { allowPaid?: boolean; budget?: number; pipeline?: 'auto' | 'research' | 'debug' | 'tests' | 'code' },
+    opts?: { allowPaid?: boolean; budget?: number; pipeline?: PipelineKind },
   ) => Promise<string | null>;
   cancelTask: (id: string) => Promise<void>;
 

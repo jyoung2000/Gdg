@@ -35,11 +35,22 @@ writes code, and no row below should be read as saying otherwise.
 executed, and its effects were observed — for the Implementer and Tester, a file
 that exists on disk afterwards.
 
-**Orchestrator, Researcher and Debugger** are IMPLEMENTED_UNVERIFIED because the
-pipeline chosen for the requests exercised here did not include them. They share
-the same loop, tools and routing path as the agents that were exercised; what is
-unverified is their specific instruction and step sequencing, not the machinery
-underneath.
+**Orchestrator, Researcher and Debugger** are IMPLEMENTED_UNVERIFIED because no
+request exercised here ran them end to end. They share the same loop, tools and
+routing path as the agents that were exercised; what is unverified is their
+specific instruction and step sequencing, not the machinery underneath.
+
+**Orchestrator and Browser were worse than unverified until this release: they
+were unreachable.** Both were declared in the `AgentRole` union, defined in
+`AGENT_DEFINITIONS` and listed in `AGENT_ROLES_ORDER`, and `planPipeline` emitted
+neither — so no request, by any route, could select them. They read from the
+outside like capabilities and were dead code. Each now has a pipeline that names
+it (`orchestrate` and `browse`), and `tests/e2e/agent-roles.test.ts` derives the
+reachability check from the roster itself, so declaring a tenth agent without a
+way to select it fails rather than being noticed a release later. That test also
+checks each definition is coherent — a `finish` tool so the loop can end, a step
+budget, a real prompt — and that the read-only pipelines contain no agent
+holding a workspace-mutating tool.
 
 **Browser** is PARTIAL. Its refusals are verified — a private, loopback or
 metadata address is rejected, a redirect into private space is rejected mid-chain,
