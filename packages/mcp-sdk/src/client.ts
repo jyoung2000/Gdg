@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { MeridianError } from '@meridian/shared';
+import { MERIDIAN_VERSION, MeridianError } from '@meridian/shared';
 import type { McpToolInfo } from './types.js';
 
 /**
@@ -72,7 +72,7 @@ export class McpClient {
     const result = (await this.request('initialize', {
       protocolVersion: PROTOCOL_VERSION,
       capabilities: {},
-      clientInfo: { name: 'meridian', version: '1.0.0' },
+      clientInfo: { name: 'meridian', version: MERIDIAN_VERSION },
     })) as McpInitializeResult & { protocolVersion?: string };
     this.initialized = {
       serverInfo: result.serverInfo ?? { name: 'unknown', version: '0' },

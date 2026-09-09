@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { DEFAULT_PORT, MODE_DESCRIPTION_KEYS } from './shared.js';
 import { MODE_DESCRIPTION, PRIVACY_DESCRIPTION, MODE_WEIGHTS } from '@meridian/routing-sdk';
 import { AGENT_DEFINITIONS, AGENT_ROLES_ORDER } from '@meridian/agent-sdk';
-import { CAPABILITIES, MODALITIES, PRICING_KINDS, PRIVACY_MODES, ROUTING_MODES, TASK_TYPES, TRUST_LEVELS } from '@meridian/shared';
+import { CAPABILITIES, MERIDIAN_VERSION, MODALITIES, PRICING_KINDS, PRIVACY_MODES, ROUTING_MODES, TASK_TYPES, TRUST_LEVELS } from '@meridian/shared';
 import { requireAdmin } from './authz.js';
 import type { App } from '../services/app.js';
 
@@ -26,7 +26,7 @@ export async function registerSystemRoutes(server: FastifyInstance, app: App): P
     return {
       name: 'Meridian',
       description: 'Universal AI Gateway',
-      version: '1.0.0',
+      version: MERIDIAN_VERSION,
       port: app.config.port,
       defaultPort: DEFAULT_PORT,
       authRequired: app.config.authRequired,

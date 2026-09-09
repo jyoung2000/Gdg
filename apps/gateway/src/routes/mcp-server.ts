@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { MERIDIAN_VERSION } from '@meridian/shared';
 import type { App } from '../services/app.js';
 import { requireScope } from './authz.js';
 
@@ -92,7 +93,7 @@ export async function registerMcpServerEndpoint(server: FastifyInstance, app: Ap
           return respond({
             protocolVersion: PROTOCOL_VERSION,
             capabilities: { tools: {} },
-            serverInfo: { name: 'meridian', version: '1.0.0' },
+            serverInfo: { name: 'meridian', version: MERIDIAN_VERSION },
           });
         case 'ping':
           return respond({});

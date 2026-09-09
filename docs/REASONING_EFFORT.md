@@ -33,8 +33,10 @@ The user's intent is read as "think harder if you can", not "fail if you can't".
 - **GUI — chat composer.** A small **Effort** dropdown sits next to the Agent
   Mode selector. It is remembered across visits (a harmless preference), and
   labelled as applying to reasoning models. `default` sends nothing.
-- **CLI.** `uag chat "…" --effort high`. Also accepted on `code`/`task` flows
-  via the same flag plumbing.
+- **CLI.** `uag chat "…" --effort high`. Chat only. `code` and `task` say so
+  and carry on rather than ignoring the flag in silence: an agent run has no
+  effort parameter to send, because an agent's thinking budget is decided by
+  the model chosen for each step.
 - **API.** Either OpenAI's own top-level field or the Meridian namespace:
   ```json
   { "model": "auto", "messages": [...], "reasoning_effort": "high" }

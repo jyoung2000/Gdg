@@ -65,18 +65,15 @@ rows' evidence. Regenerate with `node scripts/scorecard.mjs --write`.
 
 | Status | Count | Share |
 | --- | ---: | ---: |
-| VERIFIED | 106 | 65% |
-| IMPLEMENTED_UNVERIFIED | 25 | 15% |
-| PARTIAL | 6 | 4% |
-| BLOCKED_EXTERNAL | 27 | 16% |
+| VERIFIED | 145 | 71% |
+| IMPLEMENTED_UNVERIFIED | 25 | 12% |
+| PARTIAL | 5 | 2% |
+| BLOCKED_EXTERNAL | 30 | 15% |
 | MISSING | 0 | — |
 | STUB | 0 | — |
 | FAILED | 0 | — |
 
-164 claims across the four matrices, counted by `node scripts/scorecard.mjs`.
-164 claims across the four matrices, counted by `node scripts/scorecard.mjs`.
-164 claims across the four matrices, counted by `node scripts/scorecard.mjs`.
-160 claims across the four matrices, counted by `node scripts/scorecard.mjs`.
+205 claims across the four matrices, counted by `node scripts/scorecard.mjs`.
 
 The BLOCKED_EXTERNAL share is high because the provider matrix contributes
 twenty rows of it: twenty remote providers, none credentialed here. That single

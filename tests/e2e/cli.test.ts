@@ -1,7 +1,7 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { AddressInfo } from 'node:net';
@@ -13,7 +13,8 @@ import { createServer } from '../../apps/gateway/src/server.js';
 import { startSimServer, type SimServer } from './helpers/sim-server.js';
 
 const exec = promisify(execFile);
-const CLI = resolve(process.cwd(), 'apps/cli/src/uag.ts');
+const REPO_ROOT = process.cwd();
+const CLI = resolve(REPO_ROOT, 'apps/cli/src/uag.ts');
 
 /**
  * The `uag` CLI against a running gateway.
@@ -136,10 +137,28 @@ describe('CLI', () => {
     assert.ok(existsSync(join(workspace.path, 'from-cli.md')), 'the file must exist on disk, not only in the summary');
   });
 
+  it('fails when the stream carries an error rather than an answer', async () => {
+    // A streamed failure arrives inside a 200, in a frame like any other, so
+    // reading past it printed whatever had been generated and exited 0. A
+    // script could not tell a truncated answer from a complete one, and
+    // `uag chat … && deploy` would deploy.
+    const res = await uag('chat', 'hello', '--model', 'nonexistent-provider:nonexistent-model');
+    assert.notEqual(res.code, 0, `a failed completion exited ${res.code}; stdout was ${JSON.stringify(res.stdout)}`);
+  });
+
   it('prints help that names every command it implements', async () => {
+    // Derived from the source rather than from a list kept here by hand. The
+    // hand-written list had nine entries and the CLI had twenty-eight, so the
+    // test agreed that help was complete while three shipped commands went
+    // unmentioned. A test whose expectation is maintained separately from the
+    // thing it checks stops checking the moment someone forgets it.
+    const source = readFileSync(join(REPO_ROOT, 'apps/cli/src/uag.ts'), 'utf8');
+    const implemented = [...source.matchAll(/^\s{4}case '([a-z][a-z0-9-]*)':/gm)].map((m) => m[1]);
+    assert.ok(implemented.length > 20, `only found ${implemented.length} commands in the source; the pattern has drifted`);
+
     const res = await uag('help');
     assert.equal(res.code, 0, res.stderr);
-    for (const command of ['chat', 'code', 'models', 'providers', 'pools', 'status', 'usage', 'task', 'compare']) {
+    for (const command of new Set(implemented)) {
       assert.match(res.stdout, new RegExp(`\\b${command}\\b`), `help omits "${command}"`);
     }
   });

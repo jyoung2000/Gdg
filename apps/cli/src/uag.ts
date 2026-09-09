@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
+import { ask } from './prompt.js';
 import { DEFAULT_PORT, formatCost, formatDuration, runtimeStatePath, type RuntimeState } from '@meridian/shared';
 
 interface Config {
@@ -192,7 +193,15 @@ class Client {
           choices?: { delta?: { content?: string } }[];
           usage?: Record<string, number>;
           meridian?: Record<string, unknown>;
+          error?: { code?: string; message?: string };
         } | null;
+        // A streamed failure arrives inside a 200, in a frame like any other.
+        // Reading past it printed whatever had been generated before the
+        // failure and exited 0, so a shell script could not tell a truncated
+        // answer from a complete one — and `uag chat … && deploy` would run.
+        if (evt?.error) {
+          throw new Error(`${evt.error.code ?? 'error'}: ${evt.error.message ?? 'the gateway reported a failure mid-stream'}`);
+        }
         if (evt?.meridian) onMeta(evt.meridian);
         if (evt?.usage) onMeta({ usage: evt.usage });
         const delta = evt?.choices?.[0]?.delta?.content;
@@ -285,6 +294,9 @@ ${c.dim('COMMANDS')}
   models [query]         List models the gateway can route to
   providers              List providers and their health
   pools                  List inference pools and reservations
+  routes [query]         Which providers serve the same model, and what each costs
+  radar                  Free inference the catalogue knows about, ranked
+  sync [--refresh]       Catalogue sync status, or fetch a fresh one
   benchmark <model>      Run the benchmark suite against a model
   compare <prompt>       Run one prompt across several models
   usage [--days N]       Show usage, cost and fallback statistics
@@ -320,6 +332,9 @@ ${c.dim('COMMON OPTIONS')}
   --workspace <id>       Workspace to act in
   --json                 Machine-readable output
   --url <url>            Gateway URL (default http://localhost:${DEFAULT_PORT})
+  --privacy <MODE>       Privacy floor: OPEN | STANDARD | STRICT | LOCAL_ONLY
+  --why                  Explain the routing decision after the answer
+  --yes                  Accept an agent's changes without the review prompt
 
 ${c.dim('EXAMPLES')}
   uag chat "explain this error" --mode FAST
@@ -369,8 +384,22 @@ async function main(): Promise<number> {
     /* ---------------- configure ---------------- */
     case 'configure': {
       const rl = createInterface({ input: process.stdin, output: process.stdout });
-      const url = (await rl.question(`Gateway URL [${config.baseUrl}]: `)).trim() || config.baseUrl;
-      const key = (await rl.question(`API key (leave blank for none) [${config.apiKey ? 'unchanged' : 'none'}]: `)).trim();
+      let url: string;
+      let key: string;
+      try {
+        url = (await ask(rl, `Gateway URL [${config.baseUrl}]: `)).trim() || config.baseUrl;
+        // Typed, not echoed. A key printed on screen is a key in a screen
+        // recording, in a screenshot of a terminal, and on the monitor behind
+        // whoever is walking past.
+        key = (await ask(rl, `API key (leave blank for none) [${config.apiKey ? 'unchanged' : 'none'}]: `, { secret: true })).trim();
+      } catch {
+        // Input ended before both answers. This used to exit 0 having written
+        // nothing, so a script that piped answers in reported success and
+        // configured nothing.
+        rl.close();
+        err('\nConfiguration was not saved: the input ended early. Run `uag configure` from a terminal.');
+        return 1;
+      }
       rl.close();
       const next: Config = { ...config, baseUrl: url, apiKey: key || config.apiKey };
       saveConfig(next);
@@ -867,6 +896,13 @@ async function main(): Promise<number> {
       if (!workspaceId) {
         err('No workspace. Pass --workspace <id>, or create one in the app.');
         return 1;
+      }
+      // Accepted by the parser like any other flag, and not sent: the agent
+      // runtime has no effort parameter, because an agent's thinking budget is
+      // decided by the per-step model choice. Silently ignoring it is the
+      // confusing part, so say so.
+      if (flags.effort !== undefined) {
+        err('--effort applies to `uag chat` only; an agent run picks a model per step. Ignoring it.');
       }
 
       const { estimate, pipeline } = await client.request<{

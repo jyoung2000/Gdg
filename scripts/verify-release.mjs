@@ -199,6 +199,19 @@ await step('Typecheck', 'npx', ['tsc', '--noEmit', '-p', 'tsconfig.json']);
 await step('Build', 'node', ['scripts/build.mjs']);
 
 /**
+ * One version, and no known vulnerabilities in what ships.
+ *
+ * Both of these are cheap, both were absent, and both are the kind of thing a
+ * release finds out about from a user. The version check fails when any
+ * manifest, the desktop bundle, the Rust crate or the constant the product
+ * reports about itself disagree with the root `package.json`. The dependency
+ * check fails on a high or critical advisory in the production tree and prints
+ * everything below that line rather than hiding it.
+ */
+await step('One version everywhere', 'node', ['scripts/check-version.mjs']);
+await step('No known vulnerabilities in the shipped tree', 'node', ['scripts/check-dependencies.mjs']);
+
+/**
  * The offline artefacts are things people download, so they are release
  * artefacts and they get a release gate.
  *
@@ -290,7 +303,15 @@ for (const gate of GATES) {
   report.gates.push({ ...gate, status, missing });
 }
 
-await step('Scorecard', 'node', ['scripts/scorecard.mjs']);
+/**
+ * The scorecard, and whether the shipped report still tells the truth about it.
+ *
+ * `--check` rather than a bare run: the step used to print a table nobody
+ * compared to anything and could not fail, so the report could quote a
+ * scorecard that had not matched the matrices for weeks. It also fails on a
+ * MISSING, STUB or FAILED row, which is the thing counting them is for.
+ */
+await step('Scorecard matches the shipped report', 'node', ['scripts/scorecard.mjs', '--check']);
 
 const suitesOk = report.suites.every((s) => s.ok);
 const stepsOk = report.steps.every((s) => s.ok);

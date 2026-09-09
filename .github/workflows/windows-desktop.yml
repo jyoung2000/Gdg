@@ -334,9 +334,55 @@ jobs:
             Get-Content $log -Tail 120
           }
 
+  # The gate the publish depends on.
+  #
+  # `needs:` cannot reach across workflows, so the Windows job's success said
+  # nothing about whether the code it packaged typechecks, passes its tests, or
+  # ships a current offline UI — the publish depended only on an installer
+  # having been produced. This runs the same release verification the project
+  # runs locally, in the same workflow run, so a tag that publishes is a tag
+  # that passed.
+  verify:
+    name: Release gates
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Read the pinned runtime
+        id: runtime
+        shell: bash
+        run: echo "version=$(node -p "require('./apps/desktop/runtime.json').version")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.runtime.outputs.version }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium for the browser suite
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Verify the release
+        run: pnpm verify:release
+
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-verification
+          path: docs/evidence/RELEASE.md
+
   release:
     name: Publish
-    needs: build
+    needs: [build, verify]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

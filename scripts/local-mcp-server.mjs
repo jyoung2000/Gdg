@@ -26,6 +26,20 @@
  *   --slow-tool   this tool sleeps, so timeout handling can be exercised
  */
 import { createInterface } from 'node:readline';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+/**
+ * The repository's own version, read rather than restated.
+ *
+ * This script is plain Node with no build step, so it cannot import the
+ * `@meridian/shared` constant. Reading the root manifest is the same single
+ * source; `scripts/check-version.mjs` keeps the two in step.
+ */
+const MERIDIAN_VERSION = JSON.parse(
+  readFileSync(join(dirname(dirname(fileURLToPath(import.meta.url))), 'package.json'), 'utf8'),
+).version;
 
 const argv = process.argv.slice(2);
 const flag = (name, fallback = null) => {
@@ -119,7 +133,7 @@ async function handle(msg) {
       return ok(id, {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: SERVER_NAME, version: '1.0.0' },
+        serverInfo: { name: SERVER_NAME, version: MERIDIAN_VERSION },
       });
     case 'ping':
       return ok(id, {});

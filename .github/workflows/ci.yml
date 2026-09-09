@@ -6,6 +6,10 @@ name: CI
 on:
   push:
     branches: ['**']
+    # Tags too. `branches` does not match a tag push, so tagging a release ran
+    # no CI at all: the one push that produces artefacts people download was
+    # the only one nobody checked.
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -53,6 +57,15 @@ jobs:
             exit 1
           fi
 
+      # Cheap, and both were missing. A version that disagrees with itself and a
+      # known advisory in the shipped tree are the two things a release most
+      # easily gets wrong without anybody noticing until a user reports it.
+      - name: One version everywhere
+        run: node scripts/check-version.mjs
+
+      - name: No known vulnerabilities in the shipped tree
+        run: node scripts/check-dependencies.mjs
+
       - name: Typecheck
         run: pnpm typecheck
 
@@ -66,6 +79,15 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      # The offline UI and the GUI mockup are files people download, so a stale
+      # one is a shipped defect rather than a stale doc. The scorecard check
+      # fails when the report quotes numbers the matrices no longer produce.
+      - name: Offline artefacts are current and self-contained
+        run: node scripts/check-offline-ui.mjs
+
+      - name: Scorecard matches the shipped report
+        run: node scripts/scorecard.mjs --check
 
       # The payload and its verification run on Linux too. The Windows job
       # proves the Windows payload; this proves the packaging logic itself, on
