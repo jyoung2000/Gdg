@@ -4,3 +4,8 @@ export * from './types.js';
 export * from './litellm-pricing.js';
 export * from './price-book-sync.js';
 export * from './community-registries.js';
+export * from './dataset-sources.js';
+export * from './http.js';
+export * from './native-sources.js';
+export * from './registry.js';
+export * from './free-ranking.js';

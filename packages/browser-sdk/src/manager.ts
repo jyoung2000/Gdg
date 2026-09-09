@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { lookup as dnsLookupCb } from 'node:dns';
 import { promisify } from 'node:util';
-import { MeridianError } from '@meridian/shared';
+import { isPrivateHost, MeridianError } from '@meridian/shared';
 import type { BrowserProvider, ProviderSession } from './provider.js';
 import type {
   BrowserEngineId,
@@ -29,24 +29,13 @@ const MAX_SESSIONS = 8;
  *
  * Same reasoning as the agent fetch tool: a browser that can be steered to the
  * operator's internal services or a cloud metadata endpoint is an exfiltration
- * path. Kept local to this package so browser-sdk stays dependency-light; the
- * logic mirrors agent-sdk's `isPrivateHost` deliberately.
+ * path. The rules themselves live in `@meridian/shared` — this package used to
+ * carry its own copy "to stay dependency-light", which in practice meant it
+ * missed the alternative spellings of an IPv4 address that the other copy also
+ * missed. One set of rules, one place to fix them.
  */
 export function isPrivateBrowserHost(hostname: string): boolean {
-  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.internal') || h.endsWith('.local')) return true;
-  if (h === '::1' || h === '::' || h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return true;
-  const mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(h);
-  if (mapped) return isPrivateBrowserHost(mapped[1]);
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
-  if (!v4) return false;
-  const [a, b] = [Number(v4[1]), Number(v4[2])];
-  if (a === 10 || a === 127 || a === 0) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
-  return false;
+  return isPrivateHost(hostname);
 }
 
 function hostMatches(hostname: string, pattern: string): boolean {

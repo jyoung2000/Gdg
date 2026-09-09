@@ -250,7 +250,13 @@ export const UZAIR_METADATA: SourceMetadata = {
   // Entries carry lastVerified and verifiedBy, so a dated one can reach LIKELY;
   // ageAdjusted() drops it back to STALE once the date is old enough.
   baseConfidence: 'LIKELY',
-  contributes: ['providers', 'models', 'limits', 'access-terms', 'quota'],
+  // 'capabilities' is here because the source genuinely publishes per-model
+  // capability lists — tools, structured output, reasoning. It was missing, and
+  // the effect was not a type error but a silent one: the merge refused thirty
+  // capability claims a source was entitled to make, and the models came out
+  // looking less capable than the data said they were. `contributes` is load-
+  // bearing, so it has to describe what the parser actually reads.
+  contributes: ['providers', 'models', 'limits', 'capabilities', 'access-terms', 'quota'],
 };
 
 export function communityProvenance(

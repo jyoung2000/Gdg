@@ -3,6 +3,7 @@ import {
   CAPABILITIES,
   MODALITIES,
   MeridianError,
+  assessProviderBaseUrl,
   isFree,
   isZeroCost,
   newId,
@@ -297,6 +298,32 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
       // every override the request did not mention, so toggling `enabled`
       // silently erased an operator's trust and URL customisations.
       const existing = app.store.listProviderOverrides().find((o) => o.id === req.params.id);
+
+      // Where a provider's requests go is not a free-text field. Every call to
+      // this provider carries the operator's API key in an Authorization
+      // header, so a base URL pointed at 169.254.169.254 does not merely fail —
+      // it hands the credential to the cloud metadata service, and a base URL
+      // pointed at an internal host hands it to whatever logs the request.
+      //
+      // Private space is allowed only for a provider that genuinely runs there.
+      // Ollama, LM Studio and llama.cpp all live on 127.0.0.1, and refusing
+      // them would break the one deployment that costs nothing to run — but
+      // "OpenAI, pointed at 127.0.0.1" is a different thing entirely, and the
+      // difference is exactly the `local` flag.
+      if (body.baseUrl !== undefined) {
+        const verdict = assessProviderBaseUrl(body.baseUrl, { local: descriptor.local });
+        if (!verdict.ok) {
+          app.store.audit({
+            actor: req.auth.userId ?? 'anonymous',
+            action: 'provider.update.rejected',
+            target: req.params.id,
+            details: { baseUrl: body.baseUrl, reason: verdict.reason },
+            ip: req.ip,
+          });
+          throw new MeridianError('invalid_request', `That base URL was refused: ${verdict.message}`);
+        }
+      }
+
       app.store.saveProviderOverride(req.params.id, {
         trust: body.trust ?? existing?.trust ?? null,
         baseUrl: body.baseUrl ?? existing?.baseUrl ?? null,
