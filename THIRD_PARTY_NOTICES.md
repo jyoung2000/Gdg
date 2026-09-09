@@ -108,6 +108,86 @@ Copyright (c) 2023 Berri AI, under the same MIT terms quoted in full above.
 
 ---
 
+## Redistributed inside the Windows desktop application
+
+Everything below ships **as binaries or source, inside `Meridian-Setup-x64.exe`
+and `Meridian-Portable-x64.zip`**. This is a stricter obligation than the data
+sources above: these are executable works handed to end users, and their
+licences travel with them.
+
+The installer downloads nothing at runtime. What is listed here is what is in
+the file.
+
+### Node.js — redistributed binary
+
+- **Upstream:** https://nodejs.org/dist
+- **Version:** 22.23.2 (LTS "Jod", `NODE_MODULE_VERSION` 127), pinned by SHA-256
+  in `apps/desktop/runtime.json` and verified on every download.
+- **Licence:** MIT, plus the licences of the components Node itself embeds —
+  V8 (BSD-3-Clause), libuv (MIT), OpenSSL (Apache-2.0), zlib, c-ares, llhttp and
+  others. Node's own `LICENSE` file reproduces all of them in full.
+- **What is shipped:** one file, `node.exe`, in `runtime/`. No npm, no headers,
+  no toolchain.
+- **How the licence travels:** `scripts/fetch-node-runtime.mjs` downloads
+  `LICENSE` from the tagged release alongside the binary, and
+  `scripts/package-desktop.mjs` places it in the payload as
+  `runtime/LICENSE-node.txt`. It is installed next to the binary it covers, so
+  the notice cannot be separated from the work.
+- **Why it is bundled:** so that installing Meridian does not mean installing
+  Node. A pinned runtime is also what makes the native addon's ABI a decision
+  taken at build time rather than a property of whatever the user happened to
+  have.
+
+Meridian is not a modified distribution of Node and does not present itself as
+one. The binary is the unmodified official build for the target platform.
+
+### better-sqlite3 — redistributed, including a compiled binary
+
+- **Upstream:** https://github.com/WiseLibs/better-sqlite3
+- **Version:** 11.10.0 · **Licence:** MIT
+- **What is shipped:** `package.json`, `LICENSE`, `lib/`, and the compiled addon
+  `build/Release/better_sqlite3.node` — an allowlist, not a copy of the package.
+  The full package is 12 MB of SQLite amalgamation and build intermediates, of
+  which about 2 MB is needed to run.
+- **SQLite itself**, which that addon statically links, is **public domain** and
+  carries no attribution requirement. It is recorded here because "what database
+  is in this thing" is a fair question to be able to answer.
+- Its two runtime dependencies ship with it: **bindings** 1.5.0 (MIT) and
+  **file-uri-to-path** 1.0.0 (MIT), each with its own licence file.
+
+`prebuild-install` is deliberately absent. It is a dependency of
+`better-sqlite3` and runs only during `npm install`; shipping it would put a
+downloader into the installed application for no reason.
+
+### Tauri — linked into the desktop shell
+
+- **Upstream:** https://github.com/tauri-apps/tauri
+- **Version:** 2.11.x · **Licence:** MIT **or** Apache-2.0, at the recipient's
+  option. Meridian's use is under MIT.
+- **What is shipped:** compiled into `Meridian.exe`, along with the plugins
+  `tauri-plugin-single-instance` and `tauri-plugin-opener` (same dual licence)
+  and the Rust crates in `apps/desktop/src-tauri/Cargo.lock`. That lockfile is
+  the exhaustive list; `cargo tree` and `cargo about` will produce the full
+  notice set from it.
+
+### WebView2 — **not** redistributed
+
+The window is rendered by Microsoft Edge WebView2, which is a **component of the
+operating system**, already present on Windows 11 and on up-to-date Windows 10.
+Meridian links against it and ships none of it. The NSIS installer will invoke
+Microsoft's own bootstrapper if the runtime is missing; the portable archive
+cannot, which is why its `README.txt` says so.
+
+### The web client
+
+Meridian's own React application, built by Vite into `server/web/`, is
+Meridian's source under Meridian's licence. Its npm dependencies are compiled
+into those bundles; `pnpm licenses list --prod` enumerates them, and every one
+of them is MIT, ISC, BSD or Apache-2.0 — the check is part of the release
+routine in [docs/RELEASE_WINDOWS.md](docs/RELEASE_WINDOWS.md).
+
+---
+
 ## Architectural influences — concepts only, reimplemented
 
 The projects below were read to understand how they solve problems Meridian

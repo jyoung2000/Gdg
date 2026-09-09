@@ -102,12 +102,26 @@ jobs:
         run: cargo test --release
 
       - name: Build the installer
-        # Signing is configured through the environment and is absent on a fork
-        # or an unsigned build; the installer is produced either way and the
-        # release job is what refuses to publish an unsigned one.
+        # `bundle.windows.signCommand` runs scripts/sign-windows.mjs against
+        # every artefact. With no certificate configured it leaves the artefact
+        # unsigned and says so; with MERIDIAN_REQUIRE_SIGNING=1 it fails the
+        # build instead. Neither case is allowed to be silent, and the step
+        # after this one reports what actually happened rather than what was
+        # configured.
+        #
+        # Run from the repository root: the sign command's path is relative to
+        # the working directory, not to the Tauri project.
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          MERIDIAN_WINDOWS_SIGN_THUMBPRINT: ${{ secrets.MERIDIAN_WINDOWS_SIGN_THUMBPRINT }}
+          MERIDIAN_WINDOWS_SIGN_PFX_BASE64: ${{ secrets.MERIDIAN_WINDOWS_SIGN_PFX_BASE64 }}
+          MERIDIAN_WINDOWS_SIGN_PFX_PASSWORD: ${{ secrets.MERIDIAN_WINDOWS_SIGN_PFX_PASSWORD }}
+          MERIDIAN_WINDOWS_SIGN_TIMESTAMP: ${{ vars.MERIDIAN_WINDOWS_SIGN_TIMESTAMP }}
+          # A repository variable, set once a certificate exists. Until then a
+          # tagged build produces an unsigned installer and says so on the
+          # release, which is the truth; inventing a certificate is not an
+          # option and pretending one is configured would be worse than
+          # shipping unsigned.
+          MERIDIAN_REQUIRE_SIGNING: ${{ vars.MERIDIAN_REQUIRE_SIGNING }}
         run: pnpm exec tauri build --config apps/desktop/src-tauri/tauri.conf.json
 
       - name: Find what was built
@@ -122,6 +136,46 @@ jobs:
           "installer=$($nsis.FullName)" >> $env:GITHUB_OUTPUT
           "installerName=$($nsis.Name)" >> $env:GITHUB_OUTPUT
           Write-Host "installer: $($nsis.Name) ($([math]::Round($nsis.Length / 1MB, 1)) MB)"
+
+      # Whether the file is signed is a property of the file, so read it from
+      # the file. A configured secret proves nothing about the artefact.
+      - name: Report the signature state of what was built
+        id: signature
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature "${{ steps.artifacts.outputs.installer }}"
+          $status = $sig.Status.ToString()
+          Write-Host "Authenticode status: $status"
+          $line = if ($status -eq 'Valid') {
+            "SIGNED: $($sig.SignerCertificate.Subject) (thumbprint $($sig.SignerCertificate.Thumbprint))"
+          } else {
+            "UNSIGNED ($status). Windows SmartScreen will warn on first run."
+          }
+          Write-Host $line
+          "state=$status" >> $env:GITHUB_OUTPUT
+          "signing=$line" >> $env:GITHUB_OUTPUT
+          $line | Out-File -FilePath (Join-Path (Split-Path "${{ steps.artifacts.outputs.installer }}") 'SIGNING.txt') -Encoding utf8
+          "### Windows installer`n`n$line" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      # The same application without an installer, for machines where running
+      # one is not an option.
+      - name: Build the portable archive
+        run: node scripts/package-portable.mjs --platform win32 --arch x64
+
+      - name: The portable archive contains a whole application
+        shell: pwsh
+        run: |
+          $zip = 'dist/portable/Meridian-Portable-x64.zip'
+          if (-not (Test-Path $zip)) { Write-Error "no portable archive was produced"; exit 1 }
+          $out = 'dist/portable-check'
+          Expand-Archive -Path $zip -DestinationPath $out -Force
+          $root = Join-Path $out 'Meridian-Portable-x64'
+          foreach ($rel in @('Meridian.exe', 'runtime\node.exe', 'server\gateway\main.js', 'server\web\index.html', 'payload.json', 'README.txt')) {
+            if (-not (Test-Path (Join-Path $root $rel))) { Write-Error "the portable archive is missing $rel"; exit 1 }
+            Write-Host "  ok  $rel"
+          }
+          # It has to boot from where it was unpacked, on its own runtime.
+          node scripts/verify-desktop-payload.mjs --payload $root
 
       # A silent install, then the checks a first-time user's machine would
       # answer. NSIS in currentUser mode needs no elevation, which is the whole
@@ -249,22 +303,25 @@ jobs:
           }
           Write-Host "uninstall removed the program and kept the data"
 
-      - name: Checksums
+      # One folder, one checksum file, so a person verifying a download reads one
+      # list rather than working out which of two applies to them.
+      - name: Collect the release files and check-sum them
         shell: pwsh
         run: |
-          $dir = Split-Path "${{ steps.artifacts.outputs.installer }}"
-          Get-ChildItem -Path $dir -Filter *.exe | ForEach-Object {
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item "${{ steps.artifacts.outputs.installer }}" release/
+          Copy-Item 'dist/portable/Meridian-Portable-x64.zip' release/
+          Copy-Item (Join-Path (Split-Path "${{ steps.artifacts.outputs.installer }}") 'SIGNING.txt') release/
+          Get-ChildItem -Path release -Include *.exe, *.zip -Recurse | Sort-Object Name | ForEach-Object {
             $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
-            "$h  $($_.Name)" | Out-File -FilePath (Join-Path $dir 'SHA256SUMS.txt') -Append -Encoding utf8
+            "$h  $($_.Name)" | Out-File -FilePath 'release/SHA256SUMS.txt' -Append -Encoding utf8
             Write-Host "$h  $($_.Name)"
           }
 
       - uses: actions/upload-artifact@v4
         with:
           name: meridian-windows-x64
-          path: |
-            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
-            apps/desktop/src-tauri/target/release/bundle/nsis/SHA256SUMS.txt
+          path: release/*
           if-no-files-found: error
 
       - name: Logs, whatever happened
@@ -296,8 +353,15 @@ jobs:
           files: dist/*
           fail_on_unmatched_files: true
           body: |
-            Windows x64 installer, built and verified on a Windows runner: the payload boots on its bundled Node,
+            Windows x64, built and verified on a Windows runner: the payload boots on its bundled Node,
             creates its database, serves the web client, stops with its shell, survives a reinstall, and keeps user
             data through an uninstall.
 
-            Verify your download against `SHA256SUMS.txt` before running it.
+            - `Meridian-Setup-x64.exe` — the installer. No administrator rights needed.
+            - `Meridian-Portable-x64.zip` — the same application in a folder, for machines where running an installer is not an option.
+
+            `SIGNING.txt` records whether this build is code-signed, read from the artefact itself. If it says
+            UNSIGNED, Windows SmartScreen will warn on first run — that warning is accurate and you should
+            verify the download against `SHA256SUMS.txt` before running it.
+
+            Installation and first run: [docs/INSTALL_WINDOWS.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/INSTALL_WINDOWS.md)

@@ -57,6 +57,18 @@ for (const relPath of [payload.node.binary, payload.server.entry, payload.native
   check(`present: ${relPath}`, existsSync(join(payloadDir, relPath)));
 }
 
+// Node is MIT and the notice has to travel with the binary. This is the last
+// point before the payload becomes an installer, so it is checked here as well
+// as at packaging time — a licence omission is not the kind of thing to catch
+// once.
+const noticePath = join(payloadDir, 'runtime/LICENSE-node.txt');
+const notice = existsSync(noticePath) ? readFileSync(noticePath, 'utf8') : '';
+check(
+  'the bundled runtime carries its licence',
+  notice.includes('MIT') && notice.length > 1000,
+  notice ? `${(notice.length / 1024).toFixed(1)} KB beside runtime/${payload.node.binary.split('/').pop()}` : 'missing',
+);
+
 // The web client is not one file, and an empty assets directory would still
 // pass an index.html check while rendering a blank window.
 const assets = existsSync(join(payloadDir, 'server/web/assets')) ? readdirSync(join(payloadDir, 'server/web/assets')) : [];

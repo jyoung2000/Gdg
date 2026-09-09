@@ -115,8 +115,19 @@ if (!existsSync(runtimeSrc)) {
   );
 }
 copyInto(runtimeSrc, join(outDir, 'runtime', artifact.out));
+// Node is MIT, and MIT requires its notice to travel with the binary. The fetch
+// step is best-effort — a network failure there should not stop a developer
+// building — but *packaging* is the point where the payload becomes something
+// handed to other people, so a missing notice fails here rather than shipping.
 const licenceSrc = join(ROOT, 'apps/desktop/vendor/node', key, 'LICENSE-node.txt');
-if (existsSync(licenceSrc)) copyInto(licenceSrc, join(outDir, 'runtime', 'LICENSE-node.txt'));
+if (!existsSync(licenceSrc)) {
+  fail(
+    `the Node licence text is missing from apps/desktop/vendor/node/${key}.\n` +
+      '  Redistributing the runtime without it does not satisfy its MIT licence.\n' +
+      `  Re-run: node scripts/fetch-node-runtime.mjs --platform ${platform} --arch ${arch}`,
+  );
+}
+copyInto(licenceSrc, join(outDir, 'runtime', 'LICENSE-node.txt'));
 
 // 2. The gateway bundle and the web client.
 copyInto(join(ROOT, 'dist/gateway/main.js'), join(outDir, 'server/gateway/main.js'));

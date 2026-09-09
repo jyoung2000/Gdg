@@ -55,6 +55,7 @@
       "../payload/payload.json": "payload.json"
     },
     "windows": {
+      "signCommand": "node scripts/sign-windows.mjs %1",
       "nsis": {
         "installMode": "currentUser",
         "startMenuFolder": "Meridian",

@@ -48,6 +48,23 @@ configured.
 
 ## Quick start
 
+### Windows
+
+Download **`Meridian-Setup-x64.exe`** from the
+[latest release](https://github.com/jyoung2000/Gdg/releases/latest) and run it.
+No Node, no pnpm, no Docker, no terminal, and no administrator rights: the
+installer carries its own pinned Node runtime and installs for your account
+only.
+
+Meridian then lives in the system tray and keeps serving after you close the
+window, because `uag` and your editor are talking to it. Credentials are
+encrypted under a key Windows holds for your account through DPAPI, so a copied
+database is not a copied credential.
+
+[Installing and first run](docs/INSTALL_WINDOWS.md) ·
+[Building it](docs/DEVELOPMENT_WINDOWS.md) ·
+[Releasing it](docs/RELEASE_WINDOWS.md)
+
 ### Docker
 
 ```bash
@@ -361,6 +378,11 @@ What has and has not been verified is written down rather than implied — see
 | `docs/PROVIDER_VERIFICATION.md` | Every provider and the status of its integration |
 | `docs/AGENT_VERIFICATION.md` | The agent roster, and what each has been observed doing |
 | `docs/MODALITY_VERIFICATION.md` | How far each modality's path has been exercised |
+| `docs/INSTALL_WINDOWS.md` | Installing and running the Windows application |
+| `docs/DEVELOPMENT_WINDOWS.md` | Building the desktop shell and the installer |
+| `docs/RELEASE_WINDOWS.md` | The release workflow, code signing, and the bundled Node |
+| `docs/MERIDIAN_WINDOWS_DESKTOP.md` | What the desktop build is, what was proved, and where |
+| `docs/MERIDIAN_PHASE4_IMPLEMENTATION.md` | Per-credential health, model health, and the request trace |
 
 ---
 

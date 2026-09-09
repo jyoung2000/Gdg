@@ -159,9 +159,14 @@ try {
   // the kind of omission that is nobody's problem right up until it is.
   try {
     const licence = await fetch(manifest.license, { redirect: 'follow' }).then((r) => (r.ok ? r.text() : null));
-    if (licence) writeFileSync(join(outDir, 'LICENSE-node.txt'), licence);
-  } catch {
-    process.stdout.write('  (could not fetch the Node licence text; see THIRD_PARTY_NOTICES.md)\n');
+    if (licence && licence.includes('MIT')) writeFileSync(join(outDir, 'LICENSE-node.txt'), licence);
+    else throw new Error(`the response from ${manifest.license} does not look like the Node licence`);
+  } catch (error) {
+    // Not fatal here — a developer building locally is not redistributing
+    // anything. scripts/package-desktop.mjs refuses to assemble a payload
+    // without this file, so the omission cannot reach a user.
+    process.stdout.write(`  WARNING: could not fetch the Node licence text (${error.message}).\n`);
+    process.stdout.write('  Packaging will refuse to build a payload until it is present.\n');
   }
 
   writeFileSync(
