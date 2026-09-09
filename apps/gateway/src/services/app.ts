@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import {
+  quotaFraction,
   createLogger,
   newId,
   type FallbackEvent,
@@ -349,6 +350,27 @@ export class App {
       pools,
       allowPaid: () => config.allowPaid,
       preferencesFor,
+      /**
+       * How much of this provider's free allowance is left.
+       *
+       * Read from what providers actually told us — the rate-limit headers on
+       * previous responses, recorded per credential. `null` when nothing has
+       * been published, which is most providers most of the time, and null is
+       * deliberately not 1: an account nobody has published a limit for is not
+       * an account with a full allowance.
+       *
+       * The best of the credentials is what counts. If one key is spent and
+       * another has room, this provider has room — the credential resolver
+       * will pick the one that works.
+       */
+      quotaHeadroom: (providerId) => {
+        const fractions = store
+          .listForProvider(providerId)
+          .flatMap((c) => credentialHealth.quotasFor(c.id))
+          .map((q) => quotaFraction(q, Date.now()))
+          .filter((f): f is number => f !== null);
+        return fractions.length ? Math.max(...fractions) : null;
+      },
     });
 
     const executor = new Executor({

@@ -30,10 +30,28 @@ mode:
 | quality | Measured score for this task type, shrunk toward neutral until enough samples exist |
 | speed | Inverse latency; unmeasured models sit mid-pack so they get sampled rather than starved |
 | cost | Inverse estimated cost, on a log scale |
-| free | Bonus for a model that cannot charge |
+| free | Bonus for a model that cannot charge, scaled by how much of its allowance is left |
 | local | Bonus for your own hardware |
 | preference | Your saved model and provider preferences, and pool member priority |
 | reliability | Measured stability × (1 − recent provider error rate) |
+
+### On the free factor and the allowance
+
+Free is not one thing. A free model with 900 of 1000 daily requests left and one
+with 3 left cost the same and are not equally good choices, so the free bonus is
+scaled by the fraction of the allowance remaining — read from the rate-limit
+headers providers actually sent on previous responses, taking the best across
+that provider's credentials.
+
+An unpublished allowance is **neutral**, not full and not empty. Most providers
+publish nothing, and scoring silence as either would rank models by how
+talkative their headers are.
+
+A nearly-spent route keeps at least a fifth of the free bonus, so three requests
+left still beats paying: paying money to avoid a route that still works is the
+wrong trade. A route with a published **zero** never reaches scoring at all —
+the credential layer rejects it first, with a reason that says so, because that
+layer also knows when the window resets and can put the account back.
 
 ## Modes
 

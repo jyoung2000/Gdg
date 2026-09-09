@@ -154,6 +154,43 @@ having evidence attached.
 
 ---
 
+## Quota-aware free routing
+
+Discovery that only fills a screen is a catalogue. This is where it changes what
+the gateway does.
+
+"Free" as a property of a rate card and "free" as something that will serve
+*this* request are different claims. Two free models — one with 900 of 1000
+daily requests left and one with 3 — are not equally good choices, and the
+router could not tell them apart.
+
+It can now. `RouterDeps.quotaHeadroom` reports the fraction of a provider's
+allowance remaining, read from the rate-limit headers providers actually sent on
+previous responses (`readRateLimitHeaders` → `recordRateLimit` → per-credential
+rows), taking the best across that provider's credentials. Three rules:
+
+- **Unknown headroom is neutral**, neither full nor empty. Most providers
+  publish nothing, and penalising them would rank models by how talkative their
+  provider's headers are rather than by whether they work.
+- **A nearly-spent route is discounted, not eliminated.** It keeps at least a
+  fifth of the free weight, so three requests left still beats paying. Paying
+  money to avoid a route that still works is the wrong trade.
+- **A route with a published zero never reaches scoring.** The credential layer
+  rejects it first — *"no requests quota left on this account"* — because that
+  layer also knows when the window resets and can put the account back.
+
+So the signal is not "avoid the empty one", which was already handled. It is
+"avoid the one about to become empty", which was not: a free-first policy that
+keeps picking a nearly-exhausted provider gets a 429, fails over, and repeats,
+burning a retry budget on a route it already had the evidence to avoid.
+
+`tests/router/free-quota.test.ts` drives all of this from real response headers
+rather than by writing quota rows, so what it proves is that the whole path
+exists — headers on a 200, parsed, stored, read by the router — and not just
+that the arithmetic is right.
+
+---
+
 ## The API
 
 | | |

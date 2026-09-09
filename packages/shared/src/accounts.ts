@@ -115,6 +115,24 @@ export type QuotaDimension = (typeof QUOTA_DIMENSIONS)[number];
 export const QUOTA_SOURCES = ['provider-headers', 'provider-api', 'local-accounting', 'unknown'] as const;
 export type QuotaSource = (typeof QUOTA_SOURCES)[number];
 
+/**
+ * How much of this quota is left, in [0,1], or null when it cannot be said.
+ *
+ * The `CredentialQuota` sibling of `quotaRemainingFraction`: that one reads a
+ * `QuotaState` built from usage counters, this one reads a row observed from a
+ * provider's own rate-limit headers.
+ *
+ * Null rather than 1 when the provider published a remaining count with no
+ * limit to measure it against, and null once the reset time has passed —
+ * because after a window resets the reading describes the window before it,
+ * and a stale zero would keep a recovered account at the back of the queue.
+ */
+export function quotaFraction(q: CredentialQuota, now: number = Date.now()): number | null {
+  if (q.resetsAt !== null && q.resetsAt <= now) return null;
+  if (q.remaining === null || q.limit === null || q.limit <= 0) return null;
+  return Math.max(0, Math.min(1, q.remaining / q.limit));
+}
+
 /** Known-empty. An unpublished quota is never treated as empty. */
 export function quotaIsExhausted(q: CredentialQuota): boolean {
   return q.remaining != null && q.remaining <= 0;

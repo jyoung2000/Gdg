@@ -46,6 +46,18 @@ export interface RouterDeps {
   pools: PoolManager;
   /** Global kill-switch: when false no request may route to a paid model. */
   allowPaid: () => boolean;
+  /**
+   * How much of a free allowance is left, in [0,1], or null when nothing is
+   * published.
+   *
+   * Null and 1 are different answers and must stay different. A provider that
+   * publishes no rate-limit headers is not a provider with a full allowance,
+   * and treating it as one would rank the quiet providers above the honest
+   * ones. Null is neutral here: it neither helps nor hurts.
+   *
+   * Optional, so a router built without it behaves exactly as it did before.
+   */
+  quotaHeadroom?: (providerId: string, modelId: string) => number | null;
   preferencesFor?: (userId: string | null | undefined) => UserPreferences | null;
   now?: () => number;
 }
@@ -425,6 +437,36 @@ export class Router {
     const free = isFree(m.pricing) ? 1 : 0;
     const local = descriptor?.local ? 1 : 0;
 
+    /**
+     * A free route with room left beats a free route that is nearly spent.
+     *
+     * This is the difference between "free" as a property of a rate card and
+     * "free" as something that will actually serve this request. Two free
+     * models, one with 900 of 1000 daily requests left and one with 3, are not
+     * equally good choices, and before this the router could not tell them
+     * apart.
+     *
+     * Three rules keep it honest:
+     *
+     * Unknown headroom is neutral, not full and not empty. Most providers
+     * publish nothing, and penalising them would rank models by how talkative
+     * their provider's headers are rather than by whether they work.
+     *
+     * A nearly-spent route is discounted, never eliminated. It keeps at least a
+     * fifth of the free weight, so three requests left still beats paying —
+     * because it is still free, and because paying money to avoid a route that
+     * works is the wrong trade. A route with a published *zero* never reaches
+     * here at all: the credential layer rejects it first, with a reason that
+     * says so, because that layer also knows when the window resets and can put
+     * it back. So this signal is not "avoid the empty one" — that is already
+     * handled — but "avoid the one about to become empty", which was not.
+     *
+     * And it only applies to free routes. Headroom on a paid account is a
+     * billing question, not a routing one.
+     */
+    const headroom = free ? (this.deps.quotaHeadroom?.(m.providerId, m.id) ?? null) : null;
+    const freeValue = free * (headroom === null ? 1 : 0.2 + 0.8 * clamp01(headroom));
+
     const preference = this.preferenceScore(m, prefs, pool);
     // Only what the operator named counts as an instruction; a pool's member
     // weight is Meridian's own arrangement, not the user's.
@@ -448,7 +490,7 @@ export class Router {
       quality: quality * w.quality,
       speed: speed * w.speed,
       cost: cost * w.cost,
-      free: free * w.free,
+      free: freeValue * w.free,
       local: local * w.local,
       preference: preference * w.preference,
       reliability: reliability * w.reliability,

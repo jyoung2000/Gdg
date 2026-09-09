@@ -1,5 +1,6 @@
 import {
   nullLogger,
+  quotaFraction,
   type ModelDescriptor,
   type Pricing,
   type ProviderDescriptor,
@@ -105,6 +106,17 @@ export function createHarness(opts: {
     pools,
     allowPaid: () => opts.allowPaid ?? false,
     now,
+    // Wired exactly as the gateway wires it: the best headroom across this
+    // provider's credentials, from what providers actually published, and null
+    // when nothing has been.
+    quotaHeadroom: (providerId) => {
+      const fractions = credentialStore
+        .listForProvider(providerId)
+        .flatMap((c) => credentialHealth.quotasFor(c.id))
+        .map((q) => quotaFraction(q, now()))
+        .filter((f): f is number => f !== null);
+      return fractions.length ? Math.max(...fractions) : null;
+    },
   });
 
   const executor = new Executor({
