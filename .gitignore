@@ -23,3 +23,12 @@ docker/ca/*.pem
 
 # Bind-mounted workspace root used by the Compose verification runs.
 docker-workspaces/
+
+# The bundled Node runtime and the assembled desktop payload. Both are fetched
+# or built, both are large, and both are pinned by digest in
+# apps/desktop/runtime.json — so the repository records what they must be
+# rather than carrying a copy of them.
+apps/desktop/vendor/
+apps/desktop/payload/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/

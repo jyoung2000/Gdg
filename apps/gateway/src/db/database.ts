@@ -6,23 +6,47 @@ import type { Logger } from '@meridian/shared';
 
 export type DB = Database.Database;
 
-/** Where the .sql migration files live, whether running from source or a bundle. */
+/**
+ * Where the .sql migration files live, whether running from source, from a
+ * bundle in a checkout, or from an installed application.
+ *
+ * The three layouts differ in what is *above* the bundle. In a checkout there
+ * is a repository root two or four levels up. In an installed desktop
+ * application there is no repository at all: the payload is
+ * `server/gateway/main.js` beside `server/database/migrations`, dropped inside
+ * an installation directory whose parents belong to the operating system.
+ *
+ * `MERIDIAN_MIGRATIONS_DIR` exists for the same reason `MERIDIAN_WEB_ROOT`
+ * does: an installer knows exactly where it put things and should be able to
+ * say so rather than rely on a search finding it.
+ */
 function migrationsDir(): string {
+  const configured = process.env.MERIDIAN_MIGRATIONS_DIR;
   const here = dirname(fileURLToPath(import.meta.url));
-  // From source: apps/gateway/src/db -> repo root. From a bundle: dist/gateway -> repo root.
   for (const candidate of [
+    configured,
+    // From source: apps/gateway/src/db -> repo root. From a bundle in a
+    // checkout: dist/gateway -> repo root.
     resolve(here, '../../../../database/migrations'),
     resolve(here, '../../database/migrations'),
+    // Beside the bundle, which is how a packaged application ships them: the
+    // payload is self-contained and has nothing above it worth searching.
+    resolve(here, 'database/migrations'),
+    resolve(here, '../database/migrations'),
     resolve(process.cwd(), 'database/migrations'),
   ]) {
+    if (!candidate) continue;
     try {
-      readdirSync(candidate);
-      return candidate;
+      // A directory that exists but holds no migrations is not the one we
+      // want, and finding it would leave the schema empty rather than fail.
+      if (readdirSync(candidate).some((f) => f.endsWith('.sql'))) return candidate;
     } catch {
       continue;
     }
   }
-  throw new Error('Could not locate database/migrations');
+  throw new Error(
+    'Could not locate database/migrations. Set MERIDIAN_MIGRATIONS_DIR to the directory holding the .sql files.',
+  );
 }
 
 /**
