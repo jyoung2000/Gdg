@@ -49,6 +49,20 @@ export interface CredentialResolution {
   reason: string;
   /** True when the provider genuinely needs no credential. */
   anonymous: boolean;
+  /**
+   * Why there is none, when there is none.
+   *
+   * `'none-configured'` — nothing this caller may use exists. A setup problem,
+   *   and one they can fix.
+   * `'unavailable'` — a key exists and is in good order, but is not usable this
+   *   instant: at its own concurrency limit, cooling down after a 429, or out
+   *   of quota until the window resets.
+   *
+   * The difference is a clock. One of them means "add a key", the other means
+   * "wait, or use another one", and reporting the second as the first sends an
+   * operator to re-enter a credential that was working the whole time.
+   */
+  blocked: 'none-configured' | 'unavailable' | null;
 }
 
 /**
@@ -91,7 +105,7 @@ export class CredentialResolver {
       // its workspace, and nothing else may borrow either.
       if (explicit && explicit.providerId === q.providerId && this.usable(explicit) && this.entitled(explicit, q)) {
         if (commit) this.store.markUsed(explicit.id, this.now());
-        return { credential: explicit, reason: 'Credential named on the request', anonymous: false };
+        return { credential: explicit, reason: 'Credential named on the request', anonymous: false, blocked: null };
       }
       // An explicitly named credential that cannot be used is an error the
       // caller should see, not something to silently paper over.
@@ -99,6 +113,11 @@ export class CredentialResolver {
         credential: null,
         reason: `Requested credential ${q.explicitCredentialId} is unavailable for ${q.providerId}`,
         anonymous: false,
+        // A named credential that exists, belongs to this caller and is merely
+        // busy is a different thing from one that is missing or revoked.
+        blocked: explicit && explicit.providerId === q.providerId && this.entitled(explicit, q) && this.configured(explicit)
+          ? 'unavailable'
+          : 'none-configured',
       };
     }
 
@@ -115,16 +134,22 @@ export class CredentialResolver {
       // actually be sent should advance rotation cursors and last-used marks,
       // or every "why this model?" panel skews the very rotation it describes.
       if (commit) this.store.markUsed(picked.id, this.now());
-      return { credential: picked, reason: SCOPE_REASON[scope], anonymous: false };
+      return { credential: picked, reason: SCOPE_REASON[scope], anonymous: false, blocked: null };
     }
 
     if (!providerRequiresAuth) {
-      return { credential: null, reason: 'Provider serves anonymous requests', anonymous: true };
+      return { credential: null, reason: 'Provider serves anonymous requests', anonymous: true, blocked: null };
     }
     // "None configured" and "all of them are cooling down" are different
     // problems with different fixes, and telling a caller the first when the
     // second is true sends them to add a key they already have.
-    return { credential: null, reason: this.reasonFor(q.providerId, q.userId ?? null, q.workspaceId ?? null) ?? `No credential available for ${q.providerId}`, anonymous: false };
+    const entitled = this.store.listForProvider(q.providerId).filter((c) => this.entitled(c, q));
+    return {
+      credential: null,
+      reason: this.reasonFor(q.providerId, q.userId ?? null, q.workspaceId ?? null) ?? `No credential available for ${q.providerId}`,
+      anonymous: false,
+      blocked: entitled.some((c) => this.configured(c)) ? 'unavailable' : 'none-configured',
+    };
   }
 
   /** True when at least one credential could serve this provider right now. */
@@ -163,7 +188,7 @@ export class CredentialResolver {
     if (!configured.length) return `No credential this caller may use is configured for ${providerId}`;
 
     const reasons = configured
-      .map((c) => this.availability?.unavailableReason(c.id))
+      .map((c) => this.availability?.unavailableReason(c.id) ?? (this.atCapacity(c) ? `at its concurrency limit of ${c.maxConcurrency}` : null))
       .filter((r): r is string => Boolean(r));
     if (!reasons.length) return `No credential this caller may use is configured for ${providerId}`;
     return configured.length === 1
@@ -201,14 +226,21 @@ export class CredentialResolver {
     if (!c.enabled) return false;
     if (c.expiresAt != null && c.expiresAt <= this.now()) return false;
     if (c.secret == null && c.source !== 'anonymous-endpoint') return false;
-    if (c.maxConcurrency != null && (this.inFlight.get(c.id) ?? 0) >= c.maxConcurrency) return false;
     return true;
+  }
+
+  /** True when the key is at the concurrency ceiling its operator set for it. */
+  private atCapacity(c: ResolvedCredential): boolean {
+    return c.maxConcurrency != null && (this.inFlight.get(c.id) ?? 0) >= c.maxConcurrency;
   }
 
   private usable(c: ResolvedCredential): boolean {
     if (!this.configured(c)) return false;
     // A revoked key, a spent quota or a live rate-limit cooldown all mean the
-    // same thing to a router: do not send this one now.
+    // same thing to a router: do not send this one now. A key with every slot
+    // busy is in that same category — momentarily unusable, perfectly well
+    // configured — which is why the check is here and not above.
+    if (this.atCapacity(c)) return false;
     if (this.availability && !this.availability.available(c.id)) return false;
     return true;
   }

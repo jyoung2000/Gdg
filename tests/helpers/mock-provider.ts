@@ -17,6 +17,16 @@ export interface MockBehaviour {
   alwaysStatus?: number;
   /** Require this exact bearer token; anything else gets a 401. */
   requireToken?: string;
+  /**
+   * Bearer tokens the provider accepts, when more than one account is in play.
+   *
+   * Real per-account behaviour — this key is rate limited, that one is not —
+   * cannot be reproduced with a single shared token, and rotating between
+   * accounts is precisely what a per-account limit is supposed to trigger.
+   */
+  acceptTokens?: string[];
+  /** Bearer tokens that always get a 429, as one exhausted account would. */
+  rateLimitTokens?: string[];
   /** Model ids the listing endpoint reports. */
   models?: string[];
   /** Text the chat endpoint returns. */
@@ -90,8 +100,13 @@ export async function startMockProvider(id: string, initial: MockBehaviour = {})
       const respond = (): void => {
         if (behaviour.hang) return; // Deliberately never answers.
 
-        if (behaviour.requireToken && auth !== `Bearer ${behaviour.requireToken}`) {
+        const accepted = behaviour.acceptTokens ?? (behaviour.requireToken ? [behaviour.requireToken] : null);
+        if (accepted && !accepted.some((t) => auth === `Bearer ${t}`)) {
           send(401, { error: { message: 'invalid api key' } });
+          return;
+        }
+        if (behaviour.rateLimitTokens?.some((t) => auth === `Bearer ${t}`)) {
+          send(429, { error: { message: 'account rate limit exceeded' } }, behaviour.retryAfterSec ? { 'retry-after': String(behaviour.retryAfterSec) } : {});
           return;
         }
         if (behaviour.alwaysStatus) {
@@ -212,7 +227,7 @@ export async function startMockProvider(id: string, initial: MockBehaviour = {})
       kinds: ['llm'],
       adapter: 'openai-compatible',
       baseUrl,
-      auth: behaviour.requireToken ? 'api-key' : 'none',
+      auth: behaviour.requireToken || behaviour.acceptTokens ? 'api-key' : 'none',
       envKeys: [],
       trust: 'verified',
       docsUrl: null,

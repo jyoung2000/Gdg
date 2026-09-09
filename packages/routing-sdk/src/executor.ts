@@ -221,18 +221,27 @@ export class Executor {
       const target = targets[i];
       attempt += 1;
       const started = this.now();
-      const release = this.acquire(target, req.pool ?? null, decision.reservationCost);
+      // Resolve first, take the slot second. See `prepare`: the credential is
+      // resolved again here, and a slot this call is already holding would be
+      // read back as the key being full.
+      let release: () => void = () => undefined;
       let usage = ZERO_USAGE;
       let ttftMs: number | null = null;
+      // The routed target until `prepare` says otherwise; everything recorded
+      // about an account is recorded against this one.
+      let used = target;
 
       try {
-        const { adapter, ctx } = this.prepare(target, req, requestId, opts, log);
+        const prepared = this.prepare(target, req, requestId, opts, log);
+        const { adapter, ctx } = prepared;
+        used = prepared.target;
+        release = this.acquire(used, req.pool ?? null, decision.reservationCost);
         if (!adapter.chatStream) throw new MeridianError('unsupported_capability', 'Adapter cannot stream', { providerId: target.providerId });
 
         // The generator is created inside the sink so the request that carries
         // the rate-limit headers is made under it. Iterating happens after, but
         // the headers arrive with the response, not with the last chunk.
-        const stream = withRateLimitSink(this.rateLimitSink(target), () =>
+        const stream = withRateLimitSink(this.rateLimitSink(used), () =>
           adapter.chatStream!({ ...this.gateEffort(completion, target), model: target.providerModelId, stream: true, signal: ctx.signal }, ctx),
         );
         for await (const chunk of stream) {
@@ -259,8 +268,8 @@ export class Executor {
           yield chunk;
         }
 
-        this.succeeded(target, this.now() - started);
-        this.recordUsage(req, target, opts, requestId, usage, this.now() - started, ttftMs, true, null, fallbacks.length, routing);
+        this.succeeded(used, this.now() - started);
+        this.recordUsage(req, used, opts, requestId, usage, this.now() - started, ttftMs, true, null, fallbacks.length, routing);
         if (req.pool) this.deps.pools.recordSpend(req.pool, usage.cost);
         return;
       } catch (e) {
@@ -270,19 +279,19 @@ export class Executor {
         // generated and, on a paid model, still charged. Zero would be a lie in
         // the polite direction; an estimate from what was actually streamed is
         // a floor, and the code marks the row as failed either way.
-        const partial = usage.totalTokens > 0 ? usage : this.estimatePartialUsage(target, emittedChars);
+        const partial = usage.totalTokens > 0 ? usage : this.estimatePartialUsage(used, emittedChars);
 
         const cancelled = err.code === 'cancelled' || opts.signal?.aborted === true;
         if (cancelled) {
           // The caller hung up. Not the provider's fault: no breaker, no
           // fallback — there is nobody left to stream a fallback to.
-          this.recordUsage(req, target, opts, requestId, partial, this.now() - started, ttftMs, false, 'cancelled', fallbacks.length, routing);
+          this.recordUsage(req, used, opts, requestId, partial, this.now() - started, ttftMs, false, 'cancelled', fallbacks.length, routing);
           if (req.pool) this.deps.pools.recordSpend(req.pool, partial.cost);
           return;
         }
 
-        this.failed(target, err);
-        this.recordUsage(req, target, opts, requestId, partial, this.now() - started, ttftMs, false, err.code, fallbacks.length, routing);
+        this.failed(used, err);
+        this.recordUsage(req, used, opts, requestId, partial, this.now() - started, ttftMs, false, err.code, fallbacks.length, routing);
         if (req.pool && partial.cost > 0) this.deps.pools.recordSpend(req.pool, partial.cost);
 
         if (emitted || !err.failover || i === targets.length - 1 || attempt >= budget) {
@@ -342,15 +351,22 @@ export class Executor {
         attempt += 1;
         sameTargetTries += 1;
         const started = this.now();
-        const release = this.acquire(target, req.pool ?? null, decision.reservationCost);
+        // Resolve first, take the slot second — see the note in `chatStream`.
+        let release: () => void = () => undefined;
+        // See the note in `chatStream`: this is the account the call is
+        // attributed to, which `prepare` may change.
+        let used = target;
 
         try {
-          const { adapter, ctx } = this.prepare(target, req, requestId, opts, log);
-          const value = await withRateLimitSink(this.rateLimitSink(target), () => call(adapter, target, ctx));
+          const prepared = this.prepare(target, req, requestId, opts, log);
+          const { adapter, ctx } = prepared;
+          used = prepared.target;
+          release = this.acquire(used, req.pool ?? null, decision.reservationCost);
+          const value = await withRateLimitSink(this.rateLimitSink(used), () => call(adapter, used, ctx));
           const m = meter(value);
 
-          this.succeeded(target, m.latencyMs || this.now() - started);
-          this.recordUsage(req, target, opts, requestId, m.usage, m.latencyMs, m.ttftMs, true, null, fallbacks.length, routing);
+          this.succeeded(used, m.latencyMs || this.now() - started);
+          this.recordUsage(req, used, opts, requestId, m.usage, m.latencyMs, m.ttftMs, true, null, fallbacks.length, routing);
           // Spend outside a pool is still recorded in usage; it just is not
           // charged against a pool budget the caller never chose.
           if (req.pool) this.deps.pools.recordSpend(req.pool, m.usage.cost);
@@ -381,12 +397,12 @@ export class Executor {
           // provider every time a user closes a tab at the wrong moment.
           const cancelled = err.code === 'cancelled' || opts.signal?.aborted === true;
           if (cancelled) {
-            this.recordUsage(req, target, opts, requestId, ZERO_USAGE, this.now() - started, null, false, 'cancelled', fallbacks.length, routing);
+            this.recordUsage(req, used, opts, requestId, ZERO_USAGE, this.now() - started, null, false, 'cancelled', fallbacks.length, routing);
             throw err;
           }
 
-          this.failed(target, err);
-          this.recordUsage(req, target, opts, requestId, ZERO_USAGE, this.now() - started, null, false, err.code, fallbacks.length, routing);
+          this.failed(used, err);
+          this.recordUsage(req, used, opts, requestId, ZERO_USAGE, this.now() - started, null, false, err.code, fallbacks.length, routing);
           log.warn('call failed', { providerId: target.providerId, modelId: target.providerModelId, errorCode: err.code });
 
           // A non-failover error is terminal: no other provider will do better.
@@ -443,13 +459,25 @@ export class Executor {
     ];
   }
 
+  /**
+   * Resolve the adapter and the credential for one attempt.
+   *
+   * This re-resolves the credential the router chose, because routing decides
+   * and execution uses, and only execution knows the caller's identity is
+   * still the one the secret belongs to. That re-resolution runs the same
+   * usability rules as selection — including the key's own `maxConcurrency` —
+   * which is why it must happen **before** the call takes its slot. Taking the
+   * slot first made every call count itself against the limit: a key capped at
+   * one resolved to "unavailable" on the single call it was meant to serve,
+   * and the caller was told their credential had failed.
+   */
   private prepare(
     target: Target,
     req: AIRequest,
     requestId: string,
     opts: ExecuteOptions,
     log: Logger,
-  ): { adapter: NonNullable<ReturnType<ProviderRegistry['get']>>; ctx: AdapterContext } {
+  ): { adapter: NonNullable<ReturnType<ProviderRegistry['get']>>; ctx: AdapterContext; target: Target } {
     const adapter = this.deps.providers.get(target.providerId);
     if (!adapter) {
       throw new MeridianError('provider_unavailable', `No adapter for provider ${target.providerId}`, { providerId: target.providerId });
@@ -460,15 +488,40 @@ export class Executor {
     // here — the resolver correctly refuses a user credential for an unknown
     // user — and every personally-keyed request dies at execution.
     const identity = { userId: req.userId ?? null, workspaceId: req.workspaceId ?? null };
-    const resolved = target.credentialId
-      ? this.deps.credentials.resolve(
-          { providerId: target.providerId, explicitCredentialId: target.credentialId, ...identity },
-          descriptor.auth !== 'none',
-        )
-      : this.deps.credentials.resolve({ providerId: target.providerId, ...identity }, descriptor.auth !== 'none');
+    const needsAuth = descriptor.auth !== 'none';
+    let resolved = target.credentialId
+      ? this.deps.credentials.resolve({ providerId: target.providerId, explicitCredentialId: target.credentialId, ...identity }, needsAuth)
+      : this.deps.credentials.resolve({ providerId: target.providerId, ...identity }, needsAuth);
 
-    if (!resolved.credential && descriptor.auth !== 'none') {
-      throw new MeridianError('authentication_failed', resolved.reason, { providerId: target.providerId });
+    // The key routing picked can stop being usable between the decision and
+    // the call — it hits its concurrency limit, or a 429 on the previous
+    // attempt put it on a cooldown. Another key the operator configured for
+    // the same provider is capacity they already own, so try one before giving
+    // up on the provider entirely. Ownership is re-checked by the resolver, so
+    // this cannot reach across users, and each key's own limits still apply:
+    // this spreads load over configured capacity, it does not evade a
+    // provider's per-account ceilings.
+    if (!resolved.credential && needsAuth && resolved.blocked === 'unavailable' && target.credentialId) {
+      const sibling = this.deps.credentials.resolve({ providerId: target.providerId, ...identity }, needsAuth);
+      if (sibling.credential) {
+        log.info('credential rotated within the request', {
+          providerId: target.providerId,
+          reason: resolved.reason,
+        });
+        resolved = sibling;
+      }
+    }
+
+    if (!resolved.credential && needsAuth) {
+      // Meridian declining to hand out a key is not the provider rejecting one.
+      // `reachedProvider: false` keeps `failed()` from writing this down as an
+      // account or provider fault — a busy key marked `unauthorized` stays that
+      // way until a human clears it, which is a real outage caused by a clock.
+      const code = resolved.blocked === 'unavailable' ? 'provider_unavailable' : 'authentication_failed';
+      throw new MeridianError(code, resolved.reason, {
+        providerId: target.providerId,
+        details: { reachedProvider: false },
+      });
     }
 
     const ctx: AdapterContext = {
@@ -479,7 +532,12 @@ export class Executor {
       streamIdleTimeoutMs: this.deps.streamIdleTimeoutMs,
       signal: opts.signal,
     };
-    return { adapter, ctx };
+    // The credential that will carry the call, which is not always the one
+    // routing named. Health, usage and rate-limit headers all have to be
+    // attributed to the account that actually served the request — crediting a
+    // success to a key that never made the call clears a cooldown the provider
+    // is still enforcing.
+    return { adapter, ctx, target: { ...target, credentialId: resolved.credential?.id ?? target.credentialId } };
   }
 
   /**
@@ -552,6 +610,10 @@ export class Executor {
    * only thing that could be rate-limiting us.
    */
   private failed(target: Target, err: MeridianError): void {
+    // A refusal produced inside Meridian is not evidence about anyone else. It
+    // never reached the provider, so it says nothing about the provider's
+    // health and nothing about whether the account's key is good.
+    if (err.details.reachedProvider === false) return;
     const modelId = `${target.providerId}:${target.providerModelId}`;
     this.deps.modelHealth?.recordFailure(modelId, target.providerId, err.code, err.message);
     if (target.credentialId) {
