@@ -113,6 +113,37 @@ describe('Projects give the model shared context', () => {
     assert.match(reply, /INSTRUCTIONS_APPLIED/, 'the MERIDIAN.md instructions were prepended for the model');
   });
 
+  it('reaches the model through every dialect, not just the OpenAI one', async () => {
+    // Three surfaces accept `meridian.workspace_id` and say nothing about
+    // ignoring it. They used to disagree about what they did with it —
+    // /v1/chat/completions applied the project, /anthropic/v1/messages applied
+    // skills only, /v1/responses applied neither — so whether a project
+    // reached the model depended on which dialect the client spoke.
+    const id = await makeProject('Every dialect');
+    await putFile(id, 'facts.md', 'Shared brief. [[sim: say DIALECT_PARITY_REACHED]]');
+
+    const responses = await call<{ output_text: string }>('/v1/responses', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'auto', input: 'What does the brief say?', meridian: { workspace_id: id } }),
+    });
+    assert.match(responses.output_text, /DIALECT_PARITY_REACHED/, '/v1/responses ignored the project it was given');
+
+    const anthropic = await call<{ content: { text: string }[] }>('/anthropic/v1/messages', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'auto',
+        max_tokens: 256,
+        messages: [{ role: 'user', content: 'What does the brief say?' }],
+        meridian: { workspace_id: id },
+      }),
+    });
+    assert.match(anthropic.content.map((c) => c.text).join(' '), /DIALECT_PARITY_REACHED/, '/anthropic/v1/messages ignored the project it was given');
+
+    // And the surface that always worked still does, so this is parity rather
+    // than three broken paths agreeing.
+    assert.match(await ask('What does the brief say?', id), /DIALECT_PARITY_REACHED/);
+  });
+
   it('an empty project changes nothing', async () => {
     // A project with no instruction file and no files must not inject an empty
     // context block or otherwise alter the request.

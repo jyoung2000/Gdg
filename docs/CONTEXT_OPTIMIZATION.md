@@ -161,14 +161,26 @@ each turn rather than from what any stage believed it saved.
   implied.
 - **Model-generated summaries** of dropped history. Would need a call per
   optimisation; the honest gap marker is cheaper and cannot hallucinate.
-- **Prompt caching.** No `cache_control` is emitted and the cached-token counts
-  providers return are parsed and discarded. `Usage` has no cached-token field
-  and `Pricing` has no cached-input rate, so a saving could not be expressed
-  even if measured. Worth noting the current assembly order prepends the most
-  volatile content first, which is exactly backwards for prefix caching.
+- **Prompt caching.** No `cache_control` is emitted, and the cached-token
+  counts providers return are not read: they are not present in any adapter's
+  response type, so they are discarded at `JSON.parse` rather than parsed and
+  dropped. `Usage` has no cached-token field and `Pricing` has no cached-input
+  rate, so a saving could not be expressed even if it were measured. Worth
+  noting the current assembly order prepends the most volatile content first,
+  which is exactly backwards for prefix caching.
 - **Two-pass context building** (a cheap model deciding what the expensive model
   should see). The lexical path was built first precisely because it costs
   nothing; a second pass has to beat "free" to be worth adding.
-- **The gateway chat surfaces.** Optimisation is wired into the agent loop only.
-  The OpenAI and Anthropic surfaces still assemble context additively, and the
-  three assembly paths have not yet been unified.
+- **The gateway chat surfaces.** Optimisation — the measure/select/transform/
+  verify pipeline — is wired into the agent loop only. The three request
+  dialects assemble context additively rather than optimising it.
+
+  What they no longer do is disagree. `/v1/chat/completions`,
+  `/v1/responses` and `/anthropic/v1/messages` all accept
+  `meridian.workspace_id` and `meridian.profile_id`, and until this release
+  they treated them differently: the first applied project knowledge and
+  skills, the second applied neither, the third applied skills only. All three
+  now go through one `assembleContext`, in one order — project, then skills,
+  then the conversation — and a test in `tests/e2e/projects.test.ts` proves a
+  project's file contents reach the model through each of them by planting a
+  directive in the file that only the model could have echoed.

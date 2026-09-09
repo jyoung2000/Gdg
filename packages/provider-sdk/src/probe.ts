@@ -93,7 +93,26 @@ export const PROBE_TOOL: ToolDefinition = {
  * the capability is absent. Everything else (rate limits, timeouts, upstream
  * faults, bad credentials) is about conditions, and conditions change.
  */
-const DEFINITIVE_REFUSALS = new Set(['invalid_request', 'model_unavailable', 'unsupported']);
+const DEFINITIVE_REFUSALS = new Set(['invalid_request', 'unsupported_capability']);
+
+/**
+ * Optional generation parameters the probes send, and which some models refuse.
+ *
+ * A reasoning model that rejects `temperature` says so with an
+ * `invalid_request` naming the parameter — the same code, and very nearly the
+ * same words, as a model saying it cannot see images. Read as a capability
+ * refusal it deletes a capability the model has. So a rejection that names one
+ * of our own optional parameters is not a verdict: the probe is re-sent
+ * without them, and only what comes back from *that* is allowed to become a
+ * claim.
+ */
+const OPTIONAL_PARAM_PHRASES = [
+  /\btemperature\b/i,
+  /\bmax_tokens\b/i,
+  /\bmax_completion_tokens\b/i,
+  /\bmaxtokens\b/i,
+  /\btop_p\b/i,
+];
 
 /**
  * Phrases a provider uses when the *model* cannot do this, inside an error that
@@ -109,10 +128,30 @@ const REFUSAL_PHRASES = [
   /tool (use|calling|choice) is not/i,
 ];
 
-function classify(error: unknown): { outcome: 'unsupported' | 'inconclusive'; detail: string } {
+/**
+ * What a failed probe is allowed to mean.
+ *
+ * `parameter-refused` is not a verdict — it is a request to ask again without
+ * the optional parameters this probe added, since the refusal named one of
+ * them rather than the capability under test. `retry` is false on that second
+ * attempt so a provider that simply always says "temperature" cannot loop.
+ */
+export function classify(error: unknown, retry = true): { outcome: 'unsupported' | 'inconclusive' | 'parameter-refused'; detail: string } {
   const message = error instanceof Error ? error.message : String(error);
   const code = error instanceof MeridianError ? error.code : null;
 
+  // A 404 is the provider saying this model id is not one it serves. That is a
+  // fact about the model's existence, not about what the model can do, and
+  // treating it as a capability refusal deleted capabilities from the registry
+  // every time a provider retired an id the catalogue still listed.
+  if (code === 'model_unavailable') {
+    return { outcome: 'inconclusive', detail: `the provider does not serve this model id: ${message}` };
+  }
+  // Checked before anything else can read it as a capability answer: the same
+  // code and nearly the same words carry both meanings.
+  if (retry && code === 'invalid_request' && OPTIONAL_PARAM_PHRASES.some((re) => re.test(message))) {
+    return { outcome: 'parameter-refused', detail: `the provider refused one of the probe's own parameters: ${message}` };
+  }
   if (code && DEFINITIVE_REFUSALS.has(code)) {
     return { outcome: 'unsupported', detail: `provider rejected the request (${code}): ${message}` };
   }
@@ -163,41 +202,81 @@ export async function probeCapability(
 ): Promise<ProbeResult> {
   const started = Date.now();
   const base = { capability, promptTokens: null, completionTokens: null };
-  try {
+
+  const run = async (tuning: Tuning): Promise<PartialResult | null> => {
     switch (capability) {
       case 'text':
-        return { ...(await probeText(adapter, model, ctx)), capability, latencyMs: Date.now() - started };
+        return probeText(adapter, model, ctx, tuning);
       case 'tools':
-        return { ...(await probeTools(adapter, model, ctx)), capability, latencyMs: Date.now() - started };
+        return probeTools(adapter, model, ctx, tuning);
       case 'vision':
-        return { ...(await probeVision(adapter, model, ctx)), capability, latencyMs: Date.now() - started };
+        return probeVision(adapter, model, ctx, tuning);
       case 'embedding':
-        return { ...(await probeEmbedding(adapter, model, ctx)), capability, latencyMs: Date.now() - started };
+        return probeEmbedding(adapter, model, ctx);
       default:
-        return {
-          ...base,
-          outcome: 'inconclusive',
-          detail: `no probe is defined for "${capability}"`,
-          latencyMs: Date.now() - started,
-        };
+        return null;
     }
+  };
+
+  try {
+    const result = await run(WITH_TUNING);
+    if (!result) {
+      return { ...base, outcome: 'inconclusive', detail: `no probe is defined for "${capability}"`, latencyMs: Date.now() - started };
+    }
+    return { ...result, capability, latencyMs: Date.now() - started };
   } catch (e) {
-    const { outcome, detail } = classify(e);
-    return { ...base, outcome, detail, latencyMs: Date.now() - started };
+    const first = classify(e);
+    if (first.outcome !== 'parameter-refused') {
+      return { ...base, outcome: first.outcome, detail: first.detail, latencyMs: Date.now() - started };
+    }
+    // Ask again with nothing optional attached, so the answer is about the
+    // capability rather than about `temperature`.
+    try {
+      const result = await run(NO_TUNING);
+      if (!result) {
+        return { ...base, outcome: 'inconclusive', detail: `no probe is defined for "${capability}"`, latencyMs: Date.now() - started };
+      }
+      return { ...result, capability, latencyMs: Date.now() - started };
+    } catch (again) {
+      const second = classify(again, false);
+      return {
+        ...base,
+        outcome: second.outcome === 'parameter-refused' ? 'inconclusive' : second.outcome,
+        detail: `${second.detail} (after retrying without the probe's optional parameters)`,
+        latencyMs: Date.now() - started,
+      };
+    }
   }
+}
+
+/**
+ * Whether a probe attaches its optional generation parameters.
+ *
+ * `maxTokens` and `temperature` make a probe cheap — five tokens rather than a
+ * paragraph — and deterministic, which is worth having. They are also the
+ * parameters a capable model is most likely to refuse, so every probe can be
+ * run without them and asked again.
+ */
+type Tuning = 'with-optional-params' | 'without-optional-params';
+
+const WITH_TUNING: Tuning = 'with-optional-params';
+const NO_TUNING: Tuning = 'without-optional-params';
+
+/** The optional half of a probe's payload, or nothing at all. */
+function tuned(tuning: Tuning, maxTokens: number): { maxTokens?: number; temperature?: number } {
+  return tuning === WITH_TUNING ? { maxTokens, temperature: 0 } : {};
 }
 
 type PartialResult = Omit<ProbeResult, 'capability' | 'latencyMs'>;
 
 /** The cheapest possible generation: one token, one word back. */
-async function probeText(adapter: ProviderAdapter, model: ModelDescriptor, ctx: AdapterContext): Promise<PartialResult> {
+async function probeText(adapter: ProviderAdapter, model: ModelDescriptor, ctx: AdapterContext, tuning: Tuning): Promise<PartialResult> {
   if (!adapter.chat) return { outcome: 'inconclusive', detail: 'adapter has no chat method', promptTokens: null, completionTokens: null };
   const res = await adapter.chat(
     {
       model: model.providerModelId,
       messages: [{ role: 'user', content: 'Reply with the single word: ok' }],
-      maxTokens: 5,
-      temperature: 0,
+      ...tuned(tuning, 5),
     },
     ctx,
   );
@@ -219,7 +298,7 @@ async function probeText(adapter: ProviderAdapter, model: ModelDescriptor, ctx: 
  * `required` itself, that rejection is classified like any other and comes back
  * inconclusive rather than as a false negative.
  */
-async function probeTools(adapter: ProviderAdapter, model: ModelDescriptor, ctx: AdapterContext): Promise<PartialResult> {
+async function probeTools(adapter: ProviderAdapter, model: ModelDescriptor, ctx: AdapterContext, tuning: Tuning): Promise<PartialResult> {
   if (!adapter.chat) return { outcome: 'inconclusive', detail: 'adapter has no chat method', promptTokens: null, completionTokens: null };
   const res = await adapter.chat(
     {
@@ -227,8 +306,7 @@ async function probeTools(adapter: ProviderAdapter, model: ModelDescriptor, ctx:
       messages: [{ role: 'user', content: 'Call the meridian_probe tool with ok set to true.' }],
       tools: [PROBE_TOOL],
       toolChoice: 'required',
-      maxTokens: 64,
-      temperature: 0,
+      ...tuned(tuning, 64),
     },
     ctx,
   );
@@ -249,7 +327,7 @@ async function probeTools(adapter: ProviderAdapter, model: ModelDescriptor, ctx:
  * the model's eyesight rather than the provider's willingness to carry an
  * image. Acceptance is the capability.
  */
-async function probeVision(adapter: ProviderAdapter, model: ModelDescriptor, ctx: AdapterContext): Promise<PartialResult> {
+async function probeVision(adapter: ProviderAdapter, model: ModelDescriptor, ctx: AdapterContext, tuning: Tuning): Promise<PartialResult> {
   if (!adapter.chat) return { outcome: 'inconclusive', detail: 'adapter has no chat method', promptTokens: null, completionTokens: null };
   const messages: ChatMessage[] = [
     {
@@ -260,7 +338,7 @@ async function probeVision(adapter: ProviderAdapter, model: ModelDescriptor, ctx
       ],
     },
   ];
-  const res = await adapter.chat({ model: model.providerModelId, messages, maxTokens: 5, temperature: 0 }, ctx);
+  const res = await adapter.chat({ model: model.providerModelId, messages, ...tuned(tuning, 5) }, ctx);
   const text = res.content.trim();
   return {
     outcome: text.length > 0 ? 'supported' : 'inconclusive',

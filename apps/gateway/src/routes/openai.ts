@@ -15,7 +15,7 @@ import {
   type RoutingMode,
   type ToolDefinition,
 } from '@meridian/shared';
-import { beginSse, normalizeMode, withProjectKnowledge, withSkills } from './shared.js';
+import { assembleContext, beginSse, normalizeMode } from './shared.js';
 import { requireScope } from './authz.js';
 import type { App } from '../services/app.js';
 
@@ -142,19 +142,13 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
     if (!messages.length) throw new MeridianError('invalid_request', '"messages" must contain at least one message');
 
     const aiRequest = buildAIRequest(body, messages, req.auth.userId, 'text');
-    // When a project (workspace) is active, its instructions and files are
-    // injected first, so everything after — skills, then the conversation —
-    // sits inside that context. Nothing runs if no project is selected.
-    const withProject = await withProjectKnowledge(app, messages, aiRequest.workspaceId ?? null);
-    // Configured skills are resolved per request and prepended here, so a
-    // change made in the Skills screen affects the very next call.
-    const withSkill = withSkills(app, withProject.messages, {
+    const assembled = await assembleContext(app, messages, {
       profileId: body.meridian?.profile_id ?? null,
       modelId: aiRequest.model,
       workspaceId: aiRequest.workspaceId,
     });
     const completion = {
-      messages: withSkill.messages,
+      messages: assembled.messages,
       tools: toToolDefinitions(body.tools),
       toolChoice: normaliseToolChoice(body.tool_choice),
       temperature: body.temperature,
@@ -220,9 +214,20 @@ export async function registerOpenAIRoutes(server: FastifyInstance, app: App): P
     else if (body.messages) messages.push(...toChatMessages(body.messages));
     if (!messages.length) throw new MeridianError('invalid_request', 'Provide "input" or "messages"');
 
+    const aiRequest = buildAIRequest(body, messages, req.auth.userId, 'text');
+    const assembled = await assembleContext(app, messages, {
+      profileId: body.meridian?.profile_id ?? null,
+      modelId: aiRequest.model,
+      workspaceId: aiRequest.workspaceId,
+    });
     const res = await app.executor.chat(
-      buildAIRequest(body, messages, req.auth.userId, 'text'),
-      { messages, tools: toToolDefinitions(body.tools), maxTokens: body.max_output_tokens ?? body.max_tokens, temperature: body.temperature },
+      aiRequest,
+      {
+        messages: assembled.messages,
+        tools: toToolDefinitions(body.tools),
+        maxTokens: body.max_output_tokens ?? body.max_tokens,
+        temperature: body.temperature,
+      },
       { requestId: req.requestId },
     );
     return {

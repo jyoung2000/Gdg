@@ -183,3 +183,32 @@ export async function withProjectKnowledge(
     tokens: Math.ceil(block.length / 4),
   };
 }
+
+/**
+ * The one way a request's context is assembled, for every dialect.
+ *
+ * There used to be three of these and they disagreed: `/v1/chat/completions`
+ * applied project knowledge and skills, `/anthropic/v1/messages` applied
+ * skills only, and `/v1/responses` applied neither — while all three accepted
+ * the same `meridian.workspace_id` and `meridian.profile_id` extensions and
+ * said nothing about ignoring them. A caller who selected a project got a
+ * model that knew about it or one that did not, depending on which dialect
+ * their client happened to speak.
+ *
+ * Order matters and is the same everywhere: the project first, so the standing
+ * instructions and the shared folder frame everything; then the operator's
+ * skills; then the conversation.
+ */
+export async function assembleContext(
+  app: App,
+  messages: ChatMessage[],
+  ctx: { profileId?: string | null; modelId?: string | null; providerId?: string | null; workspaceId?: string | null; sessionId?: string | null },
+): Promise<{ messages: ChatMessage[]; project: { applied: boolean; files: number; tokens: number }; skills: { applied: number; tokens: number } }> {
+  const project = await withProjectKnowledge(app, messages, ctx.workspaceId ?? null);
+  const skills = withSkills(app, project.messages, ctx);
+  return {
+    messages: skills.messages,
+    project: { applied: project.applied, files: project.files, tokens: project.tokens },
+    skills: { applied: skills.applied, tokens: skills.tokens },
+  };
+}
