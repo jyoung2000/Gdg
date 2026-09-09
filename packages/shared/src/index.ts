@@ -6,6 +6,7 @@ export * from './logger.js';
 export * from './cost.js';
 export * from './economics.js';
 export * from './tokens.js';
+export * from './platform.js';
 export * from './config.js';
 export * from './time.js';
 export * from './control.js';

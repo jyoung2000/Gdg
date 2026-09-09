@@ -1,3 +1,4 @@
+import { defaultDataDir, isDesktopRuntime, joinFor, platformPaths } from './platform.js';
 import type { PrivacyMode, RoutingMode } from './types.js';
 
 export interface MeridianConfig {
@@ -109,14 +110,26 @@ function groundingFrom(env: NodeJS.ProcessEnv): { width: number; height: number 
 export const DEFAULT_PORT = 4639;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): MeridianConfig {
-  const dataDir = env.MERIDIAN_DATA_DIR ?? './data';
+  const dataDir = env.MERIDIAN_DATA_DIR ?? defaultDataDir(env);
+  const desktop = isDesktopRuntime(env);
+  // Compose in the grammar of the platform the data directory belongs to, so a
+  // Windows layout is composable — and testable — from anywhere.
+  const join = joinFor(/^[A-Za-z]:[\\/]/.test(dataDir) ? 'win32' : process.platform);
   return {
     port: num(env.PORT ?? env.MERIDIAN_PORT, DEFAULT_PORT),
-    host: env.MERIDIAN_HOST ?? '0.0.0.0',
+    // Loopback for a desktop install, because there the gateway is one
+    // application's private backend and binding it to every interface would
+    // publish a user's models, keys and workspaces to their whole network
+    // without them ever asking for a server. A container still needs
+    // 0.0.0.0 to be reachable through a published port, and keeps it.
+    host: env.MERIDIAN_HOST ?? (desktop ? '127.0.0.1' : '0.0.0.0'),
     dataDir,
-    databasePath: env.MERIDIAN_DB ?? `${dataDir}/meridian.db`,
-    workspaceRoot: env.MERIDIAN_WORKSPACE_ROOT ?? './workspaces',
-    assetRoot: env.MERIDIAN_ASSET_ROOT ?? `${dataDir}/assets`,
+    // `join`, not interpolation: on Windows this composes
+    // `C:\\Users\\x\\AppData\\Roaming\\Meridian` with a filename, and a
+    // hand-written '/' between them works by luck rather than by rule.
+    databasePath: env.MERIDIAN_DB ?? join(dataDir, 'meridian.db'),
+    workspaceRoot: env.MERIDIAN_WORKSPACE_ROOT ?? (desktop ? platformPaths(process.platform, env).workspaces : './workspaces'),
+    assetRoot: env.MERIDIAN_ASSET_ROOT ?? join(dataDir, 'assets'),
     webRoot: env.MERIDIAN_WEB_ROOT ?? null,
     masterKey: env.MERIDIAN_MASTER_KEY ?? null,
     logLevel: (env.MERIDIAN_LOG_LEVEL as MeridianConfig['logLevel']) ?? 'info',

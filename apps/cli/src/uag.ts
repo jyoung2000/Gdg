@@ -10,7 +10,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
-import { DEFAULT_PORT, formatCost, formatDuration } from '@meridian/shared';
+import { DEFAULT_PORT, formatCost, formatDuration, runtimeStatePath, type RuntimeState } from '@meridian/shared';
 
 interface Config {
   baseUrl: string;
@@ -20,6 +20,44 @@ interface Config {
 }
 
 const CONFIG_PATH = join(homedir(), '.config', 'meridian', 'cli.json');
+
+/**
+ * Where a locally running instance actually is.
+ *
+ * The documented port is the right default and a poor assumption on a desktop
+ * install: something else may already hold 4639, in which case the gateway
+ * moves and says so. A running instance leaves a note giving its port; reading
+ * it is the difference between `uag` working out of the box and every desktop
+ * user being told to pass `--url`.
+ *
+ * Only ever a default. An explicit `--url`, `MERIDIAN_URL`, or a URL the user
+ * configured all outrank it, because those are statements of intent and this is
+ * a guess — a good one, but a guess.
+ *
+ * The note carries no secret, so trusting it costs nothing beyond pointing at a
+ * local port, which is the same thing the hardcoded default does.
+ */
+function discoveredUrl(): string | null {
+  try {
+    const raw = readFileSync(runtimeStatePath(), 'utf8');
+    const state = JSON.parse(raw) as Partial<RuntimeState>;
+    if (typeof state.port !== 'number' || !Number.isInteger(state.port) || state.port <= 0 || state.port > 65535) return null;
+    // A note left by a process that has since died points nowhere. Checking is
+    // cheap and stops the CLI reporting "cannot reach Meridian" at an address
+    // nothing has listened on since last Tuesday.
+    if (typeof state.pid === 'number') {
+      try {
+        // Signal 0 tests for existence without delivering anything.
+        process.kill(state.pid, 0);
+      } catch {
+        return null;
+      }
+    }
+    return `http://127.0.0.1:${state.port}`;
+  } catch {
+    return null;
+  }
+}
 
 function loadConfig(): Config {
   const fromEnv: Partial<Config> = {
@@ -35,7 +73,7 @@ function loadConfig(): Config {
     }
   }
   return {
-    baseUrl: fromEnv.baseUrl ?? stored.baseUrl ?? `http://localhost:${DEFAULT_PORT}`,
+    baseUrl: fromEnv.baseUrl ?? stored.baseUrl ?? discoveredUrl() ?? `http://localhost:${DEFAULT_PORT}`,
     apiKey: fromEnv.apiKey ?? stored.apiKey ?? null,
     workspaceId: stored.workspaceId ?? null,
     mode: stored.mode ?? null,
