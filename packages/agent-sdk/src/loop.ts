@@ -31,6 +31,14 @@ export interface AgentRunInput {
   allowPaid?: boolean;
   sensitive?: boolean;
   budget?: number | null;
+  /**
+   * Models this step would rather not use, if anything else can serve it.
+   *
+   * Reviewer diversity: a model checking its own work agrees with itself. It
+   * is a preference and not a rule, because a review that cannot run is worse
+   * than a review by the same model — see `AIRequest.avoidModels`.
+   */
+  avoidModels?: string[];
   signal?: AbortSignal;
   /**
    * Tools available only to this run, beyond the built-in registry.
@@ -165,6 +173,7 @@ export class AgentLoop {
       allowPaid: input.allowPaid,
       sensitive: input.sensitive,
       budget: input.budget ?? null,
+      avoidModels: input.avoidModels,
     };
 
     let usage = ZERO_USAGE;

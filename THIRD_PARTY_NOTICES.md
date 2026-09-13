@@ -224,7 +224,7 @@ informed Meridian's, it was reimplemented against Meridian's own interfaces.
 | --- | --- | --- |
 | [free-coding-models](https://github.com/vava-nessa/free-coding-models) | MIT | Continuously measuring provider health (latency distribution, jitter, uptime) instead of trusting static provider claims |
 | [free-claude-code](https://github.com/itspsr/free-claude-code) | MIT | Provider rotation and falling back to another configured model rather than failing a whole task |
-| [Codebuff / freebuff](https://github.com/CodebuffAI/codebuff) | Apache-2.0 | Specialised agents with per-task model selection. Its other idea — reviewing with a different model family than the one that implemented — was read and **not** built; see the gap recorded in [UPSTREAM_INTEGRATION_MATRIX.md](docs/UPSTREAM_INTEGRATION_MATRIX.md) |
+| [Codebuff / freebuff](https://github.com/CodebuffAI/codebuff) | Apache-2.0 | Specialised agents with per-task model selection, and reviewing with a model other than the one that implemented — built as a routing preference over exact models rather than over model families, which Meridian's catalogue cannot express; see [UPSTREAM_INTEGRATION_MATRIX.md](docs/UPSTREAM_INTEGRATION_MATRIX.md) |
 | [cheapestinference/claude-auto-retry](https://github.com/cheapestinference/claude-auto-retry) | MIT | Rate-limit handling: honouring `Retry-After`, bounded retry budgets, backoff with jitter |
 | [cheapestinference/openclaw-plugin-ratelimit-retry](https://github.com/cheapestinference/openclaw-plugin-ratelimit-retry) | MIT | Same, as a pluggable retry policy |
 | [cheapestinference/silos](https://github.com/cheapestinference/silos) | MIT | Usage monitoring around economical inference routing |

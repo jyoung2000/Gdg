@@ -148,11 +148,20 @@ routing modes (surfaced in the vocabulary endpoint's `agents` array), inference
 pools (`BUILTIN_POOLS`), and a router that takes `taskType` into account when
 scoring.
 
-**Not implemented:** an enforced "review with a different family than the
-implementer" rule. Meridian can be configured that way through pools, but does
-not require it, and `AIRequest` has no field that could express it — there is no
-model-family concept anywhere in the codebase. Recorded here as a gap rather
-than claimed.
+**Now implemented, as a preference rather than a rule.** `AIRequest.avoidModels`
+is the field that was missing: a review step asks to be routed away from the
+models that wrote the code, and the orchestrator fills it in from the steps that
+already ran. An avoided model keeps a tenth of its score and forfeits any global
+"preferred model" instruction for that request — which is the half that made
+this unenforceable rather than merely absent, since a pinned favourite otherwise
+took every step of a pipeline.
+
+It is a preference on purpose. A review that cannot run is worse than a review
+by the same model, so on a single-model instance the request is still served and
+the routing reason says the preference could not be honoured. What is *not*
+built is a model-**family** concept: Meridian avoids the exact model that wrote
+the code, not its siblings, because nothing in the catalogue says which models
+share a family. Proven in `tests/router/reviewer-diversity.test.ts`.
 
 **Since implemented:** the other half of that idea — that a verification step's
 verdict should *mean* something — is now real. A command that exits non-zero

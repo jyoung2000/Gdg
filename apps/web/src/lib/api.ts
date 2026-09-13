@@ -2,6 +2,7 @@ import type {
   AgentTask,
   AuditLogEntry,
   Capability,
+  PipelineKind,
   CapabilityState,
   CredentialHealth,
   CredentialQuota,
@@ -531,7 +532,7 @@ export const api = {
   /* Tasks */
   tasks: (workspaceId?: string) => get<{ tasks: (AgentTask & { running: boolean })[] }>(`/api/tasks${workspaceId ? `?workspaceId=${workspaceId}` : ''}`),
   task: (id: string) => get<TaskDetail>(`/api/tasks/${id}`),
-  estimate: (body: { workspaceId: string; request: string; mode?: RoutingMode; allowPaid?: boolean }) =>
+  estimate: (body: { workspaceId: string; request: string; mode?: RoutingMode; allowPaid?: boolean; pipeline?: PipelineKind }) =>
     post<{ estimate: TaskEstimate; pipeline: { steps: string[]; rationale: string } }>('/api/tasks/estimate', body),
   createTask: (body: { workspaceId: string; request: string; mode?: RoutingMode; allowPaid?: boolean; budget?: number }) =>
     post<{ task: AgentTask }>('/api/tasks', body),

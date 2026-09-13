@@ -98,6 +98,11 @@ export interface RunTaskInput {
  */
 const VERIFYING_ROLES: AgentRole[] = ['tester', 'reviewer', 'debugger'];
 
+/** Roles whose job is to disagree with what an earlier step produced. */
+const REVIEWING_ROLES: AgentRole[] = ['reviewer', 'tester'];
+/** Roles whose output a reviewer is checking. */
+const AUTHORING_ROLES: AgentRole[] = ['implementer', 'debugger'];
+
 /** The steps a task will run, chosen from the shape of the request. */
 export interface Pipeline {
   steps: AgentRole[];
@@ -219,8 +224,18 @@ export class Orchestrator {
    * "$0.00, FREE-FIRST" means the router really did find free capacity for
    * every step — not that we hope it will.
    */
-  estimate(request: string, opts: { mode: RoutingMode; workspaceId: string; userId: string | null; allowPaid: boolean }): TaskEstimate {
-    const pipeline = this.planPipeline(request);
+  /**
+   * `pipeline` is the caller's explicit choice, and it has to be the same one
+   * the run will use. The estimate exists so somebody can approve a cost;
+   * pricing the inferred pipeline while the run uses the selected one prices a
+   * different set of agents than the ones that spend the money — a research
+   * run priced as an implement-and-test run, or the reverse.
+   */
+  estimate(
+    request: string,
+    opts: { mode: RoutingMode; workspaceId: string; userId: string | null; allowPaid: boolean; pipeline?: PipelineKind },
+  ): TaskEstimate {
+    const pipeline = this.planPipeline(request, opts.pipeline);
     const promptTokens = estimateTokens(request);
     let cost = 0;
     let costKnown = true;
@@ -353,10 +368,28 @@ export class Orchestrator {
           }
         }
 
+        // A model checking its own work agrees with itself. Where a review step
+        // follows a step that wrote code, the review asks to be routed
+        // somewhere else — as a preference, so a single-model instance still
+        // gets its review and the routing reason says the preference could not
+        // be honoured. This is the one idea taken from Codebuff that had been
+        // read and not built.
+        const avoidModels = REVIEWING_ROLES.includes(role)
+          ? [
+              ...new Set(
+                steps
+                  .slice(0, i)
+                  .filter((s) => AUTHORING_ROLES.includes(s.role) && s.modelId)
+                  .map((s) => s.modelId as string),
+              ),
+            ]
+          : undefined;
+
         const result = await this.loop.run(
           {
             agent,
             instruction: this.instructionFor(role, input.task.request, input.workspace),
+            avoidModels: avoidModels?.length ? avoidModels : undefined,
             context: context.length ? context.join('\n\n---\n\n') : undefined,
             workspaceId: task.workspaceId,
             userId: task.userId,

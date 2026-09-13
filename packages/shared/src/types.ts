@@ -485,6 +485,20 @@ export interface AIRequest {
   /** Explicit permission to spend money on this request. */
   allowPaid?: boolean;
   /**
+   * Models to route away from if anything else can serve this request.
+   *
+   * A preference, not a filter, and deliberately so. It exists for reviewer
+   * diversity — a model checking its own work agrees with itself — and a
+   * review that cannot run at all is worse than a review by the same model.
+   * On a single-model instance, or when every alternative is unavailable, the
+   * request is served by an avoided model and the routing reason says it was.
+   *
+   * Being on this list also cancels a global "preferred model" instruction for
+   * this one request, because a pinned favourite otherwise routed every step
+   * of a pipeline to the same model no matter what any step asked for.
+   */
+  avoidModels?: string[];
+  /**
    * The output ceiling this call will carry, when the caller declared one.
    *
    * Routing does not send it to a provider — the completion request does that.
@@ -509,6 +523,8 @@ export interface RoutingCandidate {
    * cost-sensitive comparison. Consumers must render null as unknown.
    */
   estimatedCost: number | null;
+  /** True when the request asked to route away from this model; see `AIRequest.avoidModels`. */
+  avoided?: boolean;
   /** Which side of the operator's money this route sits on. */
   costClass: CostClass;
   estimatedLatencyMs: number | null;

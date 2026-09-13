@@ -5,6 +5,7 @@ import {
   type Pricing,
   type ProviderDescriptor,
   type ResolvedCredential,
+  type UserPreferences,
 } from '@meridian/shared';
 import { ModelRegistry } from '@meridian/model-sdk';
 import { OpenAICompatibleAdapter, ProviderRegistry } from '@meridian/provider-sdk';
@@ -66,11 +67,44 @@ export interface Harness {
  * time-dependent, and a test that sleeps for a real cooldown is a test nobody
  * runs.
  */
+/**
+ * A provider descriptor with no server behind it.
+ *
+ * `startMockProvider` is the right tool when a test makes a call; a test that
+ * only asks the router a question needs a descriptor and nothing else, and
+ * booting an HTTP server for it is cost without coverage.
+ */
+export function provider(overrides: Partial<ProviderDescriptor> & Pick<ProviderDescriptor, 'id'>): ProviderDescriptor {
+  return {
+    name: `Provider ${overrides.id}`,
+    kinds: ['llm'],
+    adapter: 'openai-compatible',
+    baseUrl: `http://127.0.0.1:1/${overrides.id}/v1`,
+    auth: 'none',
+    envKeys: [],
+    trust: 'verified',
+    docsUrl: null,
+    local: false,
+    supportsDiscovery: true,
+    dataUse: {
+      trainingUse: 'not_allowed',
+      commercialUse: 'allowed',
+      retention: 'none',
+      privacyNote: 'A test double.',
+      policyUrl: null,
+    },
+    defaultPricing: FREE,
+    ...overrides,
+  } as ProviderDescriptor;
+}
+
 export function createHarness(opts: {
   providers: ProviderDescriptor[];
   models: ModelDescriptor[];
   credentials?: ResolvedCredential[];
   allowPaid?: boolean;
+  /** The operator's saved routing preferences, wired as the gateway wires them. */
+  preferences?: Partial<UserPreferences> | null;
 } = { providers: [], models: [] }): Harness {
   let clock = 1_700_000_000_000;
   const now = (): number => clock;
@@ -105,6 +139,18 @@ export function createHarness(opts: {
     credentials,
     pools,
     allowPaid: () => opts.allowPaid ?? false,
+    preferencesFor: opts.preferences
+      ? () => ({
+          userId: null,
+          preferredModels: [],
+          preferredProviders: [],
+          routingMode: 'AUTO',
+          allowPaid: opts.allowPaid ?? false,
+          maxCostPerTask: null,
+          privacyMode: 'TRUSTED_ONLY',
+          ...opts.preferences,
+        } as UserPreferences)
+      : undefined,
     now,
     // Wired exactly as the gateway wires it: the best headroom across this
     // provider's credentials, from what providers actually published, and null

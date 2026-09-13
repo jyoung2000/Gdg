@@ -50,6 +50,16 @@ import {
  */
 const RESERVE_COMPLETION_TOKENS = 4096;
 
+/**
+ * What a model on the request's `avoidModels` list keeps of its score.
+ *
+ * Low enough that a plausible alternative always wins, above zero so that when
+ * there is no alternative the request is still served — and the routing reason
+ * says the preference could not be honoured, rather than the request failing
+ * or quietly pretending it was.
+ */
+const AVOID_PENALTY = 0.1;
+
 export interface RouterDeps {
   models: ModelRegistry;
   providers: ProviderRegistry;
@@ -512,11 +522,18 @@ export class Router {
     const headroom = free ? (this.deps.quotaHeadroom?.(m.providerId, m.id) ?? null) : null;
     const freeValue = free * (headroom === null ? 1 : 0.2 + 0.8 * clamp01(headroom));
 
-    const preference = this.preferenceScore(m, prefs, pool);
+    // A request that asked to route away from this model. See
+    // `AIRequest.avoidModels`: a preference rather than a constraint, because a
+    // review that cannot happen is worse than a review by the same model.
+    const avoided = (req.avoidModels ?? []).includes(m.id);
+    const preference = avoided ? 0 : this.preferenceScore(m, prefs, pool);
     // Only what the operator named counts as an instruction; a pool's member
-    // weight is Meridian's own arrangement, not the user's.
+    // weight is Meridian's own arrangement, not the user's. An avoided model
+    // forfeits that instruction for this request — otherwise a pinned
+    // favourite routed every step of a pipeline to the same model however
+    // loudly a step asked for a different one.
     const preferred = Boolean(
-      prefs && (prefs.preferredModels.includes(m.id) || prefs.preferredProviders.includes(m.providerId)),
+      !avoided && prefs && (prefs.preferredModels.includes(m.id) || prefs.preferredProviders.includes(m.providerId)),
     );
     // Reliability is "will this call work", and that has two halves: how the
     // provider has been behaving, and how sure we are the model can do what
@@ -540,10 +557,13 @@ export class Router {
       preference: preference * w.preference,
       reliability: reliability * w.reliability,
     };
-    const total = Object.values(factors).reduce((s, v) => s + v, 0);
+    // Enough of a penalty that any real alternative wins, small enough that an
+    // avoided model still beats nothing at all.
+    const total = Object.values(factors).reduce((s, v) => s + v, 0) * (avoided ? AVOID_PENALTY : 1);
 
     return {
       modelId: m.id,
+      avoided,
       providerId: m.providerId,
       score: Math.round(total * 10_000) / 10_000,
       factors: Object.fromEntries(Object.entries(factors).map(([k, v]) => [k, Math.round(v * 1000) / 1000])),
@@ -725,6 +745,18 @@ export class Router {
         label: 'Supports tool calling',
         met: model.capabilities.includes('tools'),
         detail: model.capabilities.includes('tools') ? undefined : 'Tools were not required for this request',
+      });
+    }
+    if (req.avoidModels?.length) {
+      // Said out loud either way. A diversity preference that was honoured is
+      // worth seeing; one that could not be is worth seeing more, because it
+      // means the model reviewing the work is the model that did it.
+      criteria.push({
+        label: winner.avoided ? 'Asked to route elsewhere, and could not' : 'Routed away from the models this step asked to avoid',
+        met: !winner.avoided,
+        detail: winner.avoided
+          ? `Nothing else could serve this request, so it went to ${model.id} anyway`
+          : `Avoided ${req.avoidModels.join(', ')}`,
       });
     }
     criteria.push({

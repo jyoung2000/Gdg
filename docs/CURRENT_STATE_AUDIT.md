@@ -170,8 +170,12 @@ Both halves of "independent review with escalation" are absent:
   dead end-to-end: no caller ever passes it.
 
 Note `THIRD_PARTY_NOTICES.md` credits Codebuff with the concept "reviewing with
-a different model family than the one that implemented". The concept was read;
-the behaviour was not built. That line has been corrected.
+a different model family than the one that implemented". At the time of this
+audit the concept had been read and the behaviour was not built. It is built
+now, in the narrower form Meridian's catalogue can support: a review step routes
+away from the exact models that wrote the code, as a preference that degrades
+when there is nothing else to use. See
+[UPSTREAM_INTEGRATION_MATRIX.md](UPSTREAM_INTEGRATION_MATRIX.md).
 
 ### 8. Live quota
 

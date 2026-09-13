@@ -213,12 +213,16 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
   });
 
   /** Estimate before committing: calls, models, time and cost (spec §59). */
-  server.post<{ Body: { workspaceId?: string; request?: string; mode?: RoutingMode; allowPaid?: boolean } }>(
+  server.post<{ Body: { workspaceId?: string; request?: string; mode?: RoutingMode; allowPaid?: boolean; pipeline?: PipelineKind } }>(
     '/api/tasks/estimate',
     async (req) => {
       const body = req.body ?? {};
       if (!body.request) throw new MeridianError('invalid_request', '"request" is required');
-      const pipeline = app.orchestrator.planPipeline(body.request);
+      // The same pipeline POST /api/tasks will run. Declaring the field and
+      // then not passing it meant the preview showed, and the estimate priced,
+      // whichever pipeline the heuristics inferred — while the run used the
+      // one the caller picked.
+      const pipeline = app.orchestrator.planPipeline(body.request, body.pipeline);
       // The estimate exists so the caller can approve a cost. It has to be
       // priced under the mode the task will actually run with — which POST
       // /api/tasks resolves through the workspace's default — or the approval
@@ -230,6 +234,7 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
         workspaceId: body.workspaceId ?? '',
         userId: req.auth.userId,
         allowPaid: body.allowPaid ?? prefs.allowPaid,
+        pipeline: body.pipeline,
       });
       return { estimate, pipeline };
     },

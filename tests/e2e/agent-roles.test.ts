@@ -46,6 +46,10 @@ describe('Agent roles', () => {
       PORT: '0',
     } as NodeJS.ProcessEnv);
     app = await App.create(config);
+    // Started, not merely constructed: the local model only enters the
+    // catalogue when the instance starts, and an agent with no models to route
+    // to fails before its own prompt is ever exercised.
+    await app.start();
     server = await createServer(app);
     await server.ready();
   });
@@ -107,6 +111,96 @@ describe('Agent roles', () => {
     assert.ok(o.planPipeline('anything', 'orchestrate').steps.includes('orchestrator'));
     assert.deepEqual(o.planPipeline('anything', 'debug').steps, ['file-finder', 'debugger', 'tester', 'reviewer']);
     assert.deepEqual(o.planPipeline('anything', 'tests').steps, ['file-finder', 'tester', 'reviewer']);
+  });
+
+  it('actually runs the roles that only ever appeared in a steps array', async () => {
+    // `browser`, `orchestrator` and `debugger` were reachable on paper and had
+    // never been executed: every test that named them asserted the contents of
+    // a planned list, which is a test of `planPipeline` rather than of the
+    // agents. A role that has never run is a role whose prompt, tools and step
+    // budget nobody has checked.
+    //
+    // The sim model is told to finish immediately, so what is under test is
+    // that the orchestrator constructs and drives each agent — not what a
+    // model chooses to do once it is running.
+    const created = await server.inject({ method: 'POST', url: '/api/workspaces', payload: { name: 'roles' } });
+    assert.equal(created.statusCode, 200, created.body);
+    const workspaceId = (created.json() as { workspace: { id: string } }).workspace.id;
+
+    for (const kind of ['browse', 'orchestrate', 'debug'] as const) {
+      const planned = app.orchestrator.planPipeline('anything', kind).steps;
+      const started = await server.inject({
+        method: 'POST',
+        url: '/api/tasks',
+        payload: {
+          workspaceId,
+          request: `Do the ${kind} thing. [[sim: finish done]]`,
+          pipeline: kind,
+        },
+      });
+      assert.equal(started.statusCode, 200, started.body);
+      const taskId = (started.json() as { task: { id: string } }).task.id;
+
+      // Poll rather than sleep for a fixed time: a slow machine should make
+      // this take longer, not make it flaky.
+      type Detail = { task: { status: string }; steps: { role: string; status: string; startedAt: number | null }[] };
+      let detail: Detail | undefined;
+      for (let i = 0; i < 200; i++) {
+        const res = await server.inject({ method: 'GET', url: `/api/tasks/${taskId}` });
+        detail = res.json<Detail>();
+        if (detail.task.status !== 'running' && detail.task.status !== 'queued') break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.ok(detail, `${kind}: the task was never readable`);
+      assert.ok(
+        detail.task.status !== 'running' && detail.task.status !== 'queued',
+        `${kind}: the task never finished (${detail.task.status})`,
+      );
+
+      assert.deepEqual(
+        detail.steps.map((s) => s.role),
+        planned,
+        `${kind} planned ${planned.join(' → ')} but ran ${detail.steps.map((s) => s.role).join(' → ')}`,
+      );
+      for (const step of detail.steps) {
+        assert.ok(step.startedAt != null, `${kind}: the ${step.role} step was never started`);
+        assert.ok(
+          step.status === 'completed' || step.status === 'failed',
+          `${kind}: the ${step.role} step never reached a terminal status (${step.status})`,
+        );
+      }
+    }
+  });
+
+  it('prices the pipeline the caller chose, not the one the words suggest', async () => {
+    // The estimate exists so somebody can approve a cost. `/api/tasks/estimate`
+    // declared a `pipeline` field and then planned without it, so a research
+    // run was previewed and priced as an implement-and-test run whenever its
+    // wording tripped the heuristics — an approval for a different decision
+    // than the one that spends the money.
+    const created = await server.inject({ method: 'POST', url: '/api/workspaces', payload: { name: 'estimates' } });
+    const workspaceId = (created.json() as { workspace: { id: string } }).workspace.id;
+    // Wording that the heuristics read as "build something".
+    const request = 'add a feature that writes a report';
+
+    const inferred = await server.inject({ method: 'POST', url: '/api/tasks/estimate', payload: { workspaceId, request } });
+    const chosen = await server.inject({
+      method: 'POST',
+      url: '/api/tasks/estimate',
+      payload: { workspaceId, request, pipeline: 'research' },
+    });
+    assert.equal(chosen.statusCode, 200, chosen.body);
+
+    const inferredSteps = (inferred.json() as { pipeline: { steps: string[] } }).pipeline.steps;
+    const chosenSteps = (chosen.json() as { pipeline: { steps: string[] } }).pipeline.steps;
+
+    assert.deepEqual(chosenSteps, app.orchestrator.planPipeline(request, 'research').steps);
+    assert.notDeepEqual(chosenSteps, inferredSteps, 'the two pipelines are identical, so this proves nothing');
+
+    // And the price follows the plan, since the price is the point.
+    const cheaper = (chosen.json() as { estimate: { calls: number } }).estimate.calls;
+    const dearer = (inferred.json() as { estimate: { calls: number } }).estimate.calls;
+    assert.ok(cheaper < dearer, `research (${cheaper} calls) should be cheaper than the inferred pipeline (${dearer} calls)`);
   });
 
   it('never puts a workspace-mutating agent in a read-only pipeline', () => {

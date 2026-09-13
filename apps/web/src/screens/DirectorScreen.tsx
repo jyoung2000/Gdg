@@ -111,8 +111,13 @@ export function DirectorScreen(): React.JSX.Element {
       try {
         const { estimate, pipeline } = await api.estimate({
           workspaceId: activeWorkspaceId,
-          request: kind === 'auto' ? idea : `[pipeline:${kind}] ${idea}`,
+          request: idea,
           mode: routingMode,
+          // The chosen pipeline, sent as a field rather than smuggled into the
+          // request text as a `[pipeline:…]` marker for the heuristics to spot.
+          // The preview and the run now plan from the same input, so the plan
+          // shown is the plan priced is the plan run.
+          pipeline: kind,
         });
 
         // One routing preview per distinct role, asked with that role's own
