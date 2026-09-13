@@ -65,25 +65,24 @@
   /* Navigation                                                       */
   /* ---------------------------------------------------------------- */
 
-  var PRIMARY = [
-    { id: 'chat', label: 'Chats' },
-    { id: 'projects', label: 'Projects' },
-    { id: 'models', label: 'Models' },
-    { id: 'activity', label: 'Activity' },
-    { id: 'settings', label: 'Settings' },
-  ];
-
-  /* Everything the production sidebar keeps behind its "More" disclosure. */
-  var MORE = [
-    { id: 'home', label: 'Home' }, { id: 'workspace', label: 'Workspace' },
-    { id: 'director', label: 'Director' }, { id: 'tasks', label: 'Tasks' },
-    { id: 'agents', label: 'Agents' }, { id: 'browser', label: 'Browser' },
-    { id: 'computer', label: 'Computer' }, { id: 'versioncontrol', label: 'Version Control' },
-    { id: 'generations', label: 'Generations' }, { id: 'discover', label: 'Discover' },
-    { id: 'ai', label: 'AI' }, { id: 'skills', label: 'Skills' },
-    { id: 'connections', label: 'Connections' }, { id: 'pools', label: 'Pools' },
-    { id: 'mcp', label: 'MCP' }, { id: 'devops', label: 'DevOps' },
-  ];
+  /**
+   * The sidebar, injected by the generator from the application's own `NAV`.
+   *
+   * This used to be two hand-written lists sitting in this file, which is how a
+   * page whose entire job is to look like the product came to be the one place
+   * nothing checked. `scripts/nav-manifest.mjs` parses the real array out of
+   * `App.tsx` and `build-offline-ui.mjs` writes it in above; there is one list
+   * now, and this copy cannot drift from it.
+   */
+  var NAV = window.__MERIDIAN_NAV__ || [];
+  if (!NAV.length) throw new Error('the offline UI was generated without a navigation manifest');
+  function section(which) {
+    return NAV.filter(function (n) { return n.section === which; }).map(function (n) {
+      return { id: n.id, label: n.label };
+    });
+  }
+  var PRIMARY = section('primary');
+  var MORE = section('more');
 
   function go(id) {
     set({ screen: id, navOpen: false, palette: false, moreOpen: state.moreOpen || isMore(id) });
@@ -251,7 +250,7 @@
       ]),
       h('p', { class: 'of-muted', style: 'margin:0', text: 'What AI Meridian can use, where it comes from, and what it costs. Demo catalogue — not live provider data.' }),
       h('div', { class: 'of-row' }, [
-        h('button', { type: 'button', class: 'mrd-button mrd-button--tertiary mrd-button--sm', onclick: function () { go('connections'); } }, ['Connections']),
+        h('button', { type: 'button', class: 'mrd-button mrd-button--tertiary mrd-button--sm', onclick: function () { go('providers'); } }, ['Connections']),
         h('button', { type: 'button', class: 'mrd-button mrd-button--tertiary mrd-button--sm', onclick: function () { go('discover'); } }, ['Discover free models']),
         h('button', { type: 'button', class: 'mrd-button mrd-button--tertiary mrd-button--sm', onclick: function () { go('pools'); } }, ['Pools']),
       ]),
@@ -431,10 +430,10 @@
     switch (state.screen) {
       case 'chat': return chatScreen();
       case 'models': return modelsScreen();
-      case 'connections': return connectionsScreen();
+      case 'providers': return connectionsScreen();
       case 'discover': return discoverScreen();
       case 'projects': return projectsScreen();
-      case 'activity': return activityScreen();
+      case 'usage': return activityScreen();
       case 'settings': return settingsScreen();
       default: return placeholderScreen(state.screen);
     }
@@ -602,7 +601,7 @@
       { label: 'Tools', run: function () { set({ palette: false }); openDrawer('Tools', toolsBody()); } },
       { label: 'Why this model?', run: function () { set({ palette: false }); openDrawer('Why this model?', whyBody()); } },
       { label: 'Diagnostics', run: function () { set({ screen: 'settings', settings: 'advanced', palette: false }); } },
-      { label: 'Provider health', run: function () { go('connections'); } },
+      { label: 'Provider health', run: function () { go('providers'); } },
     ]);
     var q = state.paletteQuery.trim().toLowerCase();
     return q ? all.filter(function (i) { return i.label.toLowerCase().indexOf(q) !== -1; }) : all;

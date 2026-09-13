@@ -22,6 +22,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fingerprintComment, uiFingerprint } from './ui-fingerprint.mjs';
+import { readNav } from './nav-manifest.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /**
@@ -265,6 +266,9 @@ ${css}
 <script>
 window.MERIDIAN_OFFLINE_DATA = ${JSON.stringify(DATA)};
 window.MERIDIAN_VERSION = ${JSON.stringify(pkg.version)};
+/* Read from apps/web/src/shell/App.tsx at generation time, so the offline
+   sidebar is the application's sidebar rather than a copy of it. */
+window.__MERIDIAN_NAV__ = ${JSON.stringify(readNav(ROOT))};
 </script>
 <script>
 ${readFileSync(join(ROOT, 'scripts/offline-ui-app.js'), 'utf8')}

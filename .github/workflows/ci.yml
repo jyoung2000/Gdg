@@ -83,6 +83,9 @@ jobs:
       # The offline UI and the GUI mockup are files people download, so a stale
       # one is a shipped defect rather than a stale doc. The scorecard check
       # fails when the report quotes numbers the matrices no longer produce.
+      # Covers the offline UI, the GUI mockup and the preview screenshots: all
+      # three are files people download or look at, so a stale one is a shipped
+      # defect rather than a stale doc.
       - name: Offline artefacts are current and self-contained
         run: node scripts/check-offline-ui.mjs
 

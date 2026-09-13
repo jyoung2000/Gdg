@@ -22,6 +22,7 @@
     "desktop:verify": "node scripts/verify-desktop-payload.mjs",
     "dev": "node scripts/dev.mjs",
     "lint": "tsc --noEmit -p tsconfig.json",
+    "mockup": "node scripts/regenerate-mockup.mjs",
     "package:portable": "node scripts/package-portable.mjs",
     "package:windows": "pnpm build:windows && tauri build --config apps/desktop/src-tauri/tauri.conf.json",
     "sandbox:image": "node scripts/build-sandbox-image.mjs",

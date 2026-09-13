@@ -36,7 +36,7 @@ const ARTEFACTS = [
     path: 'docs/mockup/meridian-gui-mockup.html',
     label: 'GUI mockup',
     // Needs a running gateway, because it captures the real rendered DOM.
-    regenerate: 'npx tsx scripts/capture-gui-mockup.mts http://127.0.0.1:4639',
+    regenerate: 'pnpm mockup',
     minKb: 300,
   },
 ];
@@ -100,6 +100,52 @@ for (const artefact of ARTEFACTS) {
   results.push({ ...artefact, ok, problems, sizeKb, fingerprint: stamped });
 }
 
+/**
+ * The preview screenshots, which are the artefact people actually look at.
+ *
+ * A PNG cannot carry a comment, so `pnpm mockup` writes the fingerprint beside
+ * them. Without this the gate could tell the mockup was stale and say nothing
+ * at all about the pictures — which is how seven screenshots came to show a
+ * sidebar the product had not had for weeks.
+ */
+const PREVIEWS = ['chat', 'projects', 'director', 'discover', 'computer', 'models', 'settings'];
+const sidecarPath = join(ROOT, 'docs/mockup/previews.json');
+const previewProblems = [];
+let previewStamp = null;
+
+if (!existsSync(sidecarPath)) {
+  previewProblems.push('docs/mockup/previews.json is missing, so nothing records when the previews were taken');
+} else {
+  try {
+    previewStamp = JSON.parse(readFileSync(sidecarPath, 'utf8')).uiFingerprint ?? null;
+  } catch {
+    previewProblems.push('docs/mockup/previews.json is not readable JSON');
+  }
+  if (previewStamp && previewStamp !== current.hash) {
+    previewProblems.push(`stale: shot from UI source ${previewStamp}, but the source is now ${current.hash}`);
+  }
+}
+for (const id of PREVIEWS) {
+  const file = join(ROOT, `docs/mockup/preview-${id}.png`);
+  if (!existsSync(file)) previewProblems.push(`preview-${id}.png is missing`);
+}
+if (previewProblems.length) {
+  previewProblems.push('regenerate with `pnpm mockup`');
+  failed += 1;
+}
+results.push({
+  path: 'docs/mockup/preview-*.png',
+  label: 'Previews',
+  regenerate: 'pnpm mockup',
+  ok: previewProblems.length === 0,
+  problems: previewProblems,
+  sizeKb: PREVIEWS.reduce((n, id) => {
+    const f = join(ROOT, `docs/mockup/preview-${id}.png`);
+    return n + (existsSync(f) ? kb(f) : 0);
+  }, 0),
+  fingerprint: previewStamp,
+});
+
 if (asJson) {
   process.stdout.write(`${JSON.stringify({ uiFingerprint: current, artefacts: results, ok: failed === 0 }, null, 2)}\n`);
 } else {
@@ -110,7 +156,7 @@ if (asJson) {
   }
   process.stdout.write(
     failed === 0
-      ? '\n  both offline artefacts are current and self-contained\n'
+      ? '\n  every offline artefact is current and self-contained\n'
       : `\n  ${failed} offline artefact(s) would ship stale or broken\n`,
   );
 }

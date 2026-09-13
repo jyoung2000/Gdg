@@ -15,7 +15,7 @@ import { chromium } from 'playwright-core';
 // @ts-expect-error — plain ESM helper shared with the other generator.
 import { uiFingerprint, fingerprintComment } from './ui-fingerprint.mjs';
 
-const base = process.argv[2] ?? 'http://localhost:4655';
+const base = process.argv[2] ?? 'http://127.0.0.1:4639';
 const outPath = process.argv[4] ?? 'docs/mockup/meridian-gui-mockup.html';
 
 /**
