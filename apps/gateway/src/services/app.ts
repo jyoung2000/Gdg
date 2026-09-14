@@ -527,6 +527,11 @@ export class App {
       recordUsage: (row) => {
         store.recordUsage(row);
         events.publish({ type: 'usage', record: row }, { userId: row.userId });
+        // Deliberately NOT fed to `recordOutcome`, unlike a completion. A probe
+        // is a five-token request designed to be the smallest thing that can
+        // answer a yes/no question; folding its latency into a model's
+        // percentiles would describe a call nobody makes and drag every p95
+        // toward a number the product never serves.
       },
     });
 
