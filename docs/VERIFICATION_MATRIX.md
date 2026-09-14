@@ -65,7 +65,8 @@ Regenerate the gate-level view with `pnpm verify:release`, which writes
 | Streaming fails over only before the first token | VERIFIED | A stall before any token fails over; the error names the whole chain |
 | Stalled-stream detection | VERIFIED | Abandoned at the configured idle window rather than hanging |
 | Inference pools | PARTIAL | 11 built-in pools; strategy override verified by unit tests, not end to end |
-| Reservations and budgets | IMPLEMENTED_UNVERIFIED | Create, list and delete verified through the API; no reservation was consumed under load |
+| Reservations and budgets | VERIFIED | Create, list and delete through the API; spend and use count written through to the database on every call, so a restart inside the window does not hand the reservation its budget back (`tests/unit/reservation-persistence.test.ts`) |
+| Reservations under concurrent load | IMPLEMENTED_UNVERIFIED | The budget and concurrency ceilings are verified sequentially and across a restart; no reservation has been consumed by many callers at once |
 | Credential scope precedence | VERIFIED | Unit tests cover the ordering and concurrency limits |
 | Live model discovery, including removal | VERIFIED | Discovery registers a local server's models and replaces the set on each pass |
 
@@ -117,7 +118,13 @@ Covered in detail in [SECURITY.md](SECURITY.md).
 | Capability | Status | Evidence |
 | --- | --- | --- |
 | State survives a restart | VERIFIED | Workspaces, usage history and readiness after a full stop and a fresh App over the same directory |
-| Migrations applied in order, each in one transaction | VERIFIED | Three migrations; readiness reads the applied count |
+| Migrations applied in order, the whole upgrade in one transaction | VERIFIED | 11 migrations; readiness reads the applied count (`tests/unit/migrations.test.ts`) |
+| A previous release's database upgrades with its data intact | VERIFIED | A database built from the real migration files up to a cut-off, with rows written through them, opened by this build: the operator and their workspaces survive and the newest table exists |
+| A failed migration fails closed | VERIFIED | A broken file stops startup, names itself, and leaves nothing behind — no partial schema, no `_migrations` row, and the same database upgrades cleanly once the file is removed |
+| An older build refuses a newer database | VERIFIED | Startup refuses and names the migrations it does not recognise, rather than reading columns that have moved |
+| Two processes starting at once | VERIFIED | Two real processes released from a barrier against a deliberately slow migration, three rounds: both start cleanly and the migration is recorded once |
+| Discovery pacing survives a restart | VERIFIED | Backoff, the minimum interval and the consecutive-failure pause all reload; an operator's reset is not resurrected (`tests/unit/discovery-schedule-persistence.test.ts`) |
+| Interrupted tasks are closed out | VERIFIED | Shutdown cancels in-flight tasks and waits for them to write an ending; the next boot fails anything the database still calls running, over a real App restart and a real 30-second provider call (`tests/e2e/task-interruption.test.ts`) |
 | `docker compose config` valid | VERIFIED | — |
 | `docker build` | BLOCKED_EXTERNAL | Base image blocked by this environment's egress policy |
 | `docker compose up -d` | BLOCKED_EXTERNAL | Same |
@@ -133,7 +140,7 @@ on a phone without anything failing to build.
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
-| Eleven screens render without a console error | VERIFIED | Each opened through the app's own navigation, in Chromium |
+| All 21 screens render without a console error | VERIFIED | Each opened through the app's own navigation in Chromium, including the sixteen now behind the "Everything else" disclosure |
 | The bundle loads under the app's own CSP | VERIFIED | A policy that blocked it would surface as a console error on first paint |
 | Live data reaches the client | VERIFIED | The discovered model appears on the Models screen |
 | Design tokens and three-state theming | VERIFIED | Both themes resolve a painted background and a distinct text colour; contrast ratios were computed, and four values corrected as a result |
@@ -190,6 +197,10 @@ Full write-up in [MERIDIAN_PHASE4_IMPLEMENTATION.md](MERIDIAN_PHASE4_IMPLEMENTAT
 | No provider claims evidence for a modality it cannot execute | VERIFIED | Asserted across every provider in the matrix |
 | An unspoken capability counts zero models rather than all of them | VERIFIED | Asserted on a capability nothing has claimed |
 | The Matrix tab labels both halves | VERIFIED | Driven in Chromium |
+| A capability probe is accounted for like any other call | VERIFIED | One usage row per probe through the same sink every completion uses, at the model's own rate card, against a real gateway and a real HTTP provider (`tests/e2e/probe-spend.test.ts`) |
+| A probe refuses to spend without permission | VERIFIED | A metered model is skipped, with a reason, before any request is sent, when paid spend is not permitted |
+| A probe run is bounded by a dollar ceiling | VERIFIED | The ceiling is checked against a pessimistic per-probe estimate before anything is sent, and binds even with permission |
+| Claim age discounts a stale claim in search as well as routing | VERIFIED | A two-year-old probe scores below a fresh one, says so in its reasons, and an undated catalogue entry is not treated as stale (`tests/unit/capability-evidence.test.ts`) |
 | The router's "no fake support" guard | VERIFIED | Red-then-green. It asked only whether a method existed, and the OpenAI-compatible base defines every method and refuses at call time — so a chat-only endpoint was routed image work. The guard now asks the adapter's own surface too |
 
 ## Provider reachability (Phase 4)
