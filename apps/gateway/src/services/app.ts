@@ -339,6 +339,11 @@ export class App {
     } else {
       pools.load(storedPools, store.listReservations());
     }
+    // Reservation spend is written through, not held in memory. Restarting
+    // inside a reservation window used to reload it at zero spent, so its
+    // budget — the only bound on a window an operator deliberately opened —
+    // could be spent again once per restart.
+    pools.onReservationChange((r) => store.saveReservation(r));
 
     /* ---- Routing -------------------------------------------------- */
     const events = new EventBus(logger);
@@ -635,6 +640,18 @@ export class App {
     // whole daily budget again. Today's persisted usage is the ground truth.
     this.pools.hydrateSpend(this.store.spentTodayByPool());
 
+    // Tasks execute in memory, so anything the database still calls running
+    // belongs to a process that no longer exists. Left alone, the Tasks screen
+    // shows work nothing is doing and no timer will ever finish — a lie that
+    // never resolves, which is worse than a visible failure.
+    const stranded = this.store.reconcileInterruptedTasks();
+    if (stranded.length) {
+      this.logger.warn('closed out tasks left running by a previous process', { tasks: stranded.length });
+      for (const task of stranded) {
+        this.events.publish({ type: 'task', event: { type: 'task-update', task } }, { userId: task.userId });
+      }
+    }
+
     await this.discovery.runOnce();
     this.discoveredAt = Date.now();
 
@@ -786,6 +803,21 @@ export class App {
   async stop(): Promise<void> {
     for (const t of this.timers) clearInterval(t);
     this.timers.length = 0;
+
+    // Detached tasks first, and before the database closes. A task started with
+    // `void orchestrator.run(...)` used to be abandoned here: the process tore
+    // its store out from under it, no final record was written, and the next
+    // boot inherited a row claiming to be running. Cancelling gives each one
+    // the chance to write down that it was cancelled, which is the truth.
+    const cancelled = this.orchestrator.cancelAll();
+    if (cancelled) this.logger.info('cancelling tasks for shutdown', { tasks: cancelled });
+    // Bounded: a shutdown a stuck provider call can hold open indefinitely is
+    // not a shutdown. If the wait times out, say so — the next boot's
+    // reconciliation is the backstop, and it is honest about having run.
+    if (!(await this.orchestrator.settle(5_000))) {
+      this.logger.warn('shutting down with tasks still in flight; they will be closed out on the next start');
+    }
+
     // Stop every computer session first: an orphaned backend process holding
     // a display or a browser is the worst thing to leave behind.
     await this.computer.stopAll().catch(() => undefined);

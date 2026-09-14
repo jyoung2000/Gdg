@@ -757,6 +757,51 @@ export class Store implements CredentialStore {
     return row ? toTask(row) : null;
   }
 
+  /**
+   * Close out tasks a previous process left mid-flight.
+   *
+   * A task is executed detached, in memory. If the gateway dies while one is
+   * running — a crash, a container stop, a machine reboot — nothing writes its
+   * ending, and the row stays `running` forever. The Tasks screen then shows
+   * work that nothing is doing and no timer will ever finish, which is worse
+   * than showing a failure: it is a lie that never resolves.
+   *
+   * Called once, at boot, before anything new is started. Everything running or
+   * queued at that moment belongs to a process that no longer exists.
+   */
+  reconcileInterruptedTasks(at = Date.now()): AgentTask[] {
+    const stranded = (
+      this.db.prepare("SELECT * FROM tasks WHERE status IN ('running', 'queued', 'awaiting-input')").all() as Row[]
+    ).map(toTask);
+    if (!stranded.length) return [];
+
+    const tx = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE tasks SET status = 'failed', finished_at = ?,
+             error = 'Meridian stopped while this task was running, so it did not finish. Nothing was left running; start it again if you still want it.'
+           WHERE status IN ('running', 'queued', 'awaiting-input')`,
+        )
+        .run(at);
+      // The steps too: a task marked failed above a step still claiming to be
+      // running is the same unfinished story one level down.
+      this.db
+        .prepare(
+          `UPDATE task_steps SET status = 'failed', finished_at = ?, error = 'Interrupted when Meridian stopped'
+             WHERE status = 'running'`,
+        )
+        .run(at);
+    });
+    tx();
+
+    return stranded.map((t) => ({
+      ...t,
+      status: 'failed' as const,
+      finishedAt: at,
+      error: 'Meridian stopped while this task was running, so it did not finish. Nothing was left running; start it again if you still want it.',
+    }));
+  }
+
   listTasks(workspaceId?: string, limit = 100): AgentTask[] {
     const rows = workspaceId
       ? (this.db.prepare('SELECT * FROM tasks WHERE workspace_id = ? ORDER BY created_at DESC LIMIT ?').all(workspaceId, limit) as Row[])

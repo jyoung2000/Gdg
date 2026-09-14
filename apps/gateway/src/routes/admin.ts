@@ -814,8 +814,9 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
       spend: 0,
       createdAt: Date.now(),
     };
+    // addReservation persists through the pool manager's change hook; saving
+    // here as well would be a second writer for the same row.
     app.pools.addReservation(reservation);
-    app.store.saveReservation(reservation);
     return { reservation };
   });
 

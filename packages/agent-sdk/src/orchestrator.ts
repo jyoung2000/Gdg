@@ -125,6 +125,16 @@ export class Orchestrator {
   private readonly now: () => number;
   /** Tasks currently running, so they can be cancelled by id. */
   private readonly running = new Map<string, AbortController>();
+  /**
+   * Every detached run still in flight, so shutdown can wait for it.
+   *
+   * A task is started with `void orchestrator.run(...)` — it has to be, because
+   * a real task outlives any sensible HTTP timeout. But nothing held the
+   * resulting promise, so shutdown closed the database underneath tasks that
+   * were still working: their final status was never written, and the next boot
+   * found rows that said "running" about a process that no longer existed.
+   */
+  private readonly inFlight = new Set<Promise<unknown>>();
 
   constructor(deps: OrchestratorDeps) {
     this.deps = deps;
@@ -148,6 +158,46 @@ export class Orchestrator {
 
   isRunning(taskId: string): boolean {
     return this.running.has(taskId);
+  }
+
+  /** Every task currently executing. */
+  runningTaskIds(): string[] {
+    return [...this.running.keys()];
+  }
+
+  /**
+   * Cancel every running task. Returns how many were signalled.
+   *
+   * Used by shutdown: a cancelled task writes a final record saying it was
+   * cancelled, which is the truth, and is far better than a row left claiming
+   * to be running forever.
+   */
+  cancelAll(): number {
+    const ids = this.runningTaskIds();
+    for (const id of ids) this.cancel(id);
+    return ids.length;
+  }
+
+  /**
+   * Wait for in-flight tasks to finish writing themselves down.
+   *
+   * Bounded, because a shutdown that can be held open indefinitely by a stuck
+   * provider call is not a shutdown. Resolves `true` if everything settled
+   * within the grace period and `false` if the wait timed out — the caller can
+   * then say so rather than implying a clean stop.
+   */
+  async settle(graceMs = 5_000): Promise<boolean> {
+    if (!this.inFlight.size) return true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), graceMs);
+      timer.unref?.();
+    });
+    try {
+      return await Promise.race([Promise.allSettled([...this.inFlight]).then(() => true), timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   /**
@@ -293,8 +343,23 @@ export class Orchestrator {
     };
   }
 
-  /** Run a task to completion. Resolves with the finished task record. */
+  /**
+   * Run a task to completion. Resolves with the finished task record.
+   *
+   * Thin on purpose: its whole job is to register the run so shutdown can wait
+   * for it. The work is in `execute`.
+   */
   async run(input: RunTaskInput): Promise<{ task: AgentTask; steps: TaskStep[] }> {
+    const promise = this.execute(input);
+    this.inFlight.add(promise);
+    try {
+      return await promise;
+    } finally {
+      this.inFlight.delete(promise);
+    }
+  }
+
+  private async execute(input: RunTaskInput): Promise<{ task: AgentTask; steps: TaskStep[] }> {
     const ac = new AbortController();
     const signal = input.signal ? anySignal([input.signal, ac.signal]) : ac.signal;
     this.running.set(input.task.id, ac);

@@ -173,9 +173,27 @@ export class PoolManager {
   private readonly reservations = new Map<string, Reservation>();
   private readonly usage = new Map<string, PoolUsage>();
   private readonly now: () => number;
+  private readonly listeners: ((r: Reservation) => void)[] = [];
 
   constructor(now: () => number = () => Date.now()) {
     this.now = now;
+  }
+
+  /**
+   * Called whenever a reservation's stored state changes.
+   *
+   * Reservation `used` and `spend` were counted in memory and written to the
+   * database exactly once, when the reservation was created. So a gateway that
+   * restarted inside a reservation window reloaded it at zero spent, and the
+   * budget an operator had set for that window could be spent again — once per
+   * restart, with the reservation reporting a clean slate each time.
+   */
+  onReservationChange(fn: (r: Reservation) => void): void {
+    this.listeners.push(fn);
+  }
+
+  private changed(r: Reservation): void {
+    for (const fn of this.listeners) fn(r);
   }
 
   load(pools: InferencePool[], reservations: Reservation[] = []): void {
@@ -259,12 +277,15 @@ export class PoolManager {
 
   addReservation(r: Reservation): void {
     this.reservations.set(r.id, r);
+    this.changed(r);
   }
 
   cancelReservation(id: string): boolean {
     const r = this.reservations.get(id);
     if (!r) return false;
-    this.reservations.set(id, { ...r, status: 'cancelled' });
+    const cancelled: Reservation = { ...r, status: 'cancelled' };
+    this.reservations.set(id, cancelled);
+    this.changed(cancelled);
     return true;
   }
 
@@ -401,11 +422,16 @@ export class PoolManager {
     u.spentToday = Math.round((u.spentToday + cost) * 1e6) / 1e6;
     const active = this.activeReservation(poolId);
     if (active) {
-      this.reservations.set(active.id, {
+      const next: Reservation = {
         ...active,
         used: active.used + 1,
         spend: Math.round((active.spend + cost) * 1e6) / 1e6,
-      });
+      };
+      this.reservations.set(active.id, next);
+      // Written through, not just counted. A reservation's budget is the only
+      // thing bounding a window an operator deliberately opened, and a counter
+      // that resets on restart is not a bound.
+      this.changed(next);
     }
   }
 
