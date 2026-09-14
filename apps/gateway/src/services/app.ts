@@ -504,7 +504,22 @@ export class App {
 
     // Probes cost money and quota, so this is constructed idle and runs only
     // when a person asks it to. Nothing here is on a timer.
-    const verification = new VerificationService({ providers, models, credentials, store, logger });
+    //
+    // It is given the same paid-spend switch the router obeys and the same
+    // usage sink every completion writes to: a probe is an ordinary paid call,
+    // and spend that skips the ledger is spend the operator cannot see.
+    const verification = new VerificationService({
+      providers,
+      models,
+      credentials,
+      store,
+      logger,
+      allowPaid: () => config.allowPaid,
+      recordUsage: (row) => {
+        store.recordUsage(row);
+        events.publish({ type: 'usage', record: row }, { userId: row.userId });
+      },
+    });
 
     // The computer agent is constructed but idle: registering backends probes
     // nothing and starts nothing, so a gateway that never runs a session pays

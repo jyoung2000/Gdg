@@ -262,6 +262,8 @@ export async function registerControlPlaneRoutes(server: FastifyInstance, app: A
       capabilities?: Capability[];
       limit?: number;
       timeoutMs?: number;
+      allowPaid?: boolean;
+      maxCostUsd?: number;
     };
 
     const report = await app.verification.verify({
@@ -270,13 +272,24 @@ export async function registerControlPlaneRoutes(server: FastifyInstance, app: A
       capabilities: body.capabilities,
       limit: body.limit,
       timeoutMs: body.timeoutMs,
+      // Spending has to be asked for in the request that spends. The
+      // deployment switch is the default; this is the caller saying, for this
+      // run, that paid models may be touched — and the ceiling still binds.
+      allowPaid: body.allowPaid,
+      maxCostUsd: body.maxCostUsd,
+      userId: req.auth.userId ?? null,
     });
 
     app.store.audit({
       actor: req.auth.userId ?? 'anonymous',
       action: 'verification.run',
       target: body.providerId ?? body.modelIds?.join(',') ?? 'all',
-      details: { probed: String(report.probed), claimsWritten: String(report.claimsWritten) },
+      details: {
+        probed: String(report.probed),
+        claimsWritten: String(report.claimsWritten),
+        probeCalls: String(report.probeCalls),
+        cost: report.cost.toFixed(5),
+      },
       ip: req.ip,
     });
 
@@ -284,6 +297,9 @@ export async function registerControlPlaneRoutes(server: FastifyInstance, app: A
       probed: report.probed,
       claimsWritten: report.claimsWritten,
       inconclusive: report.inconclusive,
+      probeCalls: report.probeCalls,
+      cost: report.cost,
+      maxCostUsd: report.maxCostUsd,
       durationMs: report.finishedAt - report.startedAt,
       skipped: report.skipped,
       models: report.reports.map((r) => ({

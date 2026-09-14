@@ -43,6 +43,15 @@ export const TASK_TYPES = [
   'video-generation',
   'speech-synthesis',
   'transcription',
+  /**
+   * A live capability probe: a deliberately tiny request whose only purpose is
+   * to find out whether the model accepts a shape at all.
+   *
+   * It gets its own type because it is real spend against a real key that no
+   * user asked for, and folding it into 'classify' would hide it inside
+   * ordinary traffic — which is exactly where money goes missing.
+   */
+  'capability-probe',
 ] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
