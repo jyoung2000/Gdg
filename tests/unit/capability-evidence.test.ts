@@ -12,6 +12,7 @@ import {
   type ModelDescriptor,
 } from '@meridian/shared';
 import { enrich } from '@meridian/model-sdk';
+import { matchModel } from '@meridian/control-sdk';
 import { openDatabase } from '../../apps/gateway/src/db/database.js';
 import { SecretBox } from '../../apps/gateway/src/db/crypto.js';
 import { Store } from '../../apps/gateway/src/db/store.js';
@@ -206,5 +207,102 @@ describe('Capability evidence — a verification does not stay fresh forever', (
     const weak = { state: 'inferred' as const, source: 'heuristic', confidence: 0.5, at: now };
     const both = capabilityConfidence({ tools: strong, vision: weak }, ['tools', 'vision'], ['tools', 'vision'], now);
     assert.equal(both, capabilityConfidence({ vision: weak }, ['vision'], ['vision'], now));
+  });
+});
+
+/**
+ * The search answer and the routing answer have to agree.
+ *
+ * Routing discounted an old claim; "which AI can do X?" did not. So the
+ * capability search would rank a model whose vision was probe-verified two
+ * years ago above one the provider declared this morning, the operator would
+ * pick the first, and routing — applying the discount the search had ignored —
+ * would send the request to the second. Two answers to one question, and the
+ * one on screen was the wrong one.
+ */
+describe('Capability search — an old claim ranks like an old claim', () => {
+  const DAY = 86_400_000;
+  const now = 1_800_000_000_000;
+  const available = () => ({ available: true, local: false, detail: null });
+
+  const withVision = (id: string, at: number, state: 'probe_verified' | 'provider_declared'): ModelDescriptor =>
+    model({
+      id,
+      providerModelId: id,
+      displayName: id,
+      capabilities: ['text', 'vision'],
+      capabilityClaims: { vision: { state, source: state === 'probe_verified' ? 'live probe' : 'listing', confidence: 1, at } },
+    });
+
+  it('scores a stale probe below a fresh probe', () => {
+    const recent = matchModel(withVision('recent', now - 5 * DAY, 'probe_verified'), { capabilities: ['vision'] }, available(), now);
+    const ancient = matchModel(
+      withVision('ancient', now - (CLAIM_STALE_AFTER_DAYS + 200) * DAY, 'probe_verified'),
+      { capabilities: ['vision'] },
+      available(),
+      now,
+    );
+
+    assert.ok(recent.eligible && ancient.eligible, 'both still satisfy the requirement — this is about rank, not exclusion');
+    assert.ok(
+      ancient.score < recent.score,
+      `a two-year-old probe must not score like this morning's: ${ancient.score} vs ${recent.score}`,
+    );
+  });
+
+  it('says out loud that the evidence is old, rather than silently demoting', () => {
+    const ancient = matchModel(
+      withVision('ancient', now - (CLAIM_STALE_AFTER_DAYS + 200) * DAY, 'probe_verified'),
+      { capabilities: ['vision'] },
+      available(),
+      now,
+    );
+    assert.ok(
+      ancient.reasons.some((r) => /last established \d+ days ago/.test(r)),
+      `the reasons must name the age, got: ${JSON.stringify(ancient.reasons)}`,
+    );
+    const vision = ancient.evidence.find((e) => e.capability === 'vision');
+    assert.equal(vision?.stale, true, 'the evidence row itself must carry the staleness the score used');
+    assert.equal(vision?.at, now - (CLAIM_STALE_AFTER_DAYS + 200) * DAY, 'and the date behind it');
+  });
+
+  it('never decays a stale claim below an outright guess', () => {
+    const ancient = matchModel(
+      withVision('ancient', 0, 'provider_declared'),
+      { capabilities: ['vision'] },
+      available(),
+      now,
+    );
+    const guessed = matchModel(
+      model({
+        id: 'guessed',
+        capabilities: ['text', 'vision'],
+        capabilityClaims: { vision: { state: 'inferred', source: 'model-name heuristic', confidence: 0.5, at: now } },
+      }),
+      { capabilities: ['vision'] },
+      available(),
+      now,
+    );
+    assert.ok(
+      ancient.score >= guessed.score,
+      'however old, something someone established beats something nobody did',
+    );
+  });
+
+  it('leaves a model with no dated claim exactly where it was', () => {
+    // The flat capability list carries no date. Treating "undated" as "old"
+    // would demote every catalogue entry in the product on the day this
+    // shipped, which is a regression dressed as a fix.
+    const listed = matchModel(
+      model({ id: 'listed', capabilities: ['text', 'vision'], capabilityClaims: undefined }),
+      { capabilities: ['vision'] },
+      available(),
+      now,
+    );
+    const vision = listed.evidence.find((e) => e.capability === 'vision');
+    assert.equal(vision?.state, 'provider_declared');
+    assert.equal(vision?.stale, false, 'an undated declaration is not a stale one');
+    assert.equal(vision?.at, null);
+    assert.ok(listed.score > 0.7, `an ordinary catalogue model must not be demoted, got ${listed.score}`);
   });
 });

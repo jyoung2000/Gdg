@@ -394,8 +394,14 @@ export interface CapabilityMatch {
   providerId: string;
   displayName: string;
   score: number;
-  /** Per-capability evidence for the requested capabilities. */
-  evidence: { capability: Capability; state: CapabilityState; source: string }[];
+  /**
+   * Per-capability evidence for the requested capabilities.
+   *
+   * `at` and `stale` are part of the evidence, not decoration. "Probe verified"
+   * with no date reads as a fact about now, and a two-year-old probe of a model
+   * the provider has since swapped under the same id is not one.
+   */
+  evidence: { capability: Capability; state: CapabilityState; source: string; at: number | null; stale: boolean }[];
   /** Empty when the model satisfies the requirement. */
   missing: { capability: Capability; state: CapabilityState }[];
   reasons: string[];

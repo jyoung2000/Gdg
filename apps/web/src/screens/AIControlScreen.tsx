@@ -213,7 +213,7 @@ export function AIControlScreen(): React.JSX.Element {
                         </div>
                         <div className="mrd-hstack" style={{ gap: 'var(--space-2)', marginTop: 4, flexWrap: 'wrap' }}>
                           {m.evidence.map((e) => (
-                            <EvidenceBadge key={e.capability} capability={e.capability} state={e.state} />
+                            <EvidenceBadge key={e.capability} capability={e.capability} state={e.state} stale={e.stale} at={e.at} />
                           ))}
                         </div>
                         <p className="mrd-caption mrd-secondary" style={{ marginTop: 4 }}>
@@ -403,13 +403,32 @@ function ModelRow({ model, onInspect }: { model: ModelView; onInspect: () => voi
   );
 }
 
-/** A capability badge that shows its evidence, not just the claim. */
-function EvidenceBadge({ capability, state }: { capability: string; state: string }): React.JSX.Element {
-  const variant = state === 'probe_verified' || state === 'user_confirmed' ? 'success' : state === 'provider_declared' ? 'accent' : state === 'inferred' ? 'warning' : 'neutral';
+/** How old a claim is, in the words a person would use. */
+function claimAge(at: number | null): string | null {
+  if (at == null) return null;
+  const days = Math.max(0, Math.round((Date.now() - at) / 86_400_000));
+  if (days === 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 60) return `${days} days ago`;
+  return `${Math.round(days / 30)} months ago`;
+}
+
+/**
+ * A capability badge that shows its evidence, not just the claim.
+ *
+ * A stale claim is drawn as a stale claim. "Verified" with no age reads as a
+ * fact about now, and the ranking has already discounted it — a badge that
+ * still looked confident would contradict the score beside it.
+ */
+function EvidenceBadge({ capability, state, stale, at }: { capability: string; state: string; stale?: boolean; at?: number | null }): React.JSX.Element {
+  const fresh = state === 'probe_verified' || state === 'user_confirmed' ? 'success' : state === 'provider_declared' ? 'accent' : state === 'inferred' ? 'warning' : 'neutral';
+  const variant = stale ? 'warning' : fresh;
+  const age = claimAge(at ?? null);
   return (
-    <Badge variant={variant as never} title={state}>
+    <Badge variant={variant as never} title={stale && age ? `${state} — last established ${age}, so it is scored lower until re-checked` : state}>
       {capability}
       {state === 'inferred' ? ' ?' : ''}
+      {stale ? ' · old' : ''}
     </Badge>
   );
 }
@@ -506,7 +525,11 @@ function CapabilityInspector({
                   size="sm"
                   label={label[c.state] ?? c.state}
                 />
-                <span className="mrd-caption mrd-secondary mrd-truncate" style={{ flex: 1 }}>{c.source}</span>
+                <span className="mrd-caption mrd-secondary mrd-truncate" style={{ flex: 1 }}>
+                  {c.source}
+                  {claimAge(c.at) ? ` · ${claimAge(c.at) ?? ''}` : ''}
+                  {c.stale ? ' · past the 90-day line, re-check it' : ''}
+                </span>
                 <Button size="sm" variant="tertiary" onClick={() => void confirm(c.capability, true)}>
                   Yes
                 </Button>

@@ -1,5 +1,8 @@
 import {
+  CLAIM_STALE_AFTER_DAYS,
+  STALE_CONFIDENCE_FACTOR,
   claimIsPositive,
+  claimIsStale,
   type Capability,
   type CapabilityMatch,
   type CapabilityRequirement,
@@ -27,6 +30,30 @@ const STATE_WEIGHT: Record<CapabilityState, number> = {
   unknown: 0,
 };
 
+/**
+ * The same discount the router applies to an old claim, applied here.
+ *
+ * Routing already knew that "we watched this work" decays: a claim past
+ * {@link CLAIM_STALE_AFTER_DAYS} scores lower, floored at a guess's worth so
+ * real evidence is never thrown away. Search did not, so the two disagreed —
+ * "which AI can do X?" ranked a two-year-old probe above this morning's
+ * provider listing, and then routing picked the other one. Two answers to one
+ * question, and the one on screen was the wrong one.
+ */
+function agedWeight(state: CapabilityState, at: number | null, now: number): number {
+  const base = STATE_WEIGHT[state];
+  if (base <= 0 || at == null) return base;
+  if (!claimIsStale({ state, source: '', confidence: 0, at }, now)) return base;
+  return Math.max(STATE_WEIGHT.inferred, base * STALE_CONFIDENCE_FACTOR);
+}
+
+const DAY_MS = 86_400_000;
+
+/** "eight months ago", for a reason line a person reads rather than parses. */
+function ageInDays(at: number, now: number): number {
+  return Math.max(0, Math.round((now - at) / DAY_MS));
+}
+
 export interface ModelAvailability {
   /** The model can actually be called right now (credential present, healthy). */
   available: boolean;
@@ -38,15 +65,30 @@ export interface ModelAvailability {
 
 export type AvailabilityLookup = (model: ModelDescriptor) => ModelAvailability;
 
-/** The state Meridian holds for one capability of one model. */
-export function capabilityState(model: ModelDescriptor, capability: Capability): { state: CapabilityState; source: string } {
+/**
+ * The state Meridian holds for one capability of one model, and when it learned
+ * it.
+ *
+ * The date travels with the state everywhere, because a state without one
+ * cannot be told apart from the same state established years ago — and that is
+ * the difference between evidence and a rumour with a good reputation.
+ */
+export function capabilityState(
+  model: ModelDescriptor,
+  capability: Capability,
+  now = Date.now(),
+): { state: CapabilityState; source: string; at: number | null; stale: boolean } {
   const claim = model.capabilityClaims?.[capability];
-  if (claim) return { state: claim.state, source: claim.source };
+  if (claim) {
+    return { state: claim.state, source: claim.source, at: claim.at, stale: claimIsStale(claim, now) };
+  }
   // No claim recorded. The flat list is still authoritative for older catalog
-  // entries, but it cannot say where it came from, so it is reported as a
-  // provider declaration only when the model actually lists it.
-  if (model.capabilities.includes(capability)) return { state: 'provider_declared', source: 'catalog entry' };
-  return { state: 'unknown', source: 'no information' };
+  // entries, but it cannot say where it came from — or when — so it is reported
+  // as an undated provider declaration only when the model actually lists it.
+  if (model.capabilities.includes(capability)) {
+    return { state: 'provider_declared', source: 'catalog entry', at: null, stale: false };
+  }
+  return { state: 'unknown', source: 'no information', at: null, stale: false };
 }
 
 export function modelSupports(model: ModelDescriptor, capability: Capability): boolean {
@@ -66,6 +108,7 @@ export function matchModel(
   model: ModelDescriptor,
   requirement: CapabilityRequirement,
   availability: ModelAvailability,
+  now = Date.now(),
 ): CapabilityMatch {
   const evidence: CapabilityMatch['evidence'] = [];
   const missing: CapabilityMatch['missing'] = [];
@@ -73,11 +116,20 @@ export function matchModel(
   let capabilityScore = 0;
 
   for (const capability of requirement.capabilities) {
-    const { state, source } = capabilityState(model, capability);
-    evidence.push({ capability, state, source });
+    const { state, source, at, stale } = capabilityState(model, capability, now);
+    evidence.push({ capability, state, source, at, stale });
     if (claimIsPositive({ state, source, confidence: 0, at: 0 })) {
-      capabilityScore += STATE_WEIGHT[state];
+      capabilityScore += agedWeight(state, at, now);
       if (state === 'inferred') reasons.push(`${capability} is inferred from the model name, not confirmed`);
+      // Said out loud, not just subtracted. A result that quietly slipped two
+      // places is an unexplained ranking; a result that says "this was last
+      // checked 400 days ago" is something an operator can act on by
+      // re-verifying it.
+      if (stale && at != null) {
+        reasons.push(
+          `${capability} was last established ${ageInDays(at, now)} days ago, past the ${CLAIM_STALE_AFTER_DAYS}-day line — scored lower until re-checked`,
+        );
+      }
     } else {
       missing.push({ capability, state });
     }
@@ -155,9 +207,10 @@ export function searchCapabilities(
   models: ModelDescriptor[],
   requirement: CapabilityRequirement,
   availabilityOf: AvailabilityLookup,
+  now = Date.now(),
 ): CapabilityMatch[] {
   return models
-    .map((m) => matchModel(m, requirement, availabilityOf(m)))
+    .map((m) => matchModel(m, requirement, availabilityOf(m), now))
     .sort((a, b) => {
       if (a.eligible !== b.eligible) return a.eligible ? -1 : 1;
       return b.score - a.score;

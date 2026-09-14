@@ -1038,7 +1038,7 @@ export interface CapabilityMatchView {
   providerId: string;
   displayName: string;
   score: number;
-  evidence: { capability: string; state: string; source: string }[];
+  evidence: { capability: string; state: string; source: string; at: number | null; stale: boolean }[];
   missing: { capability: string; state: string }[];
   reasons: string[];
   eligible: boolean;
@@ -1054,7 +1054,7 @@ export interface ModelCapabilitiesView {
   discoveredAt: number | null;
   lastVerifiedAt: number | null;
   availability: { available: boolean; local: boolean; detail: string | null };
-  capabilities: { capability: string; state: string; source: string }[];
+  capabilities: { capability: string; state: string; source: string; at: number | null; stale: boolean }[];
 }
 export interface ModelChangeView {
   id: string;
