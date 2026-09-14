@@ -78,6 +78,19 @@ but never corrupts the file, and it removes an fsync per write. Migrations are
 plain `.sql` applied in filename order inside one transaction each and recorded
 in `_migrations`, so restart is idempotent and a volume survives an upgrade.
 
+Four properties the upgrade path holds, each with a test:
+
+- **All or nothing.** Every pending migration runs in one transaction. A failure
+  names the file and leaves the database exactly as it was — never half way
+  between two releases.
+- **Two processes may start at once.** The transaction is opened `IMMEDIATE`, so
+  a second gateway waits and then finds the work done rather than colliding.
+- **An older build refuses a newer database.** If `_migrations` names files this
+  build does not have, startup stops and says so. Running on is worse: SQLite
+  opens it happily while the code reads columns that have moved.
+- **A previous release's data comes forward.** Tested against a database built
+  from the real migration files up to a cut-off, with rows written through them.
+
 **Internal packages are consumed as TypeScript source.** No per-package build
 step, so there is exactly one bundling step per deployable — esbuild for the
 two Node entry points, Vite for the client. It removes a whole class of

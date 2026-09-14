@@ -58,6 +58,37 @@ Two consequences the UI depends on:
 Confirm or deny a capability with `POST /api/models/:id/capabilities`; the
 change is audited.
 
+### Evidence expires
+
+A claim carries the moment it was established, and after 90 days it is
+discounted — in the router's scoring and in capability search alike, floored at
+what a guess is worth so an aged verification is never worth less than never
+having run one. Providers move models under stable ids: a context window
+doubles, vision appears, a quantisation changes what the weights can do.
+
+Stale evidence is shown as stale rather than silently demoted. Search results
+say *“vision was last established 412 days ago, past the 90-day line — scored
+lower until re-checked”*, and the capability inspector prints the claim's age
+beside its source, so the fix (re-probe it) is obvious.
+
+### Probing costs money, and is treated that way
+
+A probe is a provider call, billed at the model's rate card against a real key.
+`POST /api/verification/run` therefore:
+
+- **refuses a model that can charge** unless paid spend is permitted — by
+  `MERIDIAN_ALLOW_PAID`, or by the request itself passing `allowPaid: true`. The
+  refusal happens before anything is sent, and the response says which models
+  were skipped and why.
+- **stops at a dollar ceiling** — `maxCostUsd`, defaulting to $0.50 — checked
+  against a deliberately pessimistic per-probe estimate. Permission without a
+  ceiling is how a diagnostic becomes a bill.
+- **records every probe as usage**, with task type `capability-probe`, so probe
+  spend appears in Activity and in the cost totals like any other call.
+  Inconclusive probes are recorded too: a 429 costs what a verdict costs.
+
+The response reports `probeCalls`, `cost` and the `maxCostUsd` it was held to.
+
 ## Skills
 
 A skill is instruction text injected into the model's system context when it
