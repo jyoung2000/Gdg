@@ -131,6 +131,81 @@ describe('Capability probes: permission, ceiling and accounting', () => {
     );
   });
 
+  it('refuses a model that can charge but publishes no rate', async () => {
+    // The hole this closes: `computeCost` adds a term per *published* rate, so
+    // a METERED card with every rate null prices a probe at exactly $0.00 —
+    // while `mayCharge` correctly reports that it can charge. The ceiling
+    // compared that zero and let the model through, every time, and the ledger
+    // recorded $0.00 for spend nobody could bound. Discovery produces exactly
+    // this shape: a metered model whose price book has not caught up yet.
+    app.models.upsert({
+      ...paidModel('unpriced'),
+      pricing: { kind: 'METERED', inputPerMTok: null, outputPerMTok: null, perRequest: null, note: null },
+    });
+
+    const before = mock.calls.length;
+    const spentBefore = probeRows().length;
+    const report = await app.verification.verify({
+      modelIds: ['probe-mock:unpriced'],
+      capabilities: ['text'],
+      // Permission granted, and a ceiling far above any real probe. Neither is
+      // the point: the cost cannot be shown to fit *any* ceiling.
+      allowPaid: true,
+      maxCostUsd: 1000,
+    });
+
+    assert.equal(report.probed, 0, 'a model whose cost cannot be computed must not be probed');
+    assert.equal(mock.calls.length, before, 'and no request may reach the provider');
+    assert.equal(probeRows().length, spentBefore, 'and nothing may be recorded');
+    const reason = report.skipped.find((s) => s.modelId === 'probe-mock:unpriced')?.reason ?? '';
+    assert.match(reason, /publishes no rate/i, `the skip must say the rate is missing, got: ${reason}`);
+    assert.doesNotMatch(reason, /\$0\.00/, 'and must never present the unknown cost as zero');
+  });
+
+  it('says so when a provider reports no tokens, rather than calling the floor a total', async () => {
+    // A per-token rate card plus a provider that reports no usage leaves the
+    // probe's real cost unknowable after the fact. Recording the resulting zero
+    // and presenting it as the total is the same untruth as calling an
+    // unpublished rate free — so the run reports `costKnown: false` and the
+    // figure is read as a floor.
+    const silent = await startMockProvider('silent-provider', { reply: 'yes', omitUsage: true });
+    app.providers.registerProvider(silent.descriptor);
+    app.providers.setCredentialed('silent-provider', true);
+    app.models.upsert({
+      ...paidModel('silent'),
+      id: 'silent-provider:silent',
+      providerId: 'silent-provider',
+      providerModelId: 'silent',
+    });
+
+    try {
+      const quiet = await app.verification.verify({
+        modelIds: ['silent-provider:silent'],
+        capabilities: ['text'],
+        allowPaid: true,
+      });
+      assert.equal(quiet.probed, 1, `expected the probe to run: ${JSON.stringify(quiet.skipped)}`);
+      assert.equal(
+        quiet.costKnown,
+        false,
+        'a per-token model whose provider reported no tokens leaves the cost unknown, and the run must say so',
+      );
+
+      // The same run against a provider that does report its tokens is a
+      // figure, not a floor — otherwise this flag would be meaningless.
+      const priced = await app.verification.verify({
+        modelIds: ['probe-mock:paid-b'],
+        capabilities: ['text'],
+        allowPaid: true,
+      });
+      assert.equal(priced.probed, 1);
+      assert.equal(priced.costKnown, true, 'a provider that reports its tokens gives a figure');
+      assert.ok(priced.cost > 0);
+    } finally {
+      await silent.close();
+    }
+  });
+
   it('stops at the dollar ceiling even with permission to spend', async () => {
     const spentBefore = probeRows().length;
     const report = await app.verification.verify({

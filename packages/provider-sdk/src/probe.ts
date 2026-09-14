@@ -284,8 +284,11 @@ async function probeText(adapter: ProviderAdapter, model: ModelDescriptor, ctx: 
   return {
     outcome: text.length > 0 ? 'supported' : 'inconclusive',
     detail: text.length > 0 ? `answered with ${JSON.stringify(text.slice(0, 40))}` : 'answered with nothing',
-    promptTokens: res.usage?.promptTokens ?? null,
-    completionTokens: res.usage?.completionTokens ?? null,
+    // `reported === false` means the provider omitted its usage block, so the
+    // zeros inside it are an absence. Passing those on as counts would let a
+    // caller price the probe at $0.00 and believe it.
+    promptTokens: res.usage?.reported === false ? null : res.usage?.promptTokens ?? null,
+    completionTokens: res.usage?.reported === false ? null : res.usage?.completionTokens ?? null,
   };
 }
 
@@ -314,8 +317,11 @@ async function probeTools(adapter: ProviderAdapter, model: ModelDescriptor, ctx:
   return {
     outcome: calls.length > 0 ? 'supported' : 'inconclusive',
     detail: calls.length > 0 ? `called ${calls.map((c) => c.name).join(', ')}` : 'returned text instead of a tool call',
-    promptTokens: res.usage?.promptTokens ?? null,
-    completionTokens: res.usage?.completionTokens ?? null,
+    // `reported === false` means the provider omitted its usage block, so the
+    // zeros inside it are an absence. Passing those on as counts would let a
+    // caller price the probe at $0.00 and believe it.
+    promptTokens: res.usage?.reported === false ? null : res.usage?.promptTokens ?? null,
+    completionTokens: res.usage?.reported === false ? null : res.usage?.completionTokens ?? null,
   };
 }
 
@@ -343,8 +349,11 @@ async function probeVision(adapter: ProviderAdapter, model: ModelDescriptor, ctx
   return {
     outcome: text.length > 0 ? 'supported' : 'inconclusive',
     detail: text.length > 0 ? 'accepted an image in the message content' : 'accepted the image but returned nothing',
-    promptTokens: res.usage?.promptTokens ?? null,
-    completionTokens: res.usage?.completionTokens ?? null,
+    // `reported === false` means the provider omitted its usage block, so the
+    // zeros inside it are an absence. Passing those on as counts would let a
+    // caller price the probe at $0.00 and believe it.
+    promptTokens: res.usage?.reported === false ? null : res.usage?.promptTokens ?? null,
+    completionTokens: res.usage?.reported === false ? null : res.usage?.completionTokens ?? null,
   };
 }
 
@@ -355,7 +364,7 @@ async function probeEmbedding(adapter: ProviderAdapter, model: ModelDescriptor, 
   return {
     outcome: dims > 0 ? 'supported' : 'inconclusive',
     detail: dims > 0 ? `returned a ${dims}-dimension vector` : 'returned no vector',
-    promptTokens: res.usage?.promptTokens ?? null,
+    promptTokens: res.usage?.reported === false ? null : res.usage?.promptTokens ?? null,
     completionTokens: null,
   };
 }

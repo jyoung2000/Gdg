@@ -103,6 +103,14 @@ export interface VerifyReport {
   probeCalls: number;
   /** USD this run actually spent, from each model's own rate card. */
   cost: number;
+  /**
+   * False when `cost` is a floor rather than the figure.
+   *
+   * A provider that reports no token counts on a per-token rate card leaves a
+   * probe unpriceable after the fact. Reporting the resulting zero as the cost
+   * would be the same untruth as calling an unpublished rate free.
+   */
+  costKnown: boolean;
   /** The ceiling the run was held to, so a truncated run can explain itself. */
   maxCostUsd: number;
   startedAt: number;
@@ -132,6 +140,18 @@ const DEFAULT_MAX_COST_USD = 0.5;
 const PROBE_RESERVE_PROMPT_TOKENS = 256;
 const PROBE_RESERVE_COMPLETION_TOKENS = 512;
 
+/**
+ * Can this rate card put a number on a call at all?
+ *
+ * `isFree` already separates "charges nothing" from "charges something", and
+ * deliberately treats a card with no rates at all as *not* free. This is the
+ * other half of that distinction: a card that can charge and states no rate
+ * cannot be priced, and anything that tries will get zero.
+ */
+function priceable(pricing: ModelDescriptor['pricing']): boolean {
+  return pricing.inputPerMTok != null || pricing.outputPerMTok != null || pricing.perRequest != null;
+}
+
 export class VerificationService {
   private readonly deps: VerificationDeps;
   private running = false;
@@ -160,6 +180,7 @@ export class VerificationService {
     let inconclusive = 0;
     let probeCalls = 0;
     let cost = 0;
+    let costKnown = true;
 
     const allowPaid = req.allowPaid ?? this.deps.allowPaid();
     const maxCostUsd = Math.max(0, req.maxCostUsd ?? DEFAULT_MAX_COST_USD);
@@ -191,10 +212,23 @@ export class VerificationService {
         }
 
         const worstCase = this.worstCase(model, adapter, req.capabilities);
-        if (cost + worstCase > maxCostUsd) {
+        // An unpriceable model is refused rather than waved past. A card that
+        // can charge but publishes no rate prices a probe at exactly zero, and
+        // a zero cannot be compared to a ceiling — so before this check, a
+        // whole catalogue of unpriced metered models passed a $0.50 ceiling
+        // unlimited times and reported having spent nothing.
+        if (!worstCase.known) {
           skipped.push({
             modelId: model.id,
-            reason: `probing it could cost up to $${worstCase.toFixed(4)}, which would pass this run's $${maxCostUsd.toFixed(2)} ceiling`,
+            reason:
+              'it can charge money and publishes no rate, so a probe cannot be shown to fit this run’s ceiling',
+          });
+          continue;
+        }
+        if (cost + worstCase.usd > maxCostUsd) {
+          skipped.push({
+            modelId: model.id,
+            reason: `probing it could cost up to $${worstCase.usd.toFixed(4)}, which would pass this run's $${maxCostUsd.toFixed(2)} ceiling`,
           });
           continue;
         }
@@ -225,7 +259,9 @@ export class VerificationService {
         reports.push(report);
         inconclusive += report.results.filter((r) => r.outcome === 'inconclusive').length;
         probeCalls += report.results.length;
-        cost += this.meter(model, resolution.credential?.id ?? null, report, req.userId ?? null);
+        const metered = this.meter(model, resolution.credential?.id ?? null, report, req.userId ?? null);
+        cost += metered.cost;
+        if (!metered.known) costKnown = false;
         claimsWritten += this.record(model, report);
       }
 
@@ -236,6 +272,7 @@ export class VerificationService {
         inconclusive,
         probeCalls,
         cost,
+        costKnown,
       });
 
       return {
@@ -246,6 +283,7 @@ export class VerificationService {
         inconclusive,
         probeCalls,
         cost: Math.round(cost * 1e5) / 1e5,
+        costKnown,
         maxCostUsd,
         startedAt,
         finishedAt: Date.now(),
@@ -256,19 +294,33 @@ export class VerificationService {
   }
 
   /**
-   * The most probing this model could cost, before anything is sent.
+   * The most probing this model could cost, and whether that number means
+   * anything.
    *
    * Deliberately an over-estimate: the ceiling exists to stop a surprise, and
    * an optimistic estimate is exactly the thing that lets the surprise through.
    * A free model estimates at zero, which is what keeps the ceiling from
    * refusing free work.
+   *
+   * `known` is the part that matters. `computeCost` adds a term per published
+   * rate, so a METERED card with every rate null prices anything at exactly
+   * $0.00 — and `mayCharge` correctly says it can charge. Returning that zero
+   * as the estimate let an unpriced model pass any ceiling, any number of
+   * times. An unpublished rate is not a rate of zero; it is the absence of one,
+   * and it is reported as such so the caller can refuse.
    */
-  private worstCase(model: ModelDescriptor, adapter: ProviderAdapter, requested?: Capability[]): number {
+  private worstCase(
+    model: ModelDescriptor,
+    adapter: ProviderAdapter,
+    requested?: Capability[],
+  ): { usd: number; known: boolean } {
     const count = requested?.length ?? probeableCapabilities(model, adapter).length;
-    if (!count) return 0;
+    if (!count) return { usd: 0, known: true };
+    if (!mayCharge(model.pricing)) return { usd: 0, known: true };
+    if (!priceable(model.pricing)) return { usd: 0, known: false };
     const each = computeCost(model.pricing, PROBE_RESERVE_PROMPT_TOKENS, PROBE_RESERVE_COMPLETION_TOKENS);
     // The untuned retry doubles the request count in the worst case.
-    return each * count * 2;
+    return { usd: each * count * 2, known: true };
   }
 
   /**
@@ -286,8 +338,9 @@ export class VerificationService {
     credentialId: string | null,
     report: ModelProbeReport,
     userId: string | null,
-  ): number {
+  ): { cost: number; known: boolean } {
     let total = 0;
+    let known = true;
     for (const result of report.results) {
       // Tokens the provider actually reported, or nothing. Not a guess: this
       // row is cost accounting, and an invented token count is a fabricated
@@ -297,6 +350,13 @@ export class VerificationService {
       const completionTokens = result.completionTokens ?? 0;
       const spent = computeCost(model.pricing, promptTokens, completionTokens);
       total += spent;
+      // A per-token card plus a provider that reported no tokens leaves this
+      // probe's real cost unknown. The row still says what can be shown — a
+      // per-request rate, if there is one — but the run must not present the
+      // total as the figure when part of it is a floor.
+      if (mayCharge(model.pricing) && result.promptTokens == null && result.completionTokens == null) {
+        if (model.pricing.inputPerMTok != null || model.pricing.outputPerMTok != null) known = false;
+      }
       this.deps.recordUsage?.({
         id: newId('use'),
         at: Date.now(),
@@ -326,7 +386,7 @@ export class VerificationService {
         contextTokensSaved: null,
       });
     }
-    return total;
+    return { cost: total, known };
   }
 
   /**

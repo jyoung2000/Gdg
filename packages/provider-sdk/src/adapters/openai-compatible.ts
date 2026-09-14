@@ -520,11 +520,18 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     const promptTokens = raw?.prompt_tokens ?? 0;
     const completionTokens = raw?.completion_tokens ?? 0;
     const pricing = this.pricingLookup(model) ?? this.descriptor.defaultPricing;
+    // Whether the provider said anything at all, kept separately from what it
+    // said. A response with no usage block still has to produce a Usage — every
+    // caller expects numbers — but the zeros in it are an absence, and a caller
+    // that needs to know the difference between "cost nothing" and "cost
+    // unknown" has no other way to tell.
+    const reported = raw?.prompt_tokens != null || raw?.completion_tokens != null || raw?.total_tokens != null;
     return {
       promptTokens,
       completionTokens,
       totalTokens: raw?.total_tokens ?? promptTokens + completionTokens,
       cost: computeCost(pricing, promptTokens, completionTokens),
+      reported,
     };
   }
 }

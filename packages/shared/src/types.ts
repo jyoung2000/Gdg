@@ -739,6 +739,16 @@ export interface Usage {
   totalTokens: number;
   /** USD, computed from the model's pricing. */
   cost: number;
+  /**
+   * Did the provider actually report these counts?
+   *
+   * `false` means it did not, and the zeros above are an absence rather than a
+   * measurement. Plenty of providers omit the usage block; coercing that to
+   * zero makes an unknown cost look like a known $0.00, which is the one
+   * rounding this product exists not to do. Undefined where nothing tracks it
+   * — read it as "not stated", never as "reported".
+   */
+  reported?: boolean;
 }
 
 export const FINISH_REASONS = [

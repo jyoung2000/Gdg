@@ -36,6 +36,15 @@ export interface MockBehaviour {
   /** Token counts reported back, for cost accounting assertions. */
   usage?: { prompt: number; completion: number };
   /**
+   * Omit the usage block entirely, as plenty of real providers do.
+   *
+   * Distinct from leaving `usage` unset, which still reports the defaults. A
+   * caller cannot price a per-token call against a provider that never says how
+   * many tokens it used, and code that quietly reads the absence as zero turns
+   * an unknown cost into a known one.
+   */
+  omitUsage?: boolean;
+  /**
    * Model ids the chat endpoint answers with a 404.
    *
    * Providers retire model ids constantly, and a cached catalog keeps offering
@@ -135,11 +144,13 @@ export async function startMockProvider(id: string, initial: MockBehaviour = {})
           }
           successes += 1;
           const streaming = Boolean((body as { stream?: boolean } | null)?.stream);
-          const usage = {
-            prompt_tokens: behaviour.usage?.prompt ?? 10,
-            completion_tokens: behaviour.usage?.completion ?? 5,
-            total_tokens: (behaviour.usage?.prompt ?? 10) + (behaviour.usage?.completion ?? 5),
-          };
+          const usage = behaviour.omitUsage
+            ? undefined
+            : {
+                prompt_tokens: behaviour.usage?.prompt ?? 10,
+                completion_tokens: behaviour.usage?.completion ?? 5,
+                total_tokens: (behaviour.usage?.prompt ?? 10) + (behaviour.usage?.completion ?? 5),
+              };
 
           if (streaming) {
             res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', ...(behaviour.rateLimitHeaders ?? {}) });

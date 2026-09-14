@@ -289,6 +289,7 @@ export async function registerControlPlaneRoutes(server: FastifyInstance, app: A
         claimsWritten: String(report.claimsWritten),
         probeCalls: String(report.probeCalls),
         cost: report.cost.toFixed(5),
+        costKnown: String(report.costKnown),
       },
       ip: req.ip,
     });
@@ -299,6 +300,9 @@ export async function registerControlPlaneRoutes(server: FastifyInstance, app: A
       inconclusive: report.inconclusive,
       probeCalls: report.probeCalls,
       cost: report.cost,
+      // False means the figure is a floor: a provider reported no token counts
+      // on a per-token rate card. Saying so beats presenting a floor as a total.
+      costKnown: report.costKnown,
       maxCostUsd: report.maxCostUsd,
       durationMs: report.finishedAt - report.startedAt,
       skipped: report.skipped,
