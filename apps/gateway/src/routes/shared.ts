@@ -202,9 +202,34 @@ export async function withProjectKnowledge(
 export async function assembleContext(
   app: App,
   messages: ChatMessage[],
-  ctx: { profileId?: string | null; modelId?: string | null; providerId?: string | null; workspaceId?: string | null; sessionId?: string | null },
+  ctx: {
+    profileId?: string | null;
+    modelId?: string | null;
+    providerId?: string | null;
+    workspaceId?: string | null;
+    sessionId?: string | null;
+    /**
+     * Whose request this is. Required, and `null` only for an unauthenticated
+     * single-user install.
+     *
+     * The workspace id arrives in the request body, where the caller writes
+     * it. Without this check any authenticated user could name someone else's
+     * workspace and have its instructions and files pasted into their own
+     * prompt, then read them back in the model's answer — a file-exfiltration
+     * primitive reachable from three separate inference dialects, none of
+     * which is a route anyone would think to look at for workspace
+     * authorisation.
+     */
+    userId: string | null;
+  },
 ): Promise<{ messages: ChatMessage[]; project: { applied: boolean; files: number; tokens: number }; skills: { applied: number; tokens: number } }> {
-  const project = await withProjectKnowledge(app, messages, ctx.workspaceId ?? null);
+  const workspaceId = ctx.workspaceId ?? null;
+  if (workspaceId && !app.workspaceIdsFor(ctx.userId).has(workspaceId)) {
+    // Same wording the workspace routes use for the same situation: a
+    // workspace the caller may not reach is reported as one that is not there.
+    throw new MeridianError('invalid_request', 'No such workspace');
+  }
+  const project = await withProjectKnowledge(app, messages, workspaceId);
   const skills = withSkills(app, project.messages, ctx);
   return {
     messages: skills.messages,

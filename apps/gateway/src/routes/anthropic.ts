@@ -51,6 +51,7 @@ export async function registerAnthropicRoutes(server: FastifyInstance, app: App)
       profileId: body.meridian?.profile_id ?? null,
       modelId: aiRequest.model,
       workspaceId: aiRequest.workspaceId,
+      userId: req.auth.userId,
     });
     const completion = {
       messages: assembled.messages,

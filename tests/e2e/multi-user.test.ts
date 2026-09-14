@@ -350,6 +350,56 @@ describe('Security: multi-user isolation', () => {
     assert.ok(compare.status >= 400, `comparing ran without the inference scope (${compare.status})`);
   });
 
+  it("does not let one user pull another's project files into their own prompt", async () => {
+    // Project knowledge — the workspace's MERIDIAN.md and its files — is pasted
+    // into the system context of any request naming that workspace. The
+    // workspace id arrives in the request body, and the three inference
+    // dialects never checked whether the caller could reach it. So Bob could
+    // name Alice's workspace, have her instructions and source inlined into his
+    // own prompt, and read them straight back out of the model's answer: a file
+    // exfiltration primitive on a route nobody would think to audit for
+    // workspace authorisation.
+    await (
+      await call(`/api/workspaces/${aliceWorkspaceId}/files`, aliceKey, {
+        method: 'PUT',
+        body: JSON.stringify({ path: 'MERIDIAN.md', content: 'ALICE-PRIVATE-CANARY: the deploy key is in vault/prod.' }),
+      })
+    ).text();
+
+    for (const [label, path, body] of [
+      [
+        'OpenAI chat completions',
+        '/v1/chat/completions',
+        { model: 'auto', messages: [{ role: 'user', content: 'hi' }], meridian: { workspace_id: aliceWorkspaceId } },
+      ],
+      [
+        'Anthropic messages',
+        '/anthropic/v1/messages',
+        { model: 'auto', max_tokens: 16, messages: [{ role: 'user', content: 'hi' }], meridian: { workspace_id: aliceWorkspaceId } },
+      ],
+    ] as const) {
+      const res = await call(path, bobKey, { method: 'POST', body: JSON.stringify(body) });
+      const text = await res.text();
+      assert.ok(res.status >= 400, `${label}: Bob reached Alice's workspace (${res.status})`);
+      assert.ok(
+        !text.includes('ALICE-PRIVATE-CANARY'),
+        `${label}: Alice's project file came back in the response`,
+      );
+    }
+
+    // Alice herself is unaffected: this is an authorisation check, not a
+    // feature removal.
+    const hers = await call('/v1/chat/completions', aliceKey, {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'auto',
+        messages: [{ role: 'user', content: 'hi' }],
+        meridian: { workspace_id: aliceWorkspaceId },
+      }),
+    });
+    assert.ok(hers.status < 400, `Alice must still reach her own workspace (${hers.status})`);
+  });
+
   it('lets only an administrator open a browser session onto private addresses', async () => {
     // `allowPrivate` is what permits a session to reach 127.0.0.1, an RFC1918
     // address or a cloud metadata endpoint. Any member could set it for

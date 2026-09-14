@@ -71,9 +71,10 @@ export interface VerifyRequest {
   /**
    * Permit probing models that can charge, for this run only.
    *
-   * Defaults to the deployment setting. Passing `true` is the explicit
-   * permission that spending someone's money requires; it does not remove the
-   * dollar ceiling below, which still binds.
+   * Narrows, never widens. The deployment's own `allowPaid` is a kill-switch
+   * and is required regardless; passing `false` here withholds permission for
+   * this run even where the deployment grants it. Neither removes the dollar
+   * ceiling below, which still binds.
    */
   allowPaid?: boolean;
   /**
@@ -182,7 +183,12 @@ export class VerificationService {
     let cost = 0;
     let costKnown = true;
 
-    const allowPaid = req.allowPaid ?? this.deps.allowPaid();
+    // Both, exactly as the router requires both — `MERIDIAN_ALLOW_PAID` is a
+    // kill-switch, not a default. Reading it as `req.allowPaid ?? instance`
+    // let a single request turn spending back on for a deployment that had
+    // switched it off, which is the one thing a kill-switch may not permit.
+    // A request can only narrow.
+    const allowPaid = this.deps.allowPaid() && (req.allowPaid ?? true);
     const maxCostUsd = Math.max(0, req.maxCostUsd ?? DEFAULT_MAX_COST_USD);
 
     try {

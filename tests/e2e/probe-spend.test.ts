@@ -50,38 +50,50 @@ describe('Capability probes: permission, ceiling and accounting', () => {
     updatedAt: Date.now(),
   });
 
+  /**
+   * Two deployments, because the interesting property is the difference.
+   *
+   * `locked` has MERIDIAN_ALLOW_PAID off — the setting an operator sets once
+   * and then trusts. `open` has it on, which is the only configuration in
+   * which any of the accounting below can happen at all.
+   */
+  let locked: App;
+
+  const bootApp = async (name: string, allowPaid: boolean): Promise<App> => {
+    const created = await App.create(
+      loadConfig({
+        MERIDIAN_DATA_DIR: join(dataDir, name),
+        MERIDIAN_DB: join(dataDir, `${name}.db`),
+        MERIDIAN_WORKSPACE_ROOT: join(dataDir, name, 'workspaces'),
+        MERIDIAN_ASSET_ROOT: join(dataDir, name, 'assets'),
+        MERIDIAN_MASTER_KEY: 'probe-spend-test-master-key',
+        MERIDIAN_LOG_LEVEL: 'error',
+        MERIDIAN_HEALTH_INTERVAL_MS: '0',
+        MERIDIAN_DISCOVERY_INTERVAL_MS: '0',
+        MERIDIAN_ALLOW_PAID: allowPaid ? 'true' : 'false',
+        PORT: '0',
+      } as NodeJS.ProcessEnv),
+    );
+    await created.start();
+    created.providers.registerProvider(mock.descriptor);
+    created.providers.setCredentialed('probe-mock', true);
+    created.models.upsert(paidModel('paid-a'));
+    created.models.upsert(paidModel('paid-b'));
+    return created;
+  };
+
   before(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'meridian-probe-spend-'));
     // A mock that reports token usage, because the whole point is what the
     // provider says it charged rather than what we guessed.
     mock = await startMockProvider('probe-mock', { usage: { prompt: 1000, completion: 500 }, reply: 'yes' });
-
-    const config = loadConfig({
-      MERIDIAN_DATA_DIR: dataDir,
-      MERIDIAN_DB: join(dataDir, 'probe.db'),
-      MERIDIAN_WORKSPACE_ROOT: join(dataDir, 'workspaces'),
-      MERIDIAN_ASSET_ROOT: join(dataDir, 'assets'),
-      MERIDIAN_MASTER_KEY: 'probe-spend-test-master-key',
-      MERIDIAN_LOG_LEVEL: 'error',
-      MERIDIAN_HEALTH_INTERVAL_MS: '0',
-      MERIDIAN_DISCOVERY_INTERVAL_MS: '0',
-      // The deployment has NOT authorised paid spend. This is the setting an
-      // operator sets and then trusts.
-      MERIDIAN_ALLOW_PAID: 'false',
-      PORT: '0',
-    } as NodeJS.ProcessEnv);
-
-    app = await App.create(config);
-    await app.start();
-
-    app.providers.registerProvider(mock.descriptor);
-    app.providers.setCredentialed('probe-mock', true);
-    app.models.upsert(paidModel('paid-a'));
-    app.models.upsert(paidModel('paid-b'));
+    locked = await bootApp('locked', false);
+    app = await bootApp('open', true);
   });
 
   after(async () => {
     await app?.stop();
+    await locked?.stop();
     await mock?.close();
     rmSync(dataDir, { recursive: true, force: true });
   });
@@ -91,14 +103,46 @@ describe('Capability probes: permission, ceiling and accounting', () => {
 
   it('refuses to probe a model that can charge when paid spend is not permitted', async () => {
     const before = mock.calls.length;
-    const report = await app.verification.verify({ modelIds: ['probe-mock:paid-a'] });
+    const report = await locked.verification.verify({ modelIds: ['probe-mock:paid-a'] });
 
     assert.equal(report.probed, 0, 'a metered model must not be probed without permission to spend');
     assert.equal(mock.calls.length, before, 'no request may reach the provider at all — the refusal is before the call');
     assert.equal(report.cost, 0);
     const reason = report.skipped.find((s) => s.modelId === 'probe-mock:paid-a')?.reason ?? '';
     assert.match(reason, /permission to spend/i, `the skip must say why, got: ${reason}`);
-    assert.equal(probeRows().length, 0, 'nothing was spent, so nothing may be recorded');
+    assert.equal(
+      locked.store.listUsage({ limit: 500 }).filter((u) => u.taskType === 'capability-probe').length,
+      0,
+      'nothing was spent, so nothing may be recorded',
+    );
+  });
+
+  it('does not let one request switch paid spending back on for the whole deployment', async () => {
+    // MERIDIAN_ALLOW_PAID is a kill-switch, not a default. Reading it as
+    // `request ?? instance` meant a single API call could spend on a
+    // deployment whose operator had switched spending off — the one thing a
+    // kill-switch may not permit. The router has always required both; this
+    // is the same rule in the one place that had drifted from it.
+    const before = mock.calls.length;
+    const report = await locked.verification.verify({
+      modelIds: ['probe-mock:paid-a'],
+      capabilities: ['text'],
+      allowPaid: true,
+      maxCostUsd: 1000,
+    });
+
+    assert.equal(report.probed, 0, 'a request must not be able to overrule the instance switch');
+    assert.equal(mock.calls.length, before, 'and nothing may reach the provider');
+    assert.match(report.skipped[0]?.reason ?? '', /permission to spend/i);
+
+    // The converse still holds: where the deployment permits it, withholding
+    // permission on the request is respected. Narrowing works; widening does not.
+    const withheld = await app.verification.verify({
+      modelIds: ['probe-mock:paid-a'],
+      capabilities: ['text'],
+      allowPaid: false,
+    });
+    assert.equal(withheld.probed, 0, 'a request may still refuse what the deployment allows');
   });
 
   it('records every probe as usage, with the cost the rate card implies', async () => {
