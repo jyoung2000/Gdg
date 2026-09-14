@@ -113,10 +113,49 @@ describe('Tasks interrupted by a restart', () => {
       // Everything was reconciled last time; nothing is running now, so nothing
       // should change. A reconciliation that fired on every boot would keep
       // rewriting finishedAt on tasks that ended weeks ago.
-      const again = third.store.reconcileInterruptedTasks();
+      const again = third.store.reconcileInterruptedTasks({ instanceId: third.instanceId });
       assert.equal(again.length, 0, 'a second boot has nothing left to close out');
     } finally {
       await third.stop();
+    }
+  });
+
+  it('leaves a task another live gateway is running alone', async () => {
+    // Two gateways may share one database on purpose — a Compose file with two
+    // replicas, a desktop app opened twice, a restart overlapping its
+    // predecessor; the migration runner takes an IMMEDIATE lock precisely so
+    // they can. An unqualified boot reconciliation is destructive against that:
+    // the second gateway to start marks the first one's in-flight work failed,
+    // broadcasts it to that gateway's clients, and the task keeps running and
+    // spending anyway.
+    const live = await App.create(config());
+    await live.start();
+    try {
+      const mine = task({ status: 'running' });
+      live.store.saveTask(mine);
+      // The lease the running gateway holds, exactly as persistTask sets it.
+      live.store.claimTask(mine.id, live.instanceId);
+
+      // A second gateway boots against the same database.
+      const other = await App.create(config());
+      await other.start();
+      try {
+        const after = other.store.getTask(mine.id);
+        assert.equal(after?.status, 'running', 'a task with a live lease must survive another gateway booting');
+        assert.equal(after?.error, null, 'and must not be given a failure reason');
+      } finally {
+        await other.stop();
+      }
+
+      // Once that gateway is gone and its lease goes stale, the row IS the
+      // stranded case — otherwise the lease would just be a way to leak rows
+      // that claim to be running forever.
+      const stale = Date.now() + 10 * 60_000;
+      const closed = live.store.reconcileInterruptedTasks({ instanceId: 'inst_someone_else', at: stale });
+      assert.equal(closed.length, 1, 'a lease nobody has refreshed for ten minutes is not a live one');
+      assert.equal(live.store.getTask(mine.id)?.status, 'failed');
+    } finally {
+      await live.stop();
     }
   });
 
@@ -173,6 +212,17 @@ describe('Tasks interrupted by a restart', () => {
       t.unref?.();
     });
     assert.deepEqual(app.orchestrator.runningTaskIds(), [running.id], 'the task must be registered as running');
+
+    // The lease is set by the ordinary run path, not by the test. Another
+    // gateway booting right now must find this task leased and leave it be —
+    // which is only true if persisting a 'running' task also claims it.
+    const intruder = app.store.reconcileInterruptedTasks({ instanceId: 'inst_a_second_gateway' });
+    assert.equal(
+      intruder.length,
+      0,
+      'a task that just started must carry a live lease, or another gateway will fail it mid-run',
+    );
+    assert.equal(app.store.getTask(running.id)?.status, 'running', 'and the row must be untouched');
 
     const stoppedAt = Date.now();
     await app.stop();

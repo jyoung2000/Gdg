@@ -45,6 +45,19 @@ type Row = Record<string, unknown>;
  * this boundary in both directions; rows never leave it. That is what lets the
  * router and agent runtime be tested against in-memory fakes.
  */
+/**
+ * How long a task's lease may go unrefreshed before its owner is presumed gone.
+ *
+ * Comfortably more than the heartbeat interval, so an ordinary pause — a slow
+ * provider call, a loaded machine, a garbage-collection stall — never looks
+ * like a death. The cost of waiting is a stale row for a minute; the cost of
+ * being hasty is failing a task that is still running somewhere else.
+ */
+export const TASK_LEASE_STALE_MS = 90_000;
+
+const INTERRUPTED_TASK_ERROR =
+  'Meridian stopped while this task was running, so it did not finish. Nothing was left running; start it again if you still want it.';
+
 export class Store implements CredentialStore {
   readonly db: DB;
   private readonly box: SecretBox;
@@ -766,40 +779,63 @@ export class Store implements CredentialStore {
    * work that nothing is doing and no timer will ever finish, which is worse
    * than showing a failure: it is a lie that never resolves.
    *
-   * Called once, at boot, before anything new is started. Everything running or
-   * queued at that moment belongs to a process that no longer exists.
+   * Called once, at boot, before anything new is started — but only for tasks
+   * with no live lease. Another gateway sharing this database may be running
+   * one right now, and failing that would be a lie about work in progress.
    */
-  reconcileInterruptedTasks(at = Date.now()): AgentTask[] {
-    const stranded = (
-      this.db.prepare("SELECT * FROM tasks WHERE status IN ('running', 'queued', 'awaiting-input')").all() as Row[]
-    ).map(toTask);
+  reconcileInterruptedTasks(opts: { instanceId: string; at?: number; staleAfterMs?: number }): AgentTask[] {
+    const at = opts.at ?? Date.now();
+    const staleBefore = at - (opts.staleAfterMs ?? TASK_LEASE_STALE_MS);
+    // Only what has no live lease. A task another gateway is running right now
+    // carries that gateway's instance id and a heartbeat from seconds ago, and
+    // failing it would be a lie told about work that is still in progress.
+    const WHERE = `status IN ('running', 'queued', 'awaiting-input')
+        AND owner_instance IS NOT ?
+        AND (owner_instance IS NULL OR heartbeat_at IS NULL OR heartbeat_at < ?)`;
+
+    const stranded = (this.db.prepare(`SELECT * FROM tasks WHERE ${WHERE}`).all(opts.instanceId, staleBefore) as Row[]).map(toTask);
     if (!stranded.length) return [];
 
+    const ids = stranded.map((t) => t.id);
+    const holes = ids.map(() => '?').join(',');
     const tx = this.db.transaction(() => {
       this.db
-        .prepare(
-          `UPDATE tasks SET status = 'failed', finished_at = ?,
-             error = 'Meridian stopped while this task was running, so it did not finish. Nothing was left running; start it again if you still want it.'
-           WHERE status IN ('running', 'queued', 'awaiting-input')`,
-        )
-        .run(at);
-      // The steps too: a task marked failed above a step still claiming to be
-      // running is the same unfinished story one level down.
+        .prepare(`UPDATE tasks SET status = 'failed', finished_at = ?, error = ? WHERE id IN (${holes})`)
+        .run(at, INTERRUPTED_TASK_ERROR, ...ids);
+      // The steps of those tasks only. A blanket update would reach into
+      // another gateway's live run one level down, which is the same mistake
+      // in a place nobody would think to look.
       this.db
         .prepare(
           `UPDATE task_steps SET status = 'failed', finished_at = ?, error = 'Interrupted when Meridian stopped'
-             WHERE status = 'running'`,
+             WHERE status = 'running' AND task_id IN (${holes})`,
         )
-        .run(at);
+        .run(at, ...ids);
     });
     tx();
 
-    return stranded.map((t) => ({
-      ...t,
-      status: 'failed' as const,
-      finishedAt: at,
-      error: 'Meridian stopped while this task was running, so it did not finish. Nothing was left running; start it again if you still want it.',
-    }));
+    return stranded.map((t) => ({ ...t, status: 'failed' as const, finishedAt: at, error: INTERRUPTED_TASK_ERROR }));
+  }
+
+  /**
+   * Record that this process owns a task, and that it is still alive.
+   *
+   * Called when a task starts and refreshed on a timer. The heartbeat is what
+   * lets another process tell "abandoned by a dead gateway" from "in progress
+   * somewhere else".
+   */
+  claimTask(taskId: string, instanceId: string, at = Date.now()): void {
+    this.db.prepare('UPDATE tasks SET owner_instance = ?, heartbeat_at = ? WHERE id = ?').run(instanceId, at, taskId);
+  }
+
+  /** Refresh the lease on everything this process is still running. */
+  heartbeatTasks(instanceId: string, at = Date.now()): number {
+    return this.db
+      .prepare(
+        `UPDATE tasks SET heartbeat_at = ?
+           WHERE owner_instance = ? AND status IN ('running', 'queued', 'awaiting-input')`,
+      )
+      .run(at, instanceId).changes;
   }
 
   listTasks(workspaceId?: string, limit = 100): AgentTask[] {

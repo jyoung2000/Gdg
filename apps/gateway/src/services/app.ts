@@ -29,7 +29,7 @@ import {
 } from '@meridian/agent-sdk';
 import { openDatabase } from '../db/database.js';
 import { SecretBox } from '../db/crypto.js';
-import { Store, defaultPreferences } from '../db/store.js';
+import { Store, TASK_LEASE_STALE_MS, defaultPreferences } from '../db/store.js';
 import { Discovery } from './discovery.js';
 import { VerificationService } from './verification.js';
 import { CatalogSync } from './catalog-sync.js';
@@ -48,6 +48,8 @@ export interface Warning {
 }
 
 interface AppParts {
+  /** This process's identity, minted once in `create` and used for task leases. */
+  instanceId: string;
   verification: VerificationService;
   config: MeridianConfig;
   logger: Logger;
@@ -124,6 +126,17 @@ export class App {
   readonly computer: ComputerService;
   readonly warnings: Warning[];
 
+  /**
+   * This process, named.
+   *
+   * Tasks execute in memory, so a row that says "running" belongs to whichever
+   * process is actually running it. With one gateway that is always this one;
+   * with two sharing a database — a Compose file with two replicas, a desktop
+   * app opened twice — it is not, and boot reconciliation needs to be able to
+   * tell the difference before it declares someone else's work failed.
+   */
+  readonly instanceId: string;
+
   /** Live workspaces, keyed by workspace id, so change state survives requests. */
   private readonly workspaces = new Map<string, Workspace>();
   private readonly timers: NodeJS.Timeout[] = [];
@@ -131,6 +144,7 @@ export class App {
   private readonly latencyWindows = new Map<string, number[]>();
 
   private constructor(parts: AppParts) {
+    this.instanceId = parts.instanceId;
     this.config = parts.config;
     this.logger = parts.logger;
     this.store = parts.store;
@@ -164,6 +178,9 @@ export class App {
   static async create(config: MeridianConfig): Promise<App> {
     // Filled in at the end of this method; see recordUsage below.
     let instance: App | null = null;
+    // Minted before anything can start a task, because the task-lease claim
+    // below happens inside a callback the orchestrator holds.
+    const instanceId = newId('inst');
     const logger = createLogger({ level: config.logLevel, format: config.logFormat });
     const db = openDatabase(config.databasePath, logger);
     const box = SecretBox.create(db, config.masterKey);
@@ -491,7 +508,13 @@ export class App {
         }
       },
       persistStep: (step) => store.saveStep(step),
-      persistTask: (task) => store.saveTask(task),
+      persistTask: (task) => {
+        store.saveTask(task);
+        // Claim it the moment it starts, so another gateway's boot can see the
+        // lease. Claiming after the first step would leave a window in which
+        // the row says "running" and names nobody.
+        if (task.status === 'running') store.claimTask(task.id, instanceId);
+      },
       persistToolCall: (record) => store.saveToolCall(record),
       persistCheckpoint: (taskId, stepId, checkpoint) => store.saveCheckpoint(taskId, stepId, checkpoint),
       onEvent: (event: TaskEvent) => events.publish({ type: 'task', event }, { userId: taskEventOwner(event) }),
@@ -580,6 +603,7 @@ export class App {
     computerSessions = computer.sessions;
 
     const app = new App({
+      instanceId,
       config,
       logger,
       store,
@@ -645,11 +669,13 @@ export class App {
     // whole daily budget again. Today's persisted usage is the ground truth.
     this.pools.hydrateSpend(this.store.spentTodayByPool());
 
-    // Tasks execute in memory, so anything the database still calls running
-    // belongs to a process that no longer exists. Left alone, the Tasks screen
-    // shows work nothing is doing and no timer will ever finish — a lie that
-    // never resolves, which is worse than a visible failure.
-    const stranded = this.store.reconcileInterruptedTasks();
+    // Tasks execute in memory, so a row the database still calls running whose
+    // lease nobody is refreshing belongs to a process that no longer exists.
+    // Left alone, the Tasks screen shows work nothing is doing and no timer
+    // will ever finish — a lie that never resolves, which is worse than a
+    // visible failure. Tasks another live gateway is running are left alone:
+    // their lease is current, and failing them would be the opposite lie.
+    const stranded = this.store.reconcileInterruptedTasks({ instanceId: this.instanceId });
     if (stranded.length) {
       this.logger.warn('closed out tasks left running by a previous process', { tasks: stranded.length });
       for (const task of stranded) {
@@ -678,6 +704,23 @@ export class App {
       this.logger.warn('the first discovery refresh failed', { errorCode: e instanceof Error ? e.message : String(e) }),
     );
     this.every(60 * 60_000, refreshDatasets, 'discovery refresh');
+
+    /**
+     * Keep this process's task leases current.
+     *
+     * A third of the staleness window, so two consecutive misses — a loaded
+     * machine, a long GC pause — still leave the lease live. Without it, a
+     * second gateway's boot would fail this one's running tasks the moment the
+     * window elapsed, which is the defect the lease exists to prevent, merely
+     * delayed by ninety seconds.
+     */
+    this.every(
+      Math.max(5_000, Math.floor(TASK_LEASE_STALE_MS / 3)),
+      async () => {
+        this.store.heartbeatTasks(this.instanceId);
+      },
+      'task lease heartbeat',
+    );
   }
 
   /**
