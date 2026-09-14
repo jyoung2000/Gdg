@@ -20,6 +20,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { gateStatus, gatesPass } from './release-gates.mjs';
 import { mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -78,6 +79,7 @@ const GATES = [
       'detects a workspace path that means something else to the Docker daemon',
       'reports the image and daemon it needs, rather than failing at run time',
     ],
+    blockedBy: 'docker',
     blocked: '`docker compose up -d` and `docker build` need base images from a registry, which this environment\'s egress policy refuses. See docs/evidence/DOCKER.md.',
   },
   {
@@ -130,6 +132,7 @@ const GATES = [
       "does not hand the gateway's environment to the command",
       'kills a command that runs past its timeout',
     ],
+    blockedBy: 'docker',
     blocked:
       'Container isolation needs a Docker daemon and a sandbox image; this environment has neither. The process-sandbox fallback and its degraded-mode warning ARE verified here.',
   },
@@ -140,6 +143,7 @@ const GATES = [
       'serves embeddings through the gateway, deterministically and at the requested width',
       'carries an image through both surfaces without altering it',
     ],
+    blockedBy: 'live-providers',
     blocked: 'Image, video, speech and transcription need a credentialed provider; none is configured here.',
   },
   {
@@ -278,6 +282,19 @@ for (const suite of SUITES) {
   report.suites.push({ id: suite.id, label: suite.label, ok, pass: t.pass, fail: t.fail, ms: res.ms });
 }
 
+/**
+ * What is actually unavailable here, observed rather than asserted.
+ *
+ * Each key matches a gate's `blockedBy`. These are evaluated against this run:
+ * `dockerAvailable` came from an actual `docker info`, and the live-provider
+ * flag from whether live tests were asked for and ran. A gate may only claim
+ * BLOCKED_EXTERNAL when the condition it names is true right now.
+ */
+const BLOCKERS = {
+  docker: () => !dockerAvailable,
+  'live-providers': () => process.env.MERIDIAN_LIVE_TESTS !== '1',
+};
+
 for (const gate of GATES) {
   const missing = gate.tests.filter((t) => !seen.has(t));
   // Only two statuses are available from a test run: the evidence passed, or it
@@ -298,9 +315,15 @@ for (const gate of GATES) {
   // Reporting a blocked gate as FAILED was as misleading as reporting it as
   // VERIFIED: it says the product is broken when what is missing is a Docker
   // daemon. Neither status counts as passing, and the summary below names them.
-  const status =
-    missing.length > 0 ? (gate.blocked ? 'BLOCKED_EXTERNAL' : 'FAILED') : gate.blocked ? 'PARTIAL' : 'VERIFIED';
-  report.gates.push({ ...gate, status, missing });
+  const status = gateStatus(gate, missing, BLOCKERS);
+  report.gates.push({
+    ...gate,
+    status,
+    missing,
+    // When evidence is missing and nothing external explains it, say so rather
+    // than leaving the old reason attached to a FAILED row.
+    blocked: status === 'BLOCKED_EXTERNAL' || status === 'PARTIAL' ? gate.blocked : null,
+  });
 }
 
 /**
@@ -318,7 +341,7 @@ const stepsOk = report.steps.every((s) => s.ok);
 // BLOCKED_EXTERNAL does not fail the run — the product is not broken because
 // this machine has no Docker — but it is never counted as passing either, and
 // the report names every one of them.
-const gatesOk = report.gates.every((g) => g.status !== 'FAILED');
+const gatesOk = gatesPass(report.gates);
 report.finishedAt = new Date().toISOString();
 report.ok = suitesOk && stepsOk && gatesOk;
 

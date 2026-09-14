@@ -116,12 +116,23 @@ let previewStamp = null;
 if (!existsSync(sidecarPath)) {
   previewProblems.push('docs/mockup/previews.json is missing, so nothing records when the previews were taken');
 } else {
+  let readable = true;
   try {
     previewStamp = JSON.parse(readFileSync(sidecarPath, 'utf8')).uiFingerprint ?? null;
   } catch {
+    readable = false;
     previewProblems.push('docs/mockup/previews.json is not readable JSON');
   }
-  if (previewStamp && previewStamp !== current.hash) {
+  // A sidecar that parses but carries no fingerprint is the same problem as no
+  // sidecar at all, and used to pass: the comparison was guarded on the stamp
+  // existing, so an absent one skipped the check entirely and the PNGs were
+  // reported current. The HTML artefacts above already say this out loud; the
+  // pictures are the thing people actually look at, so they get it too.
+  if (readable && !previewStamp) {
+    previewProblems.push(
+      'docs/mockup/previews.json records no uiFingerprint, so nothing can say whether the previews are current',
+    );
+  } else if (readable && previewStamp !== current.hash) {
     previewProblems.push(`stale: shot from UI source ${previewStamp}, but the source is now ${current.hash}`);
   }
 }
