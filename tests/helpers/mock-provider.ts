@@ -217,8 +217,13 @@ export async function startMockProvider(id: string, initial: MockBehaviour = {})
         send(404, { error: { message: `no mock route for ${req.url}` } });
       };
 
-      if (behaviour.latencyMs) setTimeout(respond, behaviour.latencyMs);
-      else respond();
+      if (behaviour.latencyMs) {
+        // Unref'd: a mock configured to answer in thirty seconds must not hold
+        // the runner open for thirty seconds after the test that used it has
+        // finished and closed it.
+        const timer = setTimeout(respond, behaviour.latencyMs);
+        timer.unref?.();
+      } else respond();
     });
   });
 

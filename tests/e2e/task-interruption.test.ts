@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { loadConfig, newId, type AgentTask, type TaskStep } from '@meridian/shared';
 import { newTask } from '@meridian/agent-sdk';
 import { startMockProvider } from '../helpers/mock-provider.js';
@@ -282,21 +283,31 @@ describe('Tasks interrupted by a restart', () => {
     );
     assert.equal(app.orchestrator.runningTaskIds().length, 0, 'nothing may still be registered as running');
 
-    // The record it left behind is a finished one, written before the database
-    // closed. Not "running", which is what abandoning it produced.
-    const fourth = await App.create(config());
-    await fourth.start();
+    // Read the row directly, with no App in between.
+    //
+    // Booting a second App to check would have proved nothing: its own start()
+    // reconciles anything left running, so the "finished" record it reports
+    // could just as easily be the backstop doing its job as the shutdown
+    // having done its own. This asserts the write shutdown itself made.
+    const raw = new Database(dbPath, { readonly: true });
     try {
-      const finished = fourth.store.getTask(running.id);
-      assert.ok(finished, 'the task record must exist');
-      assert.notEqual(finished?.status, 'running', 'an abandoned task is exactly what this is about');
-      assert.ok(
-        finished?.status === 'cancelled' || finished?.status === 'failed',
-        `expected a finished status, got ${finished?.status}`,
+      const row = raw.prepare('SELECT status, finished_at, error FROM tasks WHERE id = ?').get(running.id) as
+        | { status: string; finished_at: number | null; error: string | null }
+        | undefined;
+      assert.ok(row, 'the task record must exist');
+      assert.equal(
+        row?.status,
+        'cancelled',
+        `shutdown must write the ending itself: 'cancelled' is what a cancelled run records, ` +
+          `'failed' would mean it was abandoned and the next boot cleaned up. Got ${row?.status}`,
       );
-      assert.ok(finished?.finishedAt, 'and an ending');
+      assert.ok(row?.finished_at, 'and an ending time');
+      assert.ok(
+        !/stopped while this task was running/.test(row?.error ?? ''),
+        'and not the boot-reconciliation message, which would mean shutdown wrote nothing',
+      );
     } finally {
-      await fourth.stop();
+      raw.close();
       await slow.close();
       rmSync(root, { recursive: true, force: true });
     }

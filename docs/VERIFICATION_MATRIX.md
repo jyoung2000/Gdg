@@ -103,14 +103,16 @@ Covered in detail in [SECURITY.md](SECURITY.md).
 | SSRF: names resolving into private space | VERIFIED | Refused at connect time, inside the DNS lookup |
 | Credential encryption at rest | VERIFIED | AES-256-GCM under a scrypt-derived key; tampering and wrong-key cases covered |
 | Credentials never returned | VERIFIED | Absent from four endpoints that could have leaked one |
+| One user cannot read another's project files through the inference APIs | VERIFIED | Driven from the attacker's side across both dialects with a canary in the victim's project file; the workspace id in a request body is now checked against what the caller may reach (`tests/e2e/multi-user.test.ts`) |
+| A task's file changes reach only its owner | VERIFIED | The diff event names its task so it can be attributed; an event that cannot be attributed goes to administrators rather than everyone (`tests/unit/event-audience.test.ts`) |
 | Redaction in logs, audit and errors | VERIFIED | Including a secret a caller puts in a failing request |
 | CSP without `unsafe-inline` on scripts | VERIFIED | Inline bootstrap allowed by hash; `object-src` and `base-uri` are `none` |
 | Security headers on streamed responses | VERIFIED | Carried across the switch to the raw socket |
-| Sandbox: no network | VERIFIED | No routes inside the container |
-| Sandbox: read-only root, workspace-only writes | VERIFIED | — |
-| Sandbox: environment built from scratch | VERIFIED | A canary in the gateway's environment does not reach the command |
-| Sandbox: timeouts and a pid ceiling | VERIFIED | A fork bomb leaves the daemon usable |
-| Sandbox misconfiguration detected at startup | VERIFIED | Mount probe catches both the path and the ownership case |
+| Sandbox: no network | BLOCKED_EXTERNAL | Asserts no routes inside the container; `tests/e2e/docker-sandbox.test.ts` skips here — no Docker daemon |
+| Sandbox: read-only root, workspace-only writes | BLOCKED_EXTERNAL | Same suite, same skip |
+| Sandbox: environment built from scratch | BLOCKED_EXTERNAL | Asserts a canary in the gateway's environment does not reach the command; skipped here |
+| Sandbox: timeouts and a pid ceiling | BLOCKED_EXTERNAL | Asserts a fork bomb leaves the daemon usable; skipped here |
+| Sandbox misconfiguration detected at startup | VERIFIED | Mount probe catches both the path and the ownership case, without a daemon |
 | Auth required mode | IMPLEMENTED_UNVERIFIED | Covered by integration tests; not exercised in the adversarial pass |
 
 ## Deployment
@@ -121,14 +123,18 @@ Covered in detail in [SECURITY.md](SECURITY.md).
 | Migrations applied in order, the whole upgrade in one transaction | VERIFIED | 11 migrations; readiness reads the applied count (`tests/unit/migrations.test.ts`) |
 | A previous release's database upgrades with its data intact | VERIFIED | A database built from the real migration files up to a cut-off, with rows written through them, opened by this build: the operator and their workspaces survive and the newest table exists |
 | A failed migration fails closed | VERIFIED | A broken file stops startup, names itself, and leaves nothing behind — no partial schema, no `_migrations` row, and the same database upgrades cleanly once the file is removed |
-| An older build refuses a newer database | VERIFIED | Startup refuses and names the migrations it does not recognise, rather than reading columns that have moved |
+| An older build refuses a newer database | VERIFIED | Startup refuses and names the migrations it does not recognise, before applying anything of its own — so a build that also has a migration the newer database lacks cannot write into a schema it does not understand |
+| A release gate cannot excuse missing evidence | VERIFIED | A gate may only claim BLOCKED_EXTERNAL when the condition it names was observed on this run; a `blockedBy` naming a blocker nobody evaluates FAILS (`tests/unit/release-gates.test.ts`) |
+| Shutdown can see work that has not started a task yet | VERIFIED | A parallel run is supervised from the moment it begins, so cancelling reaches it and shutdown waits for it (`tests/unit/parallel-shutdown.test.ts`) |
 | Two processes starting at once | VERIFIED | Two real processes released from a barrier against a deliberately slow migration, three rounds: both start cleanly and the migration is recorded once |
 | Discovery pacing survives a restart | VERIFIED | Backoff, the minimum interval and the consecutive-failure pause all reload; an operator's reset is not resurrected (`tests/unit/discovery-schedule-persistence.test.ts`) |
-| Interrupted tasks are closed out | VERIFIED | Shutdown cancels in-flight tasks and waits for them to write an ending; the next boot fails anything the database still calls running, over a real App restart and a real 30-second provider call (`tests/e2e/task-interruption.test.ts`) |
+| Interrupted tasks are closed out | VERIFIED | Two separate assertions, so neither can stand in for the other: shutdown's own write is read straight from the database with no App in between (status `cancelled`), and boot reconciliation is checked on a database no process is attached to (status `failed`). Over a real App restart and a real 30-second provider call (`tests/e2e/task-interruption.test.ts`) |
+| A task another live gateway is running is left alone | VERIFIED | A lease — owner and heartbeat — set by the ordinary run path; a second gateway booting against it changes nothing, and a ten-minute-stale lease is still closed out |
+| Unstarted steps of an interrupted task are closed out | VERIFIED | Marked skipped rather than failed: they were never attempted |
 | `docker compose config` valid | VERIFIED | — |
 | `docker build` | BLOCKED_EXTERNAL | Base image blocked by this environment's egress policy |
 | `docker compose up -d` | BLOCKED_EXTERNAL | Same |
-| Sandbox image build | PARTIAL | The real image is BLOCKED_EXTERNAL; a verification-only image was assembled from host binaries and used to verify isolation |
+| Sandbox image build | BLOCKED_EXTERNAL | No Docker daemon here at all. An earlier pass verified isolation against an image assembled from host binaries; this environment cannot repeat that |
 | Health check in Compose | IMPLEMENTED_UNVERIFIED | Uses the liveness route; not run under Compose here |
 
 ## Web client and design system
@@ -199,7 +205,9 @@ Full write-up in [MERIDIAN_PHASE4_IMPLEMENTATION.md](MERIDIAN_PHASE4_IMPLEMENTAT
 | The Matrix tab labels both halves | VERIFIED | Driven in Chromium |
 | A capability probe is accounted for like any other call | VERIFIED | One usage row per probe through the same sink every completion uses, at the model's own rate card, against a real gateway and a real HTTP provider (`tests/e2e/probe-spend.test.ts`) |
 | A probe refuses to spend without permission | VERIFIED | A metered model is skipped, with a reason, before any request is sent, when paid spend is not permitted |
-| A probe run is bounded by a dollar ceiling | VERIFIED | The ceiling is checked against a pessimistic per-probe estimate before anything is sent, and binds even with permission |
+| A probe run is bounded by a dollar ceiling | VERIFIED | Bound to what the run COMMITS, not what providers later report — a provider that omits its usage block cannot walk the counter past the cap (`tests/e2e/probe-spend.test.ts`) |
+| A request cannot switch paid spending back on | VERIFIED | `MERIDIAN_ALLOW_PAID` is required as well as the request's own permission, as the router has always required both; a run may narrow, never widen |
+| An unpriced model cannot pass the ceiling at $0.00 | VERIFIED | A card that can charge and publishes no rate is refused rather than priced at zero |
 | Claim age discounts a stale claim in search as well as routing | VERIFIED | A two-year-old probe scores below a fresh one, says so in its reasons, and an undated catalogue entry is not treated as stale (`tests/unit/capability-evidence.test.ts`) |
 | The router's "no fake support" guard | VERIFIED | Red-then-green. It asked only whether a method existed, and the OpenAI-compatible base defines every method and refuses at call time — so a chat-only endpoint was routed image work. The guard now asks the adapter's own surface too |
 

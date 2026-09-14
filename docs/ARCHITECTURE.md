@@ -75,7 +75,8 @@ HTTP  →  route handler
 **SQLite, not a server database.** One file, one volume, no operational
 surface. WAL with `synchronous = NORMAL`: a crash can lose the last transaction
 but never corrupts the file, and it removes an fsync per write. Migrations are
-plain `.sql` applied in filename order inside one transaction each and recorded
+plain `.sql` applied in filename order, the whole pending set inside one
+transaction, and recorded
 in `_migrations`, so restart is idempotent and a volume survives an upgrade.
 
 Four properties the upgrade path holds, each with a test:

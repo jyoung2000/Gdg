@@ -16,15 +16,18 @@ after a change.
 ### BETA
 
 Meridian is a real, working product, and the case for that is mechanical rather
-than rhetorical: **787 tests, 776 passing, 11 skipped, none failing.** The
-skipped eleven name their external dependency — a Docker daemon, a provider
-credential — and are not counted as passing anywhere.
+than rhetorical: **813 tests, 802 passing, 11 skipped, none failing.** All
+eleven skips are the container-sandbox and Docker suites, which name the
+missing Docker daemon as their reason and are not counted as passing anywhere.
+The provider-credential gap does not appear as a skip: those rows are
+BLOCKED_EXTERNAL in the matrices instead.
 
 What passes includes 138 end-to-end tests that cross a socket and a process
-boundary into a real inference server, 33 that drive the web client in a real
-browser across three viewports and both themes, 19 chaos tests that attack the
-running gateway concurrently, and 24 invariant tests that hold across hundreds
-of generated registries. The autonomous coding pipeline writes files that exist
+boundary into a real inference server, 30 that drive the web client in a real
+browser across three viewports and both themes (three more check the offline
+artefact rather than the app), 19 chaos tests that attack the running gateway
+concurrently, and 24 contract-and-invariant tests, of which the router
+invariants hold across hundreds of generated registries. The autonomous coding pipeline writes files that exist
 on disk afterwards. State survives a restart, and — since this pass — so do
 discovery backoff, reservation spend, and the truth about tasks that were
 running when the process died.
@@ -76,15 +79,15 @@ rows' evidence. Regenerate with `node scripts/scorecard.mjs --write`.
 <!-- scorecard:start -->
 | Status | Count | Share |
 | --- | ---: | ---: |
-| VERIFIED | 156 | 72% |
-| IMPLEMENTED_UNVERIFIED | 25 | 12% |
-| PARTIAL | 5 | 2% |
-| BLOCKED_EXTERNAL | 30 | 14% |
+| VERIFIED | 160 | 71% |
+| IMPLEMENTED_UNVERIFIED | 25 | 11% |
+| PARTIAL | 4 | 2% |
+| BLOCKED_EXTERNAL | 35 | 16% |
 | MISSING | 0 | — |
 | STUB | 0 | — |
 | FAILED | 0 | — |
 
-216 claims across the four matrices, counted by `node scripts/scorecard.mjs`.
+224 claims across the four matrices, counted by `node scripts/scorecard.mjs`.
 <!-- scorecard:end -->
 
 The BLOCKED_EXTERNAL share is high because the provider matrix contributes
@@ -143,8 +146,8 @@ credentialed provider.
 
 ## What this pass changed
 
-107 files, +5,644 / −504, across eleven commits. The previous report described a
-product at 237 tests; it is now at 787.
+106 files, +6,885 / −553, across 23 commits. The previous report described a
+product at 237 tests; it is now at 813.
 
 | Commit | What it closed |
 | --- | --- |
@@ -160,6 +163,28 @@ product at 237 tests; it is now at 787.
 | Persist discovery pacing | Backoff and the failure pause lived in a Map. A restart — most likely exactly when a provider is failing — cleared both and queried it again immediately |
 | Make a restart honest about reservations and tasks | A reservation's budget reset to zero on restart; tasks abandoned by shutdown stayed "running" forever |
 | Make upgrades survivable | The whole upgrade is now one transaction, two processes starting together no longer crash one of them, and an older build refuses a newer database instead of corrupting it quietly |
+
+An adversarial audit was then run over this pass's own diff — eight
+dimensions, each finding verified by three independent skeptics prompted to
+refute it. It found eleven real defects in work this pass had just added,
+including two the pass had introduced while closing something else:
+
+| Found | What it was |
+| --- | --- |
+| The probe ceiling priced an unpublished rate card at $0.00 | `computeCost` adds a term per *published* rate, so a metered model with none priced at zero and passed any ceiling, any number of times, while the ledger recorded $0.00 |
+| The probe ceiling counted measured spend | A provider that omits its usage block reports nothing, so the counter never moved however many models followed |
+| A request could switch paid spending back on | `req.allowPaid ?? instance` let one call spend on a deployment whose operator had switched spending off |
+| One user could read another's project files | The workspace id in a chat request was never checked against what the caller may reach, on all three dialects |
+| Task diffs went to every connected client | The event named no task, so attribution returned "nobody", which this bus reads as everybody |
+| Boot reconciliation failed a second live gateway's tasks | The same pass that made two gateways supportable also made one of them destroy the other's work |
+| An older build wrote into a newer database before refusing it | The refusal ran after the migration pass rather than before |
+| Shutdown could not see a parallel run | A lane copies the workspace before registering, so shutdown looked, found nothing, and closed the store underneath it |
+| Interrupted tasks left their unstarted steps queued forever | A failed task above a pending step reads as work about to resume |
+| A deleted reservation went on being enforced | The store had a delete and the pool manager did not |
+| A blocked release gate could never fail | A reason string was treated as proof the evidence could not run |
+
+Each is closed, with a mutation-verified test. Two findings in the audit's
+output were judged not to be defects on reading the code, and are not listed.
 
 Writing the concurrent-start test found a defect nothing else would have:
 `PRAGMA journal_mode = WAL` does not go through SQLite's busy handler, so the
@@ -205,6 +230,20 @@ still IMPLEMENTED_UNVERIFIED.
 **The upgrade test is one version step.** It carries a real previous-release
 database forward with its data, which nothing did before. It is not a fleet
 upgrade, a downgrade, or a multi-version jump.
+
+**Known and not fixed in this pass.** The audit surfaced three further real
+issues that are left open rather than quietly dropped:
+
+- A pool's budget reservation sizes an image request as one call, so a request
+  for *n* images can bill *n*× what it reserved. Pre-existing, in the router's
+  estimate rather than in this pass's work.
+- Shutdown does not await the detached discovery refresh, so pacing state
+  written during that window can be lost — the same class of gap migration 011
+  closed for the ordinary path.
+- The capability inspector's Verify button never sends `allowPaid` and never
+  renders the `skipped` list, so a run refused entirely for cost reasons
+  displays as though it found nothing. The API is correct; the screen does not
+  show what it returns.
 
 ---
 
