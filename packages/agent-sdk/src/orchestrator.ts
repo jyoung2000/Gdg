@@ -59,7 +59,16 @@ export type TaskEvent =
   | { type: 'task-update'; task: AgentTask }
   | { type: 'step-update'; step: TaskStep }
   | { type: 'agent'; event: AgentEvent }
-  | { type: 'diff'; changes: import('@meridian/shared').FileChange[] };
+  /**
+   * Files a task changed.
+   *
+   * Carries `taskId` because it carries file *contents*: the event bus can only
+   * address an event to the one person entitled to it if the event says whose
+   * work it is. A diff that named no task was attributed to nobody, which the
+   * bus reads as everybody — so one user's source was pushed to every connected
+   * client.
+   */
+  | { type: 'diff'; taskId: string; changes: import('@meridian/shared').FileChange[] };
 
 /** Defined in `@meridian/shared` so the web client can use it too. */
 export { PIPELINE_KINDS, type PipelineKind } from '@meridian/shared';
@@ -596,7 +605,7 @@ export class Orchestrator {
     }
 
     const changes = input.workspace.pendingChanges();
-    if (changes.length) this.deps.onEvent?.({ type: 'diff', changes });
+    if (changes.length) this.deps.onEvent?.({ type: 'diff', taskId: task.id, changes });
 
     task = {
       ...task,

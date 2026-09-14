@@ -32,6 +32,16 @@ export type Subscriber = (event: ServerEvent) => void;
  */
 export interface EventAudience {
   userId: string | null;
+  /**
+   * Restrict to administrators even though no specific user owns this.
+   *
+   * The escape hatch for an event that carries someone's content but cannot be
+   * attributed — a diff for a task that has since been deleted, an agent event
+   * whose step is not in the map yet. `userId: null` means *everyone*, so
+   * falling back to it for those was fail-open: unattributable content went to
+   * every connected client. This is the fail-closed default they get instead.
+   */
+  adminOnly?: boolean;
 }
 
 /** Who is listening, and therefore what they may be shown. */
@@ -45,8 +55,9 @@ const EVERYONE: EventAudience = { userId: null };
 
 /** Whether this viewer may see an event addressed to this audience. */
 export function visibleTo(audience: EventAudience, viewer: EventViewer): boolean {
-  if (audience.userId === null) return true;
   if (viewer.admin) return true;
+  if (audience.adminOnly) return false;
+  if (audience.userId === null) return true;
   return viewer.userId != null && viewer.userId === audience.userId;
 }
 

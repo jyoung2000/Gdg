@@ -423,7 +423,7 @@ export async function registerWorkspaceRoutes(server: FastifyInstance, app: App)
     });
     // A diff is the contents of one person's workspace, so it goes to the
     // task's owner rather than to every connected client.
-    app.events.publish({ type: 'task', event: { type: 'diff', changes: ws.pendingChanges() } }, { userId: task.userId });
+    app.events.publish({ type: 'task', event: { type: 'diff', taskId: task.id, changes: ws.pendingChanges() } }, { userId: task.userId });
 
     return { ...result, checkpoint: { id: record.snapshot.id, label: record.snapshot.label, at: record.snapshot.at }, droppedCheckpoints: dropped };
   });

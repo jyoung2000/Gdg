@@ -15,7 +15,7 @@ export type TaskEvent =
   | { type: 'task-update'; task: import('@meridian/shared').AgentTask }
   | { type: 'step-update'; step: import('@meridian/shared').TaskStep }
   | { type: 'agent'; event: AgentEvent }
-  | { type: 'diff'; changes: import('@meridian/shared').FileChange[] };
+  | { type: 'diff'; taskId: string; changes: import('@meridian/shared').FileChange[] };
 
 export type AgentEvent =
   | { type: 'step-start'; stepId: string; role: string; label: string }

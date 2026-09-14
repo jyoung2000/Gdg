@@ -36,7 +36,7 @@ import { CatalogSync } from './catalog-sync.js';
 import { schedulePersistence } from './schedule-store.js';
 import { FreeInferenceService } from './free-inference.js';
 import { PriceBookService } from './price-book.js';
-import { EventBus, type ServerEvent } from './events.js';
+import { EventBus, type EventAudience, type ServerEvent } from './events.js';
 import { browserTools, createControlPlane, type ControlPlane } from './control.js';
 import { createAIControlPlane, type ControlPlane as AIControlPlane } from './control-plane.js';
 import { ComputerService } from './computer.js';
@@ -465,22 +465,35 @@ export class App {
      */
     const ownerOfTask = new Map<string, string | null>();
     const taskOfStep = new Map<string, string>();
-    const taskEventOwner = (event: TaskEvent): string | null => {
+    /**
+     * Who may see one task event.
+     *
+     * Every shape here carries someone's work — the prompt they typed, the code
+     * an agent wrote for them, the files it changed. So the fallback is
+     * administrators, not everyone: an event that cannot be attributed is
+     * withheld rather than broadcast. Returning a bare `null` userId meant
+     * "everyone", and a diff that named no task took exactly that path.
+     */
+    const unattributed = { userId: null, adminOnly: true } as const;
+    const ownedBy = (userId: string | null | undefined): EventAudience =>
+      userId == null ? unattributed : { userId };
+
+    const taskEventOwner = (event: TaskEvent): EventAudience => {
       if (event.type === 'task-update') {
         ownerOfTask.set(event.task.id, event.task.userId);
-        return event.task.userId;
+        return ownedBy(event.task.userId);
       }
       if (event.type === 'step-update') {
         taskOfStep.set(event.step.id, event.step.taskId);
-        return ownerOfTask.get(event.step.taskId) ?? store.getTask(event.step.taskId)?.userId ?? null;
+        return ownedBy(ownerOfTask.get(event.step.taskId) ?? store.getTask(event.step.taskId)?.userId);
       }
       if (event.type === 'agent') {
         const taskId = taskOfStep.get(event.event.stepId);
-        return taskId ? (ownerOfTask.get(taskId) ?? null) : null;
+        return ownedBy(taskId ? ownerOfTask.get(taskId) : undefined);
       }
-      // A bare diff names no task. It is the one shape that cannot be
-      // attributed, and the route that publishes it attributes it instead.
-      return null;
+      // A diff carries file contents, so it names its task precisely so this
+      // can resolve rather than falling through to everyone.
+      return ownedBy(ownerOfTask.get(event.taskId) ?? store.getTask(event.taskId)?.userId);
     };
 
     const orchestrator = new Orchestrator({
@@ -517,7 +530,7 @@ export class App {
       },
       persistToolCall: (record) => store.saveToolCall(record),
       persistCheckpoint: (taskId, stepId, checkpoint) => store.saveCheckpoint(taskId, stepId, checkpoint),
-      onEvent: (event: TaskEvent) => events.publish({ type: 'task', event }, { userId: taskEventOwner(event) }),
+      onEvent: (event: TaskEvent) => events.publish({ type: 'task', event }, taskEventOwner(event)),
     });
 
     const parallel = new ParallelRunner(orchestrator);
