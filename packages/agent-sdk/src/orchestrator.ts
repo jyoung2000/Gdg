@@ -188,6 +188,31 @@ export class Orchestrator {
   }
 
   /**
+   * Track detached work that is not a single task, so shutdown can reach it.
+   *
+   * A parallel run spends its first seconds copying a workspace per lane,
+   * before any `run()` has been called. During that window nothing was
+   * registered anywhere: `cancelAll` found nothing to cancel, `settle`
+   * resolved immediately, shutdown reported itself clean and closed the store
+   * — and the lanes then started against a database that was gone.
+   *
+   * The supervised work gets the abort signal, so cancelling actually stops it
+   * rather than merely being recorded.
+   */
+  async supervise<T>(id: string, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const ac = new AbortController();
+    this.running.set(id, ac);
+    const promise = run(ac.signal);
+    this.inFlight.add(promise);
+    try {
+      return await promise;
+    } finally {
+      this.inFlight.delete(promise);
+      this.running.delete(id);
+    }
+  }
+
+  /**
    * Wait for in-flight tasks to finish writing themselves down.
    *
    * Bounded, because a shutdown that can be held open indefinitely by a stuck

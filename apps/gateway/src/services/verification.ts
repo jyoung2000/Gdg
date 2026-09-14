@@ -83,6 +83,11 @@ export interface VerifyRequest {
    * Permission without a ceiling is how a diagnostic becomes a bill: 300 models
    * × a handful of probes each is a number nobody intends. The run stops when
    * the next model's worst case would cross this, and says so.
+   *
+   * Enforced against what the run has committed — each model's pessimistic
+   * estimate, added before it is probed — rather than against what the
+   * providers later reported. A provider that omits its usage block reports
+   * nothing, and a ceiling counting only reported spend would never move.
    */
   maxCostUsd?: number;
   /** Who the spend belongs to, for the usage ledger. */
@@ -114,6 +119,14 @@ export interface VerifyReport {
   costKnown: boolean;
   /** The ceiling the run was held to, so a truncated run can explain itself. */
   maxCostUsd: number;
+  /**
+   * What the run undertook to spend before probing, at each model's worst case.
+   *
+   * Always at least `cost`, usually well above it: the estimate assumes the
+   * untuned retry path and a full output ceiling. This is the number the
+   * ceiling was compared against.
+   */
+  committedUsd: number;
   startedAt: number;
   finishedAt: number;
 }
@@ -182,6 +195,11 @@ export class VerificationService {
     let probeCalls = 0;
     let cost = 0;
     let costKnown = true;
+    /**
+     * What this run has undertaken to spend, as opposed to what it has
+     * measured. The ceiling binds on this.
+     */
+    let committed = 0;
 
     // Both, exactly as the router requires both — `MERIDIAN_ALLOW_PAID` is a
     // kill-switch, not a default. Reading it as `req.allowPaid ?? instance`
@@ -231,13 +249,20 @@ export class VerificationService {
           });
           continue;
         }
-        if (cost + worstCase.usd > maxCostUsd) {
+        // Against what this run has COMMITTED, not what it has since measured.
+        // Charging the ceiling the measured cost made it trivially evadable: a
+        // provider that omits its usage block measures at $0.00, so the
+        // counter never moved and the ceiling never tripped however many
+        // models were probed. The pool budgets solved this the same way, with
+        // an in-flight hold; this is that, for a run.
+        if (committed + worstCase.usd > maxCostUsd) {
           skipped.push({
             modelId: model.id,
             reason: `probing it could cost up to $${worstCase.usd.toFixed(4)}, which would pass this run's $${maxCostUsd.toFixed(2)} ceiling`,
           });
           continue;
         }
+        committed += worstCase.usd;
 
         // A probe without a credential is not a probe, it is a guaranteed auth
         // error that would be recorded as "learned nothing" for every model on
@@ -291,6 +316,7 @@ export class VerificationService {
         cost: Math.round(cost * 1e5) / 1e5,
         costKnown,
         maxCostUsd,
+        committedUsd: Math.round(committed * 1e5) / 1e5,
         startedAt,
         finishedAt: Date.now(),
       };

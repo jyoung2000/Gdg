@@ -250,6 +250,54 @@ describe('Capability probes: permission, ceiling and accounting', () => {
     }
   });
 
+  it('holds the ceiling against what it commits, not what the provider admits to', async () => {
+    // The evasion this closes: a provider that omits its usage block measures
+    // at $0.00, so a ceiling counting measured spend never moved however many
+    // models were probed. The ceiling is therefore charged each model's
+    // pessimistic estimate before the request goes out — the same in-flight
+    // hold the pool budgets use.
+    const silent = await startMockProvider('quiet-provider', { reply: 'yes', omitUsage: true });
+    app.providers.registerProvider(silent.descriptor);
+    app.providers.setCredentialed('quiet-provider', true);
+    for (let i = 0; i < 8; i++) {
+      app.models.upsert({
+        ...paidModel(`quiet-${i}`),
+        id: `quiet-provider:quiet-${i}`,
+        providerId: 'quiet-provider',
+        providerModelId: `quiet-${i}`,
+      });
+    }
+
+    try {
+      const report = await app.verification.verify({
+        providerId: 'quiet-provider',
+        capabilities: ['text'],
+        allowPaid: true,
+        // Enough for roughly two models at the reserve estimate ($3/$15 per
+        // Mtok over 256/512 reserve tokens, doubled for the untuned retry).
+        maxCostUsd: 0.05,
+      });
+
+      assert.equal(report.cost, 0, 'the provider reported no tokens, so nothing could be measured');
+      assert.ok(report.committedUsd > 0, 'but the run still undertook to spend, and says how much');
+      assert.ok(
+        report.committedUsd <= 0.05,
+        `the commitment must stay inside the ceiling, got $${report.committedUsd}`,
+      );
+      assert.ok(report.probed >= 1, 'some models must have been probed');
+      assert.ok(
+        report.probed < 8,
+        `the ceiling must stop the run; it probed all ${report.probed} models against a $0.05 cap`,
+      );
+      assert.ok(
+        report.skipped.some((s) => /ceiling/i.test(s.reason)),
+        'and it must say the ceiling is why it stopped',
+      );
+    } finally {
+      await silent.close();
+    }
+  });
+
   it('stops at the dollar ceiling even with permission to spend', async () => {
     const spentBefore = probeRows().length;
     const report = await app.verification.verify({

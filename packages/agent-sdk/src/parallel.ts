@@ -45,6 +45,19 @@ export interface ParallelOptions extends Omit<RunTaskInput, 'task' | 'workspace'
  * for review, because a machine-merged combination of two independent agents'
  * edits is exactly the kind of change a person must look at.
  */
+/** A lane that never started, recorded rather than left as a hole in the array. */
+function abandoned(lane: Lane, opts: ParallelOptions, why: string): LaneRun {
+  const task = newTask({ workspaceId: opts.workspaceId, userId: opts.userId, request: lane.request, lane: lane.name });
+  return {
+    lane: lane.name,
+    task: { ...task, status: 'cancelled', error: why, finishedAt: Date.now() },
+    steps: [],
+    workspacePath: '',
+    changes: [],
+    error: why,
+  };
+}
+
 export class ParallelRunner {
   private readonly orchestrator: Orchestrator;
 
@@ -52,21 +65,38 @@ export class ParallelRunner {
     this.orchestrator = orchestrator;
   }
 
+  /**
+   * Run every lane, under the orchestrator's supervision.
+   *
+   * Supervised rather than merely started: a lane spends its first seconds
+   * copying the workspace, before `orchestrator.run` has been called and
+   * therefore before anything is registered as in flight. Shutdown used to
+   * look at that moment, find nothing, report itself clean and close the
+   * store — and the lanes then started against a database that was gone.
+   */
   async run(lanes: Lane[], opts: ParallelOptions): Promise<LaneRun[]> {
-    const concurrency = Math.max(1, Math.min(opts.concurrency ?? 3, lanes.length));
-    const results: LaneRun[] = new Array(lanes.length);
-    let cursor = 0;
+    return this.orchestrator.supervise(newId('lanes'), async (signal) => {
+      const concurrency = Math.max(1, Math.min(opts.concurrency ?? 3, lanes.length));
+      const results: LaneRun[] = new Array(lanes.length);
+      let cursor = 0;
 
-    const worker = async (): Promise<void> => {
-      while (true) {
-        const index = cursor++;
-        if (index >= lanes.length) return;
-        results[index] = await this.runLane(lanes[index], opts);
-      }
-    };
+      const worker = async (): Promise<void> => {
+        while (true) {
+          const index = cursor++;
+          if (index >= lanes.length) return;
+          // Checked before each lane, so cancelling stops the queue rather
+          // than only the lane that happens to be running.
+          if (signal.aborted) {
+            results[index] = abandoned(lanes[index], opts, 'Meridian stopped before this lane started');
+            continue;
+          }
+          results[index] = await this.runLane(lanes[index], { ...opts, signal });
+        }
+      };
 
-    await Promise.all(Array.from({ length: concurrency }, () => worker()));
-    return results;
+      await Promise.all(Array.from({ length: concurrency }, () => worker()));
+      return results;
+    });
   }
 
   private async runLane(lane: Lane, opts: ParallelOptions): Promise<LaneRun> {

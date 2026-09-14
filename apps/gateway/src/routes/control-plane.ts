@@ -304,6 +304,9 @@ export async function registerControlPlaneRoutes(server: FastifyInstance, app: A
       // on a per-token rate card. Saying so beats presenting a floor as a total.
       costKnown: report.costKnown,
       maxCostUsd: report.maxCostUsd,
+      // What the run undertook before probing, which is what the ceiling was
+      // compared against. Always at least `cost`, usually well above it.
+      committedUsd: report.committedUsd,
       durationMs: report.finishedAt - report.startedAt,
       skipped: report.skipped,
       models: report.reports.map((r) => ({
