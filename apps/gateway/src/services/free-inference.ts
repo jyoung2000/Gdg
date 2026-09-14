@@ -13,7 +13,7 @@ import {
   type RankOptions,
   type RankResult,
 } from '@meridian/model-sdk';
-import { DiscoveryScheduler } from '@meridian/control-sdk';
+import { DiscoveryScheduler, type SchedulePersistence } from '@meridian/control-sdk';
 
 /**
  * The free-inference discovery engine, as a service.
@@ -48,6 +48,13 @@ export interface FreeInferenceDeps {
   fetchImpl?: typeof fetch;
   now?: () => number;
   sources?: DiscoverySource[];
+  /**
+   * Where dataset-refresh pacing is kept between runs.
+   *
+   * Absent in tests, which want a clean scheduler; present in the gateway,
+   * where a restart must not reset a backoff.
+   */
+  persistence?: SchedulePersistence;
 }
 
 export interface SourceStatus {
@@ -96,6 +103,7 @@ export class FreeInferenceService {
       baseBackoffMs: 5 * 60_000,
       maxBackoffMs: 12 * 60 * 60_000,
       now: () => this.now(),
+      persistence: deps.persistence,
     });
   }
 

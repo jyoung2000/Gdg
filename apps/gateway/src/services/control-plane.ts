@@ -11,6 +11,7 @@ import {
 import type { ModelRegistry } from '@meridian/model-sdk';
 import type { McpManager } from '@meridian/mcp-sdk';
 import type { Store } from '../db/store.js';
+import { schedulePersistence } from './schedule-store.js';
 
 /**
  * The AI control plane, bound to the gateway's persistence.
@@ -83,6 +84,7 @@ export async function createAIControlPlane(opts: {
     minIntervalMs: 5 * 60_000,
     baseBackoffMs: 30_000,
     maxBackoffMs: 60 * 60_000,
+    persistence: schedulePersistence(store, 'provider-discovery'),
   });
 
   return { skills, profiles, scheduler };

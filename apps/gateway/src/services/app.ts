@@ -33,6 +33,7 @@ import { Store, defaultPreferences } from '../db/store.js';
 import { Discovery } from './discovery.js';
 import { VerificationService } from './verification.js';
 import { CatalogSync } from './catalog-sync.js';
+import { schedulePersistence } from './schedule-store.js';
 import { FreeInferenceService } from './free-inference.js';
 import { PriceBookService } from './price-book.js';
 import { EventBus, type ServerEvent } from './events.js';
@@ -310,6 +311,9 @@ export class App {
         if (!providers.descriptor(providerId)) return null;
         return credentials.resolve({ providerId }, true).credential !== null;
       },
+      // Dataset refresh pacing outlives the process. These are other people's
+      // servers, and a restart is not a reason to stop being careful with them.
+      persistence: schedulePersistence(store, 'free-inference'),
     });
     await freeInference.refresh({ offline: true, existingIds: new Set(PROVIDER_CATALOG.map((p) => p.id)) });
     for (const d of providers.list()) providers.setCredentialed(d.id, credentials.hasAny(d.id));

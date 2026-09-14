@@ -19,6 +19,23 @@ export interface ProviderSchedule {
   lastError: string | null;
 }
 
+/**
+ * Somewhere to keep pacing state between processes.
+ *
+ * The scheduler is deliberately ignorant of how — it is used by the gateway
+ * over SQLite and by tests over nothing at all — but it is not ignorant of
+ * whether. Backoff that resets on every boot is not backoff, and the restart
+ * is most likely exactly when a provider is failing.
+ */
+export interface SchedulePersistence {
+  /** Everything previously written. Called once, at construction. */
+  load(): ProviderSchedule[];
+  /** Write one provider's state. Called on every change. */
+  save(schedule: ProviderSchedule): void;
+  /** Forget one provider, e.g. after an operator clears its pause. */
+  remove(providerId: string): void;
+}
+
 export interface SchedulerOptions {
   /** Never re-query the same provider more often than this. */
   minIntervalMs?: number;
@@ -30,6 +47,11 @@ export interface SchedulerOptions {
   now?: () => number;
   /** Injectable for deterministic tests; defaults to Math.random. */
   random?: () => number;
+  /**
+   * Where pacing state is kept across restarts. In-memory only when absent,
+   * which is right for a test and wrong for a running gateway.
+   */
+  persistence?: SchedulePersistence;
 }
 
 export class DiscoveryScheduler {
@@ -39,6 +61,7 @@ export class DiscoveryScheduler {
   private readonly maxConsecutiveFailures: number;
   private readonly now: () => number;
   private readonly random: () => number;
+  private readonly persistence: SchedulePersistence | null;
   private readonly state = new Map<string, ProviderSchedule>();
 
   constructor(opts: SchedulerOptions = {}) {
@@ -48,6 +71,15 @@ export class DiscoveryScheduler {
     this.maxConsecutiveFailures = opts.maxConsecutiveFailures ?? 6;
     this.now = opts.now ?? (() => Date.now());
     this.random = opts.random ?? Math.random;
+    this.persistence = opts.persistence ?? null;
+    // Pick up where the last process left off. A provider that was three
+    // failures into a backoff is still three failures into it.
+    for (const saved of this.persistence?.load() ?? []) this.state.set(saved.providerId, saved);
+  }
+
+  /** Write one provider's state back, if anywhere is listening. */
+  private persist(s: ProviderSchedule): void {
+    this.persistence?.save(s);
   }
 
   scheduleOf(providerId: string): ProviderSchedule {
@@ -112,6 +144,7 @@ export class DiscoveryScheduler {
   markAttempt(providerId: string): void {
     const s = this.scheduleOf(providerId);
     s.lastAttemptAt = this.now();
+    this.persist(s);
   }
 
   markSuccess(providerId: string): void {
@@ -122,6 +155,7 @@ export class DiscoveryScheduler {
     s.consecutiveFailures = 0;
     s.nextEligibleAt = now + this.minIntervalMs;
     s.lastError = null;
+    this.persist(s);
   }
 
   markFailure(providerId: string, error: string): void {
@@ -134,10 +168,14 @@ export class DiscoveryScheduler {
     // Jitter keeps several providers that failed together from retrying in
     // lockstep and re-creating the same burst.
     s.nextEligibleAt = now + step * (0.75 + this.random() * 0.5);
+    this.persist(s);
   }
 
   /** Clear the failure pause for a provider, e.g. after a credential change. */
   reset(providerId: string): void {
     this.state.delete(providerId);
+    // From the store too, or the pause would come back on the next boot and
+    // the operator's fix would look like it had not worked.
+    this.persistence?.remove(providerId);
   }
 }

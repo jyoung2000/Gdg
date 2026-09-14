@@ -32,6 +32,7 @@ import {
 } from '@meridian/shared';
 import type { CredentialStore } from '@meridian/routing-sdk';
 import type { WorkspaceCheckpoint } from '@meridian/agent-sdk';
+import type { ProviderSchedule } from '@meridian/control-sdk';
 import { bool, int, json, type DB } from './database.js';
 import { SecretBox, generateApiKey, hashApiKey, hashPassword, verifyPassword } from './crypto.js';
 
@@ -818,6 +819,57 @@ export class Store implements CredentialStore {
       durationMs: Number(r.duration_ms),
       at: Number(r.at),
     }));
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Discovery pacing                                                 */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Everything one scheduler knows about how hard it has been pushing.
+   *
+   * Read once, at construction. Backoff and the consecutive-failure pause are
+   * the whole point: a gateway that restarts — a crash loop, a container
+   * policy, a desktop app reopened — used to come back up having forgotten
+   * that a provider had just rate-limited it six times, and query it again
+   * immediately.
+   */
+  loadDiscoverySchedules(scope: string): ProviderSchedule[] {
+    const rows = this.db
+      .prepare(
+        `SELECT provider_id, last_attempt_at, last_success_at, consecutive_failures, next_eligible_at, last_error
+           FROM discovery_schedule WHERE scope = ?`,
+      )
+      .all(scope) as Record<string, unknown>[];
+    return rows.map((r) => ({
+      providerId: String(r.provider_id),
+      lastAttemptAt: r.last_attempt_at == null ? null : Number(r.last_attempt_at),
+      lastSuccessAt: r.last_success_at == null ? null : Number(r.last_success_at),
+      consecutiveFailures: Number(r.consecutive_failures ?? 0),
+      nextEligibleAt: Number(r.next_eligible_at ?? 0),
+      lastError: r.last_error == null ? null : String(r.last_error),
+    }));
+  }
+
+  saveDiscoverySchedule(scope: string, s: ProviderSchedule): void {
+    this.db
+      .prepare(
+        `INSERT INTO discovery_schedule
+           (scope, provider_id, last_attempt_at, last_success_at, consecutive_failures, next_eligible_at, last_error, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(scope, provider_id) DO UPDATE SET
+           last_attempt_at = excluded.last_attempt_at,
+           last_success_at = excluded.last_success_at,
+           consecutive_failures = excluded.consecutive_failures,
+           next_eligible_at = excluded.next_eligible_at,
+           last_error = excluded.last_error,
+           updated_at = excluded.updated_at`,
+      )
+      .run(scope, s.providerId, s.lastAttemptAt, s.lastSuccessAt, s.consecutiveFailures, s.nextEligibleAt, s.lastError, Date.now());
+  }
+
+  deleteDiscoverySchedule(scope: string, providerId: string): void {
+    this.db.prepare('DELETE FROM discovery_schedule WHERE scope = ? AND provider_id = ?').run(scope, providerId);
   }
 
   /* ---------------------------------------------------------------- */
