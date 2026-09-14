@@ -199,6 +199,50 @@ describe('Database upgrades', () => {
     });
   });
 
+  it('refuses a newer database before applying anything of its own', async () => {
+    withDir((dir) => {
+      const path = join(dir, 'diverged.db');
+
+      // A newer release that also renamed one of this build's files — two
+      // branches that both used the same number, a hotfix applied out of band,
+      // a migration renamed in review. The database is ahead AND this build
+      // has something it lacks, which is the case the ordering decides.
+      const newer = join(dir, 'migrations-newer');
+      mkdirSync(newer, { recursive: true });
+      for (const f of ALL.slice(0, -1)) copyFileSync(join(MIGRATIONS, f), join(newer, f));
+      writeFileSync(join(newer, '900_from_the_future.sql'), 'CREATE TABLE IF NOT EXISTS future_feature (id TEXT PRIMARY KEY);\n');
+      openWith(path, newer).close();
+
+      const raw = new Database(path);
+      const namesBefore = (raw.prepare('SELECT name FROM _migrations').all() as { name: string }[]).map((r) => r.name).sort();
+      raw.close();
+
+      assert.throws(
+        () => openWith(path, MIGRATIONS),
+        (e: Error) => {
+          assert.match(e.message, /newer version of Meridian/, `got: ${e.message}`);
+          assert.match(e.message, /without applying anything/, 'and it must say it changed nothing');
+          return true;
+        },
+      );
+
+      // The point of the ordering: nothing of this build's was written into a
+      // schema it does not understand. Applying first and refusing second left
+      // the database in a state neither build had ever produced.
+      const after = new Database(path);
+      try {
+        const namesAfter = (after.prepare('SELECT name FROM _migrations').all() as { name: string }[]).map((r) => r.name).sort();
+        assert.deepEqual(namesAfter, namesBefore, 'a refused database must be left byte-for-byte as it was found');
+        assert.ok(
+          !namesAfter.includes(ALL[ALL.length - 1]),
+          `this build's own newest migration must not have been applied to a database it refused`,
+        );
+      } finally {
+        after.close();
+      }
+    });
+  });
+
   it('lets two processes start at once without a spurious migration failure', async () => {
     await withDirAsync(async (dir) => {
       // Two real processes, released into openDatabase at the same instant

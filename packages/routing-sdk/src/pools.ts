@@ -280,6 +280,20 @@ export class PoolManager {
     this.changed(r);
   }
 
+  /**
+   * Forget a reservation entirely.
+   *
+   * Cancelling keeps the row so the window's history survives; deleting is the
+   * operator saying it should never have existed. The store had a delete and
+   * the manager did not, so the API deleted the row and went on listing the
+   * reservation from memory until the next restart — and, worse, went on
+   * enforcing its budget and concurrency ceiling against calls nobody had
+   * reserved for.
+   */
+  forgetReservation(id: string): boolean {
+    return this.reservations.delete(id);
+  }
+
   cancelReservation(id: string): boolean {
     const r = this.reservations.get(id);
     if (!r) return false;

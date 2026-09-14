@@ -811,6 +811,15 @@ export class Store implements CredentialStore {
              WHERE status = 'running' AND task_id IN (${holes})`,
         )
         .run(at, ...ids);
+      // And the ones that never started. A failed task above a queue of steps
+      // still marked pending reads as work that is about to resume, and
+      // nothing will ever pick them up — the same unfinished story the task
+      // row told, one level down and one status along. 'skipped' rather than
+      // 'failed': they were not attempted, and saying they failed would blame
+      // a model that never saw them.
+      this.db
+        .prepare(`UPDATE task_steps SET status = 'skipped', finished_at = ? WHERE status = 'pending' AND task_id IN (${holes})`)
+        .run(at, ...ids);
     });
     tx();
 

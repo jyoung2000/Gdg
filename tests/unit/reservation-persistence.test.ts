@@ -114,6 +114,32 @@ describe('Reservation spend survives a restart', () => {
     });
   });
 
+  it('stops enforcing a reservation that was deleted', () => {
+    withStore((store) => {
+      store.savePool(POOL);
+      const pools = build(store);
+      pools.addReservation(reservation());
+      pools.recordSpend(POOL.id, 0.95);
+      assert.ok(pools.capacityBlock(POOL.id, 0.5) !== null, 'the reservation must bind while it exists');
+
+      // The API does both: cancel, forget, delete. Only the store delete
+      // existed, so the manager kept the reservation in memory and went on
+      // enforcing a budget nobody had reserved — while the API reported it
+      // deleted and stopped listing it from the database.
+      pools.cancelReservation('res_1');
+      pools.forgetReservation('res_1');
+      store.deleteReservation('res_1');
+
+      assert.equal(pools.listReservations().length, 0, 'a deleted reservation must not still be listed');
+      assert.equal(
+        pools.capacityBlock(POOL.id, 0.5),
+        null,
+        'and must not still be refusing calls against a window that no longer exists',
+      );
+      assert.equal(build(store).listReservations().length, 0, 'and it must stay gone across a restart');
+    });
+  });
+
   it('keeps a cancelled reservation cancelled', () => {
     withStore((store) => {
       store.savePool(POOL);

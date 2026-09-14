@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig, newId, type AgentTask } from '@meridian/shared';
+import { loadConfig, newId, type AgentTask, type TaskStep } from '@meridian/shared';
 import { newTask } from '@meridian/agent-sdk';
 import { startMockProvider } from '../helpers/mock-provider.js';
 import { App } from '../../apps/gateway/src/services/app.js';
@@ -103,6 +103,53 @@ describe('Tasks interrupted by a restart', () => {
       assert.equal(untouched?.result, 'all good');
     } finally {
       await second.stop();
+    }
+  });
+
+  it('leaves no step of an interrupted task still waiting its turn', async () => {
+    const app = await App.create(config());
+    await app.start();
+    const stranded = task({ status: 'running' });
+    app.store.saveTask(stranded);
+    const step = (id: string, status: 'running' | 'pending' | 'completed', order: number): TaskStep => ({
+      id,
+      taskId: stranded.id,
+      label: id,
+      role: 'implementer',
+      status,
+      startedAt: status === 'pending' ? null : 1,
+      finishedAt: status === 'completed' ? 2 : null,
+      summary: null,
+      modelId: null,
+      providerId: null,
+      latencyMs: null,
+      usage: null,
+      toolCallCount: 0,
+      filesTouched: [],
+      error: null,
+      fallbackEvents: [],
+      order,
+    });
+    app.store.saveStep(step('stp_done', 'completed', 0));
+    app.store.saveStep(step('stp_running', 'running', 1));
+    app.store.saveStep(step('stp_waiting', 'pending', 2));
+    await app.stop();
+
+    const next = await App.create(config());
+    await next.start();
+    try {
+      const steps = Object.fromEntries(next.store.listSteps(stranded.id).map((st) => [st.id, st]));
+      assert.equal(steps.stp_running?.status, 'failed', 'the step that was mid-flight failed with its task');
+      // The one that was still queued. A failed task above a step marked
+      // pending reads as work about to resume, and nothing will ever pick it
+      // up. 'skipped', not 'failed': it was never attempted, and calling it a
+      // failure would blame a model that never saw it.
+      assert.equal(steps.stp_waiting?.status, 'skipped', 'a step that never started must not be left waiting forever');
+      assert.ok(steps.stp_waiting?.finishedAt, 'and it must have an ending like everything else');
+      assert.equal(steps.stp_done?.status, 'completed', 'and a step that finished is left exactly as it was');
+      assert.equal(steps.stp_done?.finishedAt, 2);
+    } finally {
+      await next.stop();
     }
   });
 

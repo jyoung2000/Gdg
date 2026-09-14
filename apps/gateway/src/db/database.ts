@@ -183,14 +183,10 @@ export function openDatabase(path: string, logger: Logger): DB {
   const dir = migrationsDir();
   const files = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
 
-  // Only take a write lock when there is something to do. A gateway starting
-  // against an up-to-date database should not queue behind one that is
-  // mid-upgrade.
   const before = appliedMigrations(db);
-  if (files.some((f) => !before.has(f))) applyPending(db, dir, files, logger);
 
   /**
-   * Refuse to run against a database a newer build made.
+   * Refuse to run against a database a newer build made — before touching it.
    *
    * SQLite will happily open it, and every query against a table this build
    * still recognises will appear to work — which is the problem. An older
@@ -198,17 +194,28 @@ export function openDatabase(path: string, logger: Logger): DB {
    * it does not know about, and writes rows the newer build cannot make sense
    * of. The damage is silent and accumulates, and the usual way to arrive here
    * is a rollback after a bad upgrade, when the data matters most.
+   *
+   * The order matters and used to be the other way round. If this build also
+   * has a migration the newer database lacks — a renamed file, a hotfix
+   * applied out of band, two branches that both used 012 — the upgrade ran
+   * first and wrote into a schema it did not understand, and only then
+   * announced that it should not have opened the database at all.
    */
-  const unknown = [...appliedMigrations(db)].filter((name) => !files.includes(name)).sort();
+  const unknown = [...before].filter((name) => !files.includes(name)).sort();
   if (unknown.length) {
     db.close();
     throw new Error(
       `This database was written by a newer version of Meridian. It records ${unknown.length} migration(s) this build does not have ` +
-        `(${unknown.join(', ')}), so the schema is ahead of the code. Refusing to open it: running an older build against a newer ` +
-        `database corrupts data quietly rather than loudly. Upgrade Meridian to a version that includes those migrations, or restore ` +
-        `a backup taken before the upgrade.`,
+        `(${unknown.join(', ')}), so the schema is ahead of the code. Refusing to open it without applying anything: running an older ` +
+        `build against a newer database corrupts data quietly rather than loudly. Upgrade Meridian to a version that includes those ` +
+        `migrations, or restore a backup taken before the upgrade.`,
     );
   }
+
+  // Only take a write lock when there is something to do. A gateway starting
+  // against an up-to-date database should not queue behind one that is
+  // mid-upgrade.
+  if (files.some((f) => !before.has(f))) applyPending(db, dir, files, logger);
 
   // The long timeout exists for the upgrade, which is over. Ordinary row
   // contention should surface as an error in seconds, not be absorbed for half

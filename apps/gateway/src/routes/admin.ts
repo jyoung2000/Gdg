@@ -821,7 +821,12 @@ export async function registerAdminRoutes(server: FastifyInstance, app: App): Pr
   });
 
   server.delete<{ Params: { id: string } }>('/api/reservations/:id', async (req) => {
+    // Both, and in this order. Cancelling first stops it applying to anything
+    // in flight; forgetting it drops it from the manager's own map, which the
+    // store delete alone never did — so the API went on listing and enforcing
+    // a reservation it had just reported deleted.
     app.pools.cancelReservation(req.params.id);
+    app.pools.forgetReservation(req.params.id);
     const removed = app.store.deleteReservation(req.params.id);
     return { removed };
   });
