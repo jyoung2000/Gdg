@@ -109,7 +109,7 @@ export class MediaEngine {
 
     void this.execute(job.id, opts, async (ac) => {
       const res = await this.deps.executor.image(
-        this.aiRequest('image', 'image-generation', req.prompt, opts),
+        this.aiRequest('image', 'image-generation', req.prompt, opts, req.n ?? 1),
         { ...req, width, height, signal: ac.signal },
         { signal: ac.signal, timeoutMs: 180_000 },
       );
@@ -133,7 +133,9 @@ export class MediaEngine {
 
     void this.execute(job.id, opts, async (ac) => {
       const res = await this.deps.executor.video(
-        this.aiRequest('video', 'video-generation', req.prompt, opts),
+        // Video is metered by the second on every provider that meters it at
+        // all, so a thirty-second clip must not reserve like a five-second one.
+        this.aiRequest('video', 'video-generation', req.prompt, opts, Math.max(1, Math.ceil(req.durationSec ?? 1))),
         { ...req, width, height, signal: ac.signal },
         // Video routinely takes minutes; a chat-length timeout would abandon
         // work that was about to succeed.
@@ -204,11 +206,23 @@ export class MediaEngine {
 
   /* ---------------------------------------------------------------- */
 
-  private aiRequest(modality: AIRequest['modality'], taskType: AIRequest['taskType'], prompt: string, opts: GenerateOptions): AIRequest {
+  /**
+   * @param units Billable units this job will produce — images, or seconds of
+   *   video or speech. The routing estimate and the budget reservation are both
+   *   sized from it, so `n: 8` reserves eight images rather than one.
+   */
+  private aiRequest(
+    modality: AIRequest['modality'],
+    taskType: AIRequest['taskType'],
+    prompt: string,
+    opts: GenerateOptions,
+    units = 1,
+  ): AIRequest {
     return {
       modality,
       taskType,
       prompt,
+      billableUnits: units,
       model: opts.model ?? null,
       provider: opts.provider ?? null,
       pool: opts.pool ?? defaultPoolFor(modality),

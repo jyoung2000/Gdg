@@ -461,19 +461,52 @@ function CapabilityInspector({
    * dialog rendered "Verified by a live call" for a label no model could ever
    * earn. This button is the live call.
    */
+  /**
+   * Whether probing this model costs money, which decides both what the button
+   * says and whether the run is allowed to spend.
+   */
+  const chargeable = !['FREE', 'LOCAL', 'SELF_HOSTED', 'BYOK'].includes(data.pricing.kind);
+
   const probe = async () => {
     setProbing(true);
     try {
-      const res = await api.verifyModel(data.modelId);
+      // A model that can charge is never probed without the run saying so.
+      // Sending nothing meant the gateway refused and the UI reported "0
+      // verified" — a refusal for money rendered as an absence of capability.
+      const res = await api.verifyModel(data.modelId, { allowPaid: chargeable });
+
+      // Why nothing happened comes first. `skipped` is where the gateway
+      // explains itself, and it used to be dropped on the floor.
+      const refusal = res.skipped.find((s) => s.modelId === data.modelId);
+      if (res.probed === 0) {
+        toast({
+          level: 'warn',
+          message: 'This model was not probed',
+          detail: refusal?.reason ?? 'The gateway gave no reason, which is itself worth reporting.',
+        });
+        onChanged();
+        return;
+      }
+
       const verdicts = res.models[0]?.results ?? [];
       const verified = verdicts.filter((r) => r.outcome === 'supported').length;
+      const refuted = verdicts.filter((r) => r.outcome === 'unsupported').length;
       const undecided = verdicts.filter((r) => r.outcome === 'inconclusive').length;
+      const spent = res.cost > 0 ? `${res.costKnown ? '' : 'at least '}$${res.cost.toFixed(4)} spent` : null;
       toast({
         level: verified > 0 ? 'success' : 'info',
         message: `${verified} capabilit${verified === 1 ? 'y' : 'ies'} verified by a live call`,
-        // An inconclusive probe changed nothing, and saying so is the
-        // difference between "we checked and it cannot" and "we could not tell".
-        detail: undecided ? `${undecided} probe(s) reached no verdict and recorded nothing` : undefined,
+        // Every outcome, not just the happy one. An inconclusive probe changed
+        // nothing, and saying so is the difference between "we checked and it
+        // cannot" and "we could not tell".
+        detail:
+          [
+            refuted ? `${refuted} established as unsupported` : null,
+            undecided ? `${undecided} reached no verdict and recorded nothing` : null,
+            spent,
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined,
       });
       onChanged();
     } catch (e) {
@@ -508,8 +541,18 @@ function CapabilityInspector({
           <div className="mrd-hstack" style={{ gap: 'var(--space-2)', alignItems: 'baseline' }}>
             <h3 className="mrd-heading">Capabilities</h3>
             <div className="mrd-spacer" />
-            <Button size="sm" variant="secondary" onClick={() => void probe()} disabled={probing}>
-              {probing ? 'Probing…' : 'Verify with a live call'}
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void probe()}
+              disabled={probing}
+              title={
+                chargeable
+                  ? `This model charges (${data.pricing.kind}). Probing sends a few tiny real requests and costs whatever they cost.`
+                  : 'This model is free to call. Probing sends a few tiny real requests.'
+              }
+            >
+              {probing ? 'Probing…' : chargeable ? 'Verify with a live call (costs money)' : 'Verify with a live call'}
             </Button>
           </div>
           <p className="mrd-caption mrd-secondary">

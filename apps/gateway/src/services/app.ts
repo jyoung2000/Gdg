@@ -140,6 +140,8 @@ export class App {
   /** Live workspaces, keyed by workspace id, so change state survives requests. */
   private readonly workspaces = new Map<string, Workspace>();
   private readonly timers: NodeJS.Timeout[] = [];
+  /** Detached background work still running, so shutdown can flush it. */
+  private readonly pending = new Set<Promise<void>>();
   /** Recent latencies per model; p95 and jitter need the distribution. */
   private readonly latencyWindows = new Map<string, number[]>();
 
@@ -713,9 +715,7 @@ export class App {
     // measured in hours.
     const refreshDatasets = () =>
       this.freeInference.refresh({ existingIds: new Set(PROVIDER_CATALOG.map((p) => p.id)) });
-    void refreshDatasets().catch((e: unknown) =>
-      this.logger.warn('the first discovery refresh failed', { errorCode: e instanceof Error ? e.message : String(e) }),
-    );
+    void this.background('the first discovery refresh', refreshDatasets);
     this.every(60 * 60_000, refreshDatasets, 'discovery refresh');
 
     /**
@@ -853,12 +853,56 @@ export class App {
     return { complete: steps.every((s) => s.done || s.id === 'sandbox'), steps };
   }
 
+  /**
+   * Run detached background work, keeping hold of it.
+   *
+   * `void fn()` on its own is how a periodic task becomes invisible: shutdown
+   * cannot see it, so the store closes underneath a discovery pass that is
+   * halfway through writing its pacing state, and the backoff migration 011
+   * exists to preserve is lost exactly when it matters. Every such promise is
+   * tracked here and awaited, bounded, by `stop`.
+   */
+  private background<T>(label: string, fn: () => Promise<T>): Promise<void> {
+    const work = fn()
+      .then(() => undefined)
+      .catch((e: unknown) => {
+        this.logger.warn(`${label} failed`, { errorCode: e instanceof Error ? e.message : String(e) });
+      })
+      .finally(() => {
+        this.pending.delete(work);
+      });
+    this.pending.add(work);
+    return work;
+  }
+
   private every(ms: number, fn: () => Promise<unknown>, label: string): void {
     const t = setInterval(() => {
-      void fn().catch((e: unknown) => this.logger.warn(`${label} failed`, { errorCode: e instanceof Error ? e.message : String(e) }));
+      void this.background(label, fn);
     }, ms);
     t.unref?.();
     this.timers.push(t);
+  }
+
+  /**
+   * Wait for tracked background work, bounded.
+   *
+   * A shutdown a wedged HTTP fetch can hold open indefinitely is not a
+   * shutdown; a shutdown that abandons a half-written pacing row is not one
+   * either. Returns false when the wait timed out, so the caller can say so
+   * rather than implying everything was flushed.
+   */
+  private async drain(graceMs: number): Promise<boolean> {
+    if (!this.pending.size) return true;
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), graceMs);
+      timer.unref?.();
+    });
+    try {
+      return await Promise.race([Promise.allSettled([...this.pending]).then(() => true), timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   async stop(): Promise<void> {
@@ -877,6 +921,14 @@ export class App {
     // reconciliation is the backstop, and it is honest about having run.
     if (!(await this.orchestrator.settle(5_000))) {
       this.logger.warn('shutting down with tasks still in flight; they will be closed out on the next start');
+    }
+
+    // Background passes next, before anything they write to is torn down. A
+    // discovery refresh halfway through recording its pacing state is the case
+    // this exists for: the row it was about to write is the one that keeps the
+    // next boot from hammering a provider that had just rate-limited us.
+    if (!(await this.drain(5_000))) {
+      this.logger.warn('shutting down with background work still running; some state may not have been flushed');
     }
 
     // Stop every computer session first: an orphaned backend process holding

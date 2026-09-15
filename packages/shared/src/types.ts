@@ -465,6 +465,18 @@ export type RoutingMode = (typeof ROUTING_MODES)[number];
 /** Normalised request handed to the router. */
 export interface AIRequest {
   modality: Modality;
+  /**
+   * Billable units this one request will produce.
+   *
+   * Four images is four charges, and a thirty-second clip is not a five-second
+   * one. Both the ranking estimate and the budget reservation assumed exactly
+   * one, so a request for `n: 8` reserved an eighth of what it was about to
+   * spend and cleared a budget it then blew straight through.
+   *
+   * Counted in whatever the model's rate card meters: images for image
+   * generation, seconds for video, one for an ordinary chat call.
+   */
+  billableUnits?: number;
   taskType: TaskType;
   prompt?: string;
   messages?: ChatMessage[];

@@ -174,6 +174,19 @@ interface AdapterMethodProbe {
  * Every rejection is recorded with its rule so the "Why this model?" panel can
  * explain not just what was chosen but what was ruled out and why.
  */
+/**
+ * How many billable units this request will produce.
+ *
+ * Floored at one and capped, because the figure comes from a request body: a
+ * caller asking for a million images must not make the estimate itself the
+ * denial of service. The cap is far above any legitimate request.
+ */
+function billableUnits(req: AIRequest): number {
+  const declared = req.billableUnits;
+  if (declared == null || !Number.isFinite(declared)) return 1;
+  return Math.min(Math.max(1, Math.ceil(declared)), 10_000);
+}
+
 export class Router {
   private readonly deps: RouterDeps;
   private readonly opts: Required<Pick<RouterOptions, 'fallbackDepth'>> & RouterOptions;
@@ -597,7 +610,10 @@ export class Router {
   private estimateCall(m: ModelDescriptor, req: AIRequest): CallEstimate {
     if (isFree(m.pricing)) return estimateCall(m.pricing, { promptTokens: 0, completionTokens: 0 });
     if (req.modality === 'image' || req.modality === 'video') {
-      return estimateCall(m.pricing, { promptTokens: 0, completionTokens: 0, requests: 1 });
+      // Every unit the request will produce, not one. Eight images is eight
+      // charges, and reserving one of them cleared a budget the call then
+      // blew straight through.
+      return estimateCall(m.pricing, { promptTokens: 0, completionTokens: 0, requests: billableUnits(req) });
     }
     const promptTokens = estimatePromptTokens(req);
     // Assume a response roughly a third the length of the prompt, floored so a
@@ -625,7 +641,10 @@ export class Router {
   private reserveCall(m: ModelDescriptor, req: AIRequest): CallEstimate {
     if (isFree(m.pricing)) return estimateCall(m.pricing, { promptTokens: 0, completionTokens: 0 });
     if (req.modality === 'image' || req.modality === 'video') {
-      return estimateCall(m.pricing, { promptTokens: 0, completionTokens: 0, requests: 1 });
+      // Every unit the request will produce, not one. Eight images is eight
+      // charges, and reserving one of them cleared a budget the call then
+      // blew straight through.
+      return estimateCall(m.pricing, { promptTokens: 0, completionTokens: 0, requests: billableUnits(req) });
     }
     const promptTokens = estimatePromptTokens(req);
     const completionTokens = Math.max(req.maxTokens ?? RESERVE_COMPLETION_TOKENS, Math.round(promptTokens / 3));

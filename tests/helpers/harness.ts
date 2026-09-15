@@ -105,14 +105,27 @@ export function createHarness(opts: {
   allowPaid?: boolean;
   /** The operator's saved routing preferences, wired as the gateway wires them. */
   preferences?: Partial<UserPreferences> | null;
+  /** Declare image/video/speech support on the adapter, for media routing tests. */
+  media?: boolean;
 } = { providers: [], models: [] }): Harness {
   let clock = 1_700_000_000_000;
   const now = (): number => clock;
 
   const providers = new ProviderRegistry();
+  // `supports` is the adapter's declared ceiling, and the router refuses a
+  // modality the adapter does not implement. Image and video are opt-in so the
+  // default harness keeps the honest "adapter cannot draw" behaviour that other
+  // tests rely on, while a media test can ask for an adapter that can.
   providers.registerAdapter('openai-compatible', (d) =>
     new OpenAICompatibleAdapter(d, {
-      supports: { chat: true, streaming: true, tools: true, embedding: true, discovery: true },
+      supports: {
+        chat: true,
+        streaming: true,
+        tools: true,
+        embedding: true,
+        discovery: true,
+        ...(opts.media ? { image: true, video: true, speech: true, transcription: true } : {}),
+      },
     }),
   );
   for (const d of opts.providers) {

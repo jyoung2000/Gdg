@@ -650,13 +650,26 @@ export const api = {
   confirmCapability: (modelId: string, capability: string, supported: boolean) =>
     post<{ model: unknown }>(`/api/models/${encodeURIComponent(modelId)}/capabilities`, { capability, supported }),
   /** Probe one model with real requests and record what came back. */
-  verifyModel: (modelId: string) =>
+  /**
+   * Probe one model with real requests.
+   *
+   * `allowPaid` has to be sent: the gateway refuses to probe a model that can
+   * charge unless the run asks for it, and a UI that never asked rendered the
+   * refusal as "nothing found". `skipped` has to be read for the same reason —
+   * it is where the gateway says why it did nothing.
+   */
+  verifyModel: (modelId: string, opts: { allowPaid?: boolean; maxCostUsd?: number } = {}) =>
     post<{
       probed: number;
       claimsWritten: number;
       inconclusive: number;
+      probeCalls: number;
+      cost: number;
+      costKnown: boolean;
+      maxCostUsd: number;
+      skipped: { modelId: string; reason: string }[];
       models: { modelId: string; results: { capability: string; outcome: string; detail: string; latencyMs: number }[] }[];
-    }>('/api/verification/run', { modelIds: [modelId] }),
+    }>('/api/verification/run', { modelIds: [modelId], ...opts }),
   discoverModels: (force = false) => post<{ providers: number; models: number; skipped: string[] }>('/api/models/discover', { force }),
   modelChanges: (limit = 50) => get<{ changes: ModelChangeView[] }>(`/api/models/changes?limit=${limit}`),
   discoveryStatus: () => get<{ schedules: DiscoveryScheduleView[]; intervalMs: number }>('/api/models/discovery-status'),
