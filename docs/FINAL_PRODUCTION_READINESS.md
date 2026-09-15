@@ -76,7 +76,7 @@ PARTIAL, 35 BLOCKED_EXTERNAL, 0 MISSING, 0 STUB, 0 FAILED.**
 | Unknown price never treated as free | VERIFIED | `tests/router/cost-honesty.test.ts` | — |
 | Credential isolation, SSRF, redaction | VERIFIED | Gate `security`, 8 tests, driven from the attacker's side | — |
 | Persistence, migrations, upgrade path | VERIFIED | `tests/unit/migrations.test.ts`, incl. a real previous-release database | One version step, not a fleet |
-| Agent runtime (9 roles) | PARTIAL | 6 of 9 exercised in a real pipeline; all 9 checked for definition and selectability | orchestrator, researcher, debugger unexercised |
+| Agent runtime (9 roles) | VERIFIED | All nine executed in a real pipeline, each driven through the pipeline that selects it; a coverage assertion fails if a future role is added without one | — |
 | MCP | VERIFIED | A dependency-free MCP server in-repo, assigned to a workspace, tool call answered and recorded | — |
 | Browser + SSRF refusal | VERIFIED | Real public fetch plus refusal of loopback/RFC1918/metadata, at every redirect | — |
 | Web client, 21 screens | VERIFIED | Real Chromium, 3 viewports, both themes | — |

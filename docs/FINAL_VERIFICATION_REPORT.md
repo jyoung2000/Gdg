@@ -79,9 +79,9 @@ rows' evidence. Regenerate with `node scripts/scorecard.mjs --write`.
 <!-- scorecard:start -->
 | Status | Count | Share |
 | --- | ---: | ---: |
-| VERIFIED | 160 | 71% |
+| VERIFIED | 161 | 72% |
 | IMPLEMENTED_UNVERIFIED | 25 | 11% |
-| PARTIAL | 4 | 2% |
+| PARTIAL | 3 | 1% |
 | BLOCKED_EXTERNAL | 35 | 16% |
 | MISSING | 0 | — |
 | STUB | 0 | — |
@@ -105,7 +105,7 @@ exits non-zero if one ever is — the gate runs in CI and in
 | Routing | VERIFIED — including the guarantees, as invariants over hundreds of generated registries |
 | OpenAI-compatible API | VERIFIED for text, streaming, tools, embeddings, model listing |
 | Anthropic-compatible API | VERIFIED for text, streaming, tool use |
-| Agent runtime | VERIFIED — six of nine agents exercised in a real pipeline; the runtime around all nine is |
+| Agent runtime | VERIFIED — all nine agents executed in a real pipeline, with a coverage assertion so adding a tenth without driving it fails |
 | Sandbox | Process isolation VERIFIED; container isolation BLOCKED_EXTERNAL in this environment |
 | Security | VERIFIED — including multi-user isolation, SSRF, redaction and the event bus |
 | Persistence and upgrade | VERIFIED — a full restart, and a previous release's database carried forward |
@@ -219,7 +219,14 @@ binaries. This environment has no Docker daemon at all, so the gate now reads
 BLOCKED_EXTERNAL, which is what the run says. The process-sandbox fallback is
 verified, including the warning that says it is not a security boundary.
 
-**Six of nine agents, not nine.** The orchestrator, researcher and debugger were
+**Every agent role now runs, and something checks that.** Earlier passes left
+`orchestrator`, `browser`, `debugger` and `researcher` reachable on paper and
+never executed — every test naming them asserted the contents of a planned list,
+which tests `planPipeline` rather than the agent. All nine are now driven
+through the pipeline that selects them, and a separate assertion fails if a role
+is declared without a pipeline in that suite reaching it.
+
+** The orchestrator, researcher and debugger were
 not selected by the pipelines exercised here. They share the verified machinery;
 their own sequencing is untested, and the matrix says so.
 

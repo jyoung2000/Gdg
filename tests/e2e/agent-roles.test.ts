@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { AGENT_DEFINITIONS, AGENT_ROLES_ORDER, Orchestrator } from '@meridian/agent-sdk';
+import { AGENT_ROLES } from '@meridian/shared';
 import { PIPELINE_KINDS, loadConfig, type AgentRole, type PipelineKind } from '@meridian/shared';
 import { App } from '../../apps/gateway/src/services/app.js';
 import { createServer } from '../../apps/gateway/src/server.js';
@@ -113,7 +114,7 @@ describe('Agent roles', () => {
     assert.deepEqual(o.planPipeline('anything', 'tests').steps, ['file-finder', 'tester', 'reviewer']);
   });
 
-  it('actually runs the roles that only ever appeared in a steps array', async () => {
+  it('runs every declared agent role, not just the ones the default pipeline picks', async () => {
     // `browser`, `orchestrator` and `debugger` were reachable on paper and had
     // never been executed: every test that named them asserted the contents of
     // a planned list, which is a test of `planPipeline` rather than of the
@@ -127,7 +128,11 @@ describe('Agent roles', () => {
     assert.equal(created.statusCode, 200, created.body);
     const workspaceId = (created.json() as { workspace: { id: string } }).workspace.id;
 
-    for (const kind of ['browse', 'orchestrate', 'debug'] as const) {
+    // Every pipeline that reaches a role no other test executes. Between them
+    // these four cover all nine declared agents: browse→browser,
+    // orchestrate→orchestrator/planner/implementer, debug→debugger,
+    // research→researcher, and file-finder/tester/reviewer throughout.
+    for (const kind of ['browse', 'orchestrate', 'debug', 'research'] as const) {
       const planned = app.orchestrator.planPipeline('anything', kind).steps;
       const started = await server.inject({
         method: 'POST',
@@ -170,6 +175,23 @@ describe('Agent roles', () => {
         );
       }
     }
+  });
+
+  it('leaves no declared agent role unexercised by the suite above', () => {
+    // The claim "every agent role has actually run" is one a future pipeline
+    // change can quietly falsify — add a role, and nothing fails. This asserts
+    // the coverage itself: the union of the pipelines this file drives must be
+    // every role Meridian declares.
+    const driven = new Set<string>();
+    for (const kind of ['browse', 'orchestrate', 'debug', 'research', 'code'] as const) {
+      for (const role of app.orchestrator.planPipeline('anything', kind).steps) driven.add(role);
+    }
+    const missing = AGENT_ROLES.filter((r) => !driven.has(r));
+    assert.deepEqual(
+      missing,
+      [],
+      `these roles are declared but no pipeline in this test drives them: ${missing.join(', ')}`,
+    );
   });
 
   it('prices the pipeline the caller chose, not the one the words suggest', async () => {
