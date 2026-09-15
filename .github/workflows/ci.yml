@@ -66,6 +66,9 @@ jobs:
       - name: No known vulnerabilities in the shipped tree
         run: node scripts/check-dependencies.mjs
 
+      - name: Lint
+        run: pnpm lint
+
       - name: Typecheck
         run: pnpm typecheck
 
@@ -91,6 +94,25 @@ jobs:
 
       - name: Scorecard matches the shipped report
         run: node scripts/scorecard.mjs --check
+
+      # The release gates, as a gate rather than as a report someone reads
+      # afterwards. Writes release-readiness.json from what actually ran and
+      # exits non-zero if any gate FAILED; a gate blocked by this runner's lack
+      # of a Docker daemon is recorded as BLOCKED_EXTERNAL, never as a pass.
+      - name: Release gates
+        run: node scripts/verify-release.mjs
+
+      # Uploaded so a human can read what the run concluded without rerunning
+      # it, and `if: always()` because the interesting case is the failing one.
+      - name: Upload release readiness
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-readiness
+          path: |
+            release-readiness.json
+            docs/evidence/RELEASE.md
+          if-no-files-found: warn
 
       # The payload and its verification run on Linux too. The Windows job
       # proves the Windows payload; this proves the packaging logic itself, on

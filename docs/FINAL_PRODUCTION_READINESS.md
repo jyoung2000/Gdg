@@ -15,7 +15,7 @@ Version: **1.0.0-rc.1** · Branch: `claude/universal-ai-gateway-0hosgu`
 
 Not "production ready", and the reason is specific rather than cautious.
 
-**819 tests, 808 passing, 11 skipped, 0 failing.** Six of nine release gates
+**820 tests, 809 passing, 11 skipped, 0 failing.** Six of nine release gates
 pass. Every gate that this environment is capable of running has run and passed.
 
 Three things stand between this and production, and none of them is a code
@@ -63,7 +63,7 @@ Detail lives in [VERIFICATION_MATRIX.md](VERIFICATION_MATRIX.md),
 [PROVIDER_VERIFICATION.md](PROVIDER_VERIFICATION.md),
 [AGENT_VERIFICATION.md](AGENT_VERIFICATION.md) and
 [MODALITY_VERIFICATION.md](MODALITY_VERIFICATION.md) — 224 claims, counted by
-`node scripts/scorecard.mjs`: **160 VERIFIED, 25 IMPLEMENTED_UNVERIFIED, 4
+`node scripts/scorecard.mjs`: **161 VERIFIED, 25 IMPLEMENTED_UNVERIFIED, 3
 PARTIAL, 35 BLOCKED_EXTERNAL, 0 MISSING, 0 STUB, 0 FAILED.**
 
 | Capability | Status | Evidence | Remaining blocker |
@@ -89,10 +89,13 @@ PARTIAL, 35 BLOCKED_EXTERNAL, 0 MISSING, 0 STUB, 0 FAILED.**
 
 ## 4. Tests
 
+Taken from `release-readiness.json`, which `pnpm verify:production` writes from
+the run rather than from a figure typed here.
+
 | | Count |
 | --- | ---: |
-| Total | 819 |
-| Passed | 808 |
+| Total | 820 |
+| Passed | 809 |
 | Failed | 0 |
 | Skipped | 11 |
 | Externally blocked (gates/steps) | 4 |
@@ -218,8 +221,6 @@ over hours is unmeasured.
 
 ## 11. Known limitations
 
-- Three of nine agent roles (orchestrator, researcher, debugger) are selectable
-  and defined but have not run in a real pipeline.
 - Context optimization is integrated with agent flows; ordinary gateway chat is
   not yet measured before/after.
 - Reservations are verified sequentially and across a restart, not under
@@ -266,9 +267,8 @@ stronger — but that is not what a 1.0 claims.
    and the container-isolation suite with `MERIDIAN_SANDBOX=docker`.
 3. Windows installer built and installed on a clean machine; upgrade and
    uninstall exercised.
-4. The three unexercised agent roles driven end to end.
-5. One backup/restore drill performed and recorded.
-6. A soak run long enough to show whether anything leaks.
+4. One backup/restore drill performed and recorded.
+5. A soak run long enough to show whether anything leaks.
 
 Promote `1.0.0-rc.1` to `1.0.0` when 1–3 have been run somewhere capable of
 running them, and recorded.
