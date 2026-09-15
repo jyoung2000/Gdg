@@ -21,7 +21,7 @@
 
 import { spawn } from 'node:child_process';
 import { gateStatus, gatesPass } from './release-gates.mjs';
-import { mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -46,7 +46,11 @@ function run(cmd, args, opts = {}) {
 function totals(out) {
   const pass = Number(/^# pass (\d+)$/m.exec(out)?.[1] ?? /ℹ pass (\d+)/.exec(out)?.[1] ?? NaN);
   const fail = Number(/^# fail (\d+)$/m.exec(out)?.[1] ?? /ℹ fail (\d+)/.exec(out)?.[1] ?? NaN);
-  return { pass, fail, parsed: Number.isFinite(pass) && Number.isFinite(fail) };
+  // Skips are counted too, because a release report that says "everything
+  // passed" while quietly not running the container tests is the exact shape
+  // of false green this whole script exists to prevent.
+  const skip = Number(/^# skipped (\d+)$/m.exec(out)?.[1] ?? /ℹ skipped (\d+)/.exec(out)?.[1] ?? 0);
+  return { pass, fail, skip, parsed: Number.isFinite(pass) && Number.isFinite(fail) };
 }
 
 /** Which individual tests passed, so a gate can cite the ones that back it. */
@@ -279,7 +283,7 @@ for (const suite of SUITES) {
   process.stdout.write(`  ${ok ? `ok — ${t.pass} passed` : 'FAILED'} (${(res.ms / 1000).toFixed(1)}s)\n`);
   if (!ok) process.stdout.write(`${res.out.split('\n').slice(-30).join('\n')}\n`);
   for (const name of passedTests(res.out)) seen.add(name);
-  report.suites.push({ id: suite.id, label: suite.label, ok, pass: t.pass, fail: t.fail, ms: res.ms });
+  report.suites.push({ id: suite.id, label: suite.label, ok, pass: t.pass, fail: t.fail, skip: t.skip ?? 0, ms: res.ms });
 }
 
 /**
@@ -399,6 +403,84 @@ lines.push(
       : 'Every gate is backed by evidence from this run; the ones marked PARTIAL name what is not covered.',
 );
 lines.push('');
+
+/**
+ * The same run, as something a machine can gate on.
+ *
+ * A markdown report is for a person deciding whether to ship; this is for a
+ * pipeline deciding whether it may. Every value comes from what just ran —
+ * there is no branch here that can write a success nothing earned, and an
+ * unavailable dependency is recorded as `external-blocker`, never as a pass.
+ */
+const statusOf = (step) => {
+  if (!step) return 'not-run';
+  if (step.skipped) return 'external-blocker';
+  return step.ok ? 'verified' : 'failed';
+};
+const stepNamed = (name) => report.steps.find((x) => x.name === name);
+const gateNamed = (id) => report.gates.find((g) => g.id === id);
+const gateStatusOf = (id) => {
+  const g = gateNamed(id);
+  if (!g) return 'not-run';
+  if (g.status === 'VERIFIED') return 'verified';
+  if (g.status === 'PARTIAL') return 'partial';
+  if (g.status === 'BLOCKED_EXTERNAL') return 'external-blocker';
+  return 'failed';
+};
+
+const suiteTotals = report.suites.reduce(
+  (acc, s) => ({ passed: acc.passed + (s.pass ?? 0), failed: acc.failed + (s.fail ?? 0) }),
+  { passed: 0, failed: 0 },
+);
+/**
+ * Tests the runner declined to run, counted from the suites themselves.
+ *
+ * Node's reporter prints these; they are the container-sandbox cases that name
+ * a missing Docker daemon. Counted rather than assumed, so this figure cannot
+ * drift from what actually ran.
+ */
+const skippedTests = report.suites.reduce((n, s) => n + (s.skip ?? 0), 0);
+const externalBlockers = [
+  ...report.steps.filter((x) => x.skipped).map((x) => x.name),
+  ...report.gates.filter((g) => g.status === 'BLOCKED_EXTERNAL').map((g) => g.title),
+];
+
+/**
+ * A release candidate, not a release, until every gate that gates a release
+ * has actually run and passed here. Blocked gates hold the classification
+ * down: "we could not check" is not "it works".
+ */
+const readiness = {
+  generatedAt: report.startedAt,
+  version: JSON.parse(readFileSync(join(root, "package.json"), 'utf8')).version,
+  status: !report.ok ? 'not-ready' : externalBlockers.length ? 'release-candidate' : 'production-ready',
+  tests: { passed: suiteTotals.passed, failed: suiteTotals.failed, skipped: skippedTests, externalBlockers: externalBlockers.length },
+  build: statusOf(stepNamed('Build')),
+  typecheck: statusOf(stepNamed('Typecheck')),
+  dependencies: statusOf(stepNamed('No known vulnerabilities in the shipped tree')),
+  offlineArtefacts: statusOf(stepNamed('Offline artefacts are current and self-contained')),
+  docker: statusOf(stepNamed('Docker image builds')),
+  windows: 'external-blocker',
+  security: gateStatusOf('security'),
+  routing: gateStatusOf('routing'),
+  agents: gateStatusOf('pipeline'),
+  multimodal: gateStatusOf('multimodal'),
+  webClient: gateStatusOf('web'),
+  sandbox: gateStatusOf('sandbox'),
+  deployment: gateStatusOf('deployment'),
+  // Derived from suites that actually ran, never asserted. The upgrade path and
+  // the concurrency limits have real tests in the unit and chaos suites; a
+  // backup/restore drill is documented in docs/RELEASE_CHECKLIST.md and is not
+  // yet automated, so it says so rather than borrowing another suite's pass.
+  databaseUpgrade: report.suites.find((x) => x.id === 'unit')?.ok ? 'verified' : 'failed',
+  backupRestore: 'manual-procedure-documented',
+  loadTest: report.suites.find((x) => x.id === 'chaos')?.ok ? 'verified' : 'failed',
+  liveProviders: statusOf(stepNamed('Live provider checks')),
+  externalBlockers,
+  gates: report.gates.map((g) => ({ id: g.id, title: g.title, status: g.status })),
+};
+writeFileSync(join(root, "release-readiness.json"), `${JSON.stringify(readiness, null, 2)}\n`);
+process.stdout.write(`\nWrote release-readiness.json (status: ${readiness.status})\n`);
 
 const markdown = lines.join('\n');
 if (outPath) {

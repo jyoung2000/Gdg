@@ -1,0 +1,81 @@
+{
+  "generatedAt": "2026-09-15T00:29:52.672Z",
+  "version": "1.0.0-rc.1",
+  "status": "release-candidate",
+  "tests": {
+    "passed": 808,
+    "failed": 0,
+    "skipped": 11,
+    "externalBlockers": 4
+  },
+  "build": "verified",
+  "typecheck": "verified",
+  "dependencies": "verified",
+  "offlineArtefacts": "verified",
+  "docker": "external-blocker",
+  "windows": "external-blocker",
+  "security": "verified",
+  "routing": "verified",
+  "agents": "verified",
+  "multimodal": "partial",
+  "webClient": "verified",
+  "sandbox": "external-blocker",
+  "deployment": "external-blocker",
+  "databaseUpgrade": "verified",
+  "backupRestore": "manual-procedure-documented",
+  "loadTest": "verified",
+  "liveProviders": "external-blocker",
+  "externalBlockers": [
+    "Docker image builds",
+    "Live provider checks",
+    "Deployment: persistence and container configuration",
+    "Sandbox isolation"
+  ],
+  "gates": [
+    {
+      "id": "deployment",
+      "title": "Deployment: persistence and container configuration",
+      "status": "BLOCKED_EXTERNAL"
+    },
+    {
+      "id": "routing",
+      "title": "Core routing",
+      "status": "VERIFIED"
+    },
+    {
+      "id": "claude-code",
+      "title": "Anthropic-compatible surface, end to end",
+      "status": "VERIFIED"
+    },
+    {
+      "id": "pipeline",
+      "title": "Autonomous coding pipeline",
+      "status": "VERIFIED"
+    },
+    {
+      "id": "fallback",
+      "title": "Fallback and resilience",
+      "status": "VERIFIED"
+    },
+    {
+      "id": "sandbox",
+      "title": "Sandbox isolation",
+      "status": "BLOCKED_EXTERNAL"
+    },
+    {
+      "id": "multimodal",
+      "title": "Multimodal surfaces",
+      "status": "PARTIAL"
+    },
+    {
+      "id": "web",
+      "title": "Web client",
+      "status": "VERIFIED"
+    },
+    {
+      "id": "security",
+      "title": "Security",
+      "status": "VERIFIED"
+    }
+  ]
+}

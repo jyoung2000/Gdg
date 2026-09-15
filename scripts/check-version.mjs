@@ -57,8 +57,19 @@ function manifests() {
 const problems = [];
 const fixed = [];
 
+/**
+ * The version an installer may carry, which is not always the release's.
+ *
+ * Windows MSI packages encode a version as three integers. There is nowhere to
+ * put `-rc.1`, and Tauri refuses to build an MSI for a prerelease rather than
+ * silently truncating it. So the bundle carries the release train's base
+ * version while the product reports the full one, and this says so out loud
+ * instead of letting the two drift apart unremarked.
+ */
+const INSTALLER_BASE_VERSION = canonical.replace(/-.*$/, '');
+
 /** A JSON file whose top-level `version` must match. */
-function checkJson(rel) {
+function checkJson(rel, { allowInstallerBase = false } = {}) {
   let text;
   try {
     text = read(rel);
@@ -66,16 +77,21 @@ function checkJson(rel) {
     return; // An optional file that this checkout does not have.
   }
   const found = JSON.parse(text).version;
-  if (found === canonical) return;
+  const want = allowInstallerBase ? INSTALLER_BASE_VERSION : canonical;
+  if (found === want) return;
   if (write) {
     // Edited as text, not re-serialised: `JSON.stringify` would reformat the
     // whole file and bury a one-line change in a hundred lines of diff.
-    const next = text.replace(/("version"\s*:\s*)"[^"]*"/, `$1"${canonical}"`);
+    const next = text.replace(/("version"\s*:\s*)"[^"]*"/, `$1"${want}"`);
     writeFileSync(join(ROOT, rel), next);
-    fixed.push(`${rel}: ${found} → ${canonical}`);
+    fixed.push(`${rel}: ${found} → ${want}`);
     return;
   }
-  problems.push(`${rel} says ${found}, the root says ${canonical}`);
+  problems.push(
+    allowInstallerBase
+      ? `${rel} says ${found}; an MSI cannot carry a prerelease suffix, so it must say ${want}`
+      : `${rel} says ${found}, the root says ${canonical}`,
+  );
 }
 
 /** The Rust crate, whose version is what the built `Meridian.exe` reports. */
@@ -88,6 +104,8 @@ function checkCargo(rel) {
   }
   const match = text.match(/^version\s*=\s*"([^"]+)"/m);
   if (!match) return;
+  // Cargo takes a full semver, prerelease and all, and it is what the built
+  // Meridian.exe reports about itself — so it tracks the release, not the MSI.
   if (match[1] === canonical) return;
   if (write) {
     writeFileSync(join(ROOT, rel), text.replace(/^version\s*=\s*"[^"]+"/m, `version = "${canonical}"`));
@@ -138,7 +156,7 @@ function checkForStragglers() {
 }
 
 for (const rel of manifests()) checkJson(rel);
-checkJson('apps/desktop/src-tauri/tauri.conf.json');
+checkJson('apps/desktop/src-tauri/tauri.conf.json', { allowInstallerBase: true });
 checkCargo('apps/desktop/src-tauri/Cargo.toml');
 checkConstant('packages/shared/src/version.ts');
 if (!write) checkForStragglers();

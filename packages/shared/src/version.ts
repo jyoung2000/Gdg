@@ -14,4 +14,4 @@
  * keeps it honest: it fails the release if this constant and any manifest
  * disagree, and `--write` propagates a new value everywhere at once.
  */
-export const MERIDIAN_VERSION = '1.0.0';
+export const MERIDIAN_VERSION = '1.0.0-rc.1';

@@ -1,8 +1,8 @@
 {
   "name": "meridian",
-  "version": "1.0.0",
+  "version": "1.0.0-rc.1",
   "private": true,
-  "description": "Meridian \u2014 Universal AI Gateway. One interface for every model, provider and modality.",
+  "description": "Meridian — Universal AI Gateway. One interface for every model, provider and modality.",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -39,6 +39,7 @@
     "test:unit": "node scripts/test.mjs unit",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "uag": "node dist/cli/uag.js",
+    "verify:production": "pnpm lint && node scripts/verify-release.mjs",
     "verify:providers": "node dist/cli/uag.js verify",
     "verify:release": "node scripts/verify-release.mjs --out docs/evidence/RELEASE.md"
   },
